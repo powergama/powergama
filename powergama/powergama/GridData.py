@@ -25,13 +25,13 @@ def parseId(num):
     
 
 class _Nodes:
-    name = []
-    area = []
-    lat = []
-    lon = []
+    '''Private class for grid model nodes'''
     
     def __init__(self):
-        pass
+        self.name = []
+        self.area = []
+        self.lat = []
+        self.lon = []
     
     def readFromFile(self,filename):
         with open(filename,'rb') as csvfile:
@@ -63,14 +63,14 @@ class _Nodes:
     
     
 class _Branches:
-    node_from = []
-    node_to = []
-    reactance = []
-    _susceptance = []
-    capacity = []
+    '''Private class for grid model branches'''
     
     def __init__(self):
-        pass
+        self.node_from = []
+        self.node_to = []
+        self.reactance = []
+        self.capacity = []
+        self._susceptance = []
     
     def readFromFile(self,filename):
         with open(filename,'rb') as csvfile:
@@ -117,21 +117,21 @@ class _Branches:
         return [self._susceptance[i]*baseOhm for i in range(self.numBranches())]
 
 class _Generators:
-    node = []
-    prodMax = []
-    prodMin = []
-    marginalcost = []
-    storage = []
-    storagevalue_type = []
-    storagelevel_init = []
-    inflow_factor = [] 
-    inflow_profile = []
-    desc = []
-    gentype = []
-    #idxHasProfile = []
+    '''Private class for grid model generators'''
+    
     
     def __init__(self):
-        pass
+        self.node = []
+        self.prodMax = []
+        self.prodMin = []
+        self.marginalcost = []
+        self.storage = []
+        self.storagevalue_type = []
+        self.storagelevel_init = []
+        self.inflow_factor = [] 
+        self.inflow_profile = []
+        self.desc = []
+        self.gentype = []
     
     def numGenerators(self):
         return len(self.node)
@@ -188,12 +188,13 @@ class _Generators:
         
 
 class _Consumers:
-    node = []
-    load = []
-    load_profile = []
+    '''Private class for consumers'''
+    
     
     def __init__(self):
-        pass
+        self.node = []
+        self.load = []
+        self.load_profile = []
     
     def readFromFile(self,filename):
         with open(filename,'rb') as csvfile:
@@ -242,21 +243,25 @@ class GridData:
     Class for grid data storage and import
     '''        
         
-    node = _Nodes()
-    branch = _Branches()
-    generator = _Generators()
-    consumer = _Consumers()
-    inflowProfiles = None
-    demandProfiles = None
-    storagevalue = None
-    numTimesteps = None
-    timeDelta = None
 
     def __init__(self):
-        pass
+        '''
+        Create GridData object with data and methods for import and 
+        processing of PowerGAMA grid data            
+        '''
+        self.node = _Nodes()
+        self.branch = _Branches()
+        self.generator = _Generators()
+        self.consumer = _Consumers()
+        self.inflowProfiles = None
+        self.demandProfiles = None
+        self.storagevalue = None
+        self.numTimesteps = None
+        self.timeDelta = None
 
     def readGridData(self,nodes,branches,generators,consumers):
         '''Read grid data from files into data variables'''
+        
         self.node.readFromFile(nodes)
         self.branch.readFromFile(branches)
         self.generator.readFromFile(generators)

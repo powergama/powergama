@@ -18,6 +18,17 @@ class Results():
     
     
     def __init__(self,grid,timerange):
+        '''
+        Create a PowerGAMA Results object
+        
+        Parameters
+        ----------
+        grid
+            GridData object reference
+        timerange
+            Time range included in the optimisation
+            
+        '''
         self.grid = grid
         self.timerange = timerange
         self.storage_idx_generators = grid.getIdxGeneratorsWithStorage()
@@ -164,9 +175,12 @@ class Results():
         '''
         Plot results to map
         
-        Optional parameters:
-        nodetype =  area, nodalprice
-        branchtype = area, utilisation, flow, sensitivity
+        Parameters
+        ----------
+        nodetype (str) (default = "")
+            "area", "nodalprice"
+        branchtype (str) (default = "")
+            "area", "utilisation", "flow", "sensitivity"
         '''
         
         data = self.grid

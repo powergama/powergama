@@ -11,17 +11,19 @@ according to specified input.
 
 import csv
 import constants as const
-#from powergama.GridData import GridData
-import GridData
 
 def saveScenario(base_grid_data, scenario_file):
     '''
     Saves the data in the current grid model to a scenario file of the 
     format used to create new scenarios
     
-    INPUT:
-     base_grid_data: GridData object
-     scenario_file: name of scenario file (CSV)
+    Arguments:
+        base_grid_data (GridData): PowerGAMA GridData object
+        scenario_file (str): name of scenario (CSV) file
+    
+    Returns:
+        None, but data is written to file
+        
     '''
     
     areas_grid = base_grid_data.getAllAreas()
@@ -116,10 +118,15 @@ def newScenario(base_grid_data, scenario_file, newfile_prefix):
     Create new input data files by up- and down-scaling data based 
     on additional input data given per area.
     
-    INPUT:
-     base_grid_data: GridData object
-     scenario_file: Name of scenario file (CSV)
-     newfiles_prefix: prefix used when creating new files
+    Parameters
+    ----------
+        base_grid_data : GridData object        
+        scenario_file : Name of scenario file (CSV)        
+        newfiles_prefix : prefix used when creating new files
+    
+    Returns
+    -------
+        None, but GridData object is modified
     '''
     
     areas_grid = base_grid_data.getAllAreas()
