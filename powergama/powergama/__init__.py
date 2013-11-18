@@ -44,13 +44,13 @@ Import grid model and time series data from files
 
 Initiate results and LP problem objects
 
->>> res = powergama.Results(data,timerange)
->>> lp = powergama.LpProblem(data,res)
+>>> lp = powergama.LpProblem(data)
+>>> res = powergama.Results(data)
 
 Solve the problem, timestep by timestep, and save results in the results 
-objecct
+object
 
->>> lp.solve()
+>>> lp.solve(res)
 
 Plot results
 

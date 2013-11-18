@@ -24,7 +24,7 @@ def parseId(num):
     return str(d)
     
 
-class _Nodes:
+class _Nodes(object):
     '''Private class for grid model nodes'''
     
     def __init__(self):
@@ -62,7 +62,7 @@ class _Nodes:
         return len(self.name)
     
     
-class _Branches:
+class _Branches(object):
     '''Private class for grid model branches'''
     
     def __init__(self):
@@ -116,7 +116,7 @@ class _Branches:
     def getSusceptancePu(self,baseOhm):
         return [self._susceptance[i]*baseOhm for i in range(self.numBranches())]
 
-class _Generators:
+class _Generators(object):
     '''Private class for grid model generators'''
     
     
@@ -187,7 +187,7 @@ class _Generators:
     
         
 
-class _Consumers:
+class _Consumers(object):
     '''Private class for consumers'''
     
     
@@ -238,7 +238,7 @@ class _Consumers:
 
 
     
-class GridData:
+class GridData(object):
     '''
     Class for grid data storage and import
     '''        
@@ -256,8 +256,8 @@ class GridData:
         self.inflowProfiles = None
         self.demandProfiles = None
         self.storagevalue = None
-        self.numTimesteps = None
         self.timeDelta = None
+        self.timerange = None
 
     def readGridData(self,nodes,branches,generators,consumers):
         '''Read grid data from files into data variables'''
@@ -306,7 +306,7 @@ class GridData:
         
         self.inflowProfiles = self._readProfileFromFile(inflow,timerange)
         self.demandProfiles = self._readProfileFromFile(demand,timerange)
-        self.numTimesteps = len(timerange)
+        self.timerange = timerange
         self.timeDelta = timedelta
         
         '''

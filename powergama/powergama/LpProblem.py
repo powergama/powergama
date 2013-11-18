@@ -29,7 +29,7 @@ import constants as const
 import scipy.sparse
 import itertools
 
-class LpProblem:
+class LpProblem(object):
     '''
     Class containing problem definition as a LP problem, and function calls
     to solve the problem
@@ -37,11 +37,12 @@ class LpProblem:
     solver = None
 
 
-    def __init__(self,grid,results):
+    def __init__(self,grid):
+        '''Create and initialise LpProblem object'''
+        
         #def lpProblemInitialise(self,grid):
 
         self._grid = grid
-        self._results = results
         self.timeDelta = grid.timeDelta
         self.num_nodes = grid.node.numNodes()        
         self.num_generators = grid.generator.numGenerators()
@@ -142,7 +143,7 @@ class LpProblem:
         timestep = 0
         
         # Bounds on maximum and minimum production (power inflow)
-        self.setLpGeneratorMaxMin(timestep)
+        self._setLpGeneratorMaxMin(timestep)
         
         # Power flow equations (constraints)
         print "Power flow equations..."
@@ -198,6 +199,9 @@ class LpProblem:
 
 
     def initialiseSolver(self,cbcpath):
+        '''
+        Initialise solver - normally not necessary
+        '''
         solver = pulp.solvers.COIN_CMD(path=cbcpath)
         if solver.available():
             print ":) Found solver here: ", solver.available()
@@ -211,7 +215,7 @@ class LpProblem:
        
  
        
-    def setLpGeneratorMaxMin(self,timestep):
+    def _setLpGeneratorMaxMin(self,timestep):
         '''Specify constraints for generator output'''       
 
         P_storage = self._storage / self.timeDelta
@@ -230,7 +234,7 @@ class LpProblem:
 
 
     
-    def updateMarginalcosts(self):
+    def _updateMarginalcosts(self):
         '''Marginal costs based on storage value for generators with storage'''
         for i in range(len(self._idx_generatorsWithStorage)):
             idx_gen = self._idx_generatorsWithStorage[i]
@@ -243,7 +247,7 @@ class LpProblem:
                 
 
 
-    def updateLpProblem(self,timestep):
+    def _updateLpProblem(self,timestep):
         '''
         Function that updates LP problem for a given timestep, due to changed
         power demand, power inflow and marginal generator costs
@@ -254,7 +258,7 @@ class LpProblem:
         #range_branches = range(self.num_branches)
 
         # Update bounds on maximum and minimum production (power inflow)
-        self.setLpGeneratorMaxMin(timestep)
+        self._setLpGeneratorMaxMin(timestep)
                     
         # Update power flow equations
         for idx_node in range_nodes:                        
@@ -277,7 +281,7 @@ class LpProblem:
             self.prob.constraints[key_constr] = cpf
  
         # Update objective function      
-        self.updateMarginalcosts()                                                 
+        self._updateMarginalcosts()                                                 
         probObjective = pulp.lpSum(\
             [self._marginalcosts[i]*self._var_generation[i]*self.timeDelta \
                 for i in range_generators]  )       
@@ -292,7 +296,7 @@ class LpProblem:
         
 
     
-    def storeResultsAndUpdateStorage(self,timestep):
+    def _storeResultsAndUpdateStorage(self,timestep,results):
         """Store timestep results in local arrays, and update storage"""
                 
         Pgen = [v.varValue for v in self._var_generation]
@@ -331,7 +335,7 @@ class LpProblem:
         energyspilled = energyStorable-self._storage
         storagelevel = self._storage[self._idx_generatorsWithStorage]
         
-        self._results.addResultsFromTimestep(objective_function = F,
+        results.addResultsFromTimestep(objective_function = F,
                                             generator_power = Pgen,
                                             branch_power = Pb,
                                             node_angle = theta,
@@ -345,14 +349,22 @@ class LpProblem:
         return
     
         
-    def solve(self):
-        # call the solver
+    def solve(self,results):
+        '''
+        Solve LP problem for each time step in the time range
+        
+        Arguments
+        ---------
+        results
+            PowerGAMA Results object reference
+        '''
             
         print "Solving..."
         #prob0 = pulp.LpProblem("Grid Market Power - base", pulp.LpMinimize)
-        for timestep in range(self._grid.numTimesteps):
+        numTimesteps = len(self._grid.timerange)
+        for timestep in range(numTimesteps):
             # update LP problem (inflow, storage, profiles)                     
-            self.updateLpProblem(timestep)
+            self._updateLpProblem(timestep)
           
             # solve the LP problem
             self.prob.solve(self.solver,use_mps=False)
@@ -364,7 +376,7 @@ class LpProblem:
                 "<> cost=",value_costfunction
        
             # store results and update storage levels
-            self.storeResultsAndUpdateStorage(timestep)
+            self._storeResultsAndUpdateStorage(timestep,results)
         
 
         

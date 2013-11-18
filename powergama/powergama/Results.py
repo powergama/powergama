@@ -11,13 +11,13 @@ from mpl_toolkits.basemap import Basemap
 import math
 
 
-class Results():
+class Results(object):
     '''
     Class for storing and analysing/presenting results from PowerGAMA
     '''    
     
     
-    def __init__(self,grid,timerange):
+    def __init__(self,grid):
         '''
         Create a PowerGAMA Results object
         
@@ -25,12 +25,10 @@ class Results():
         ----------
         grid
             GridData object reference
-        timerange
-            Time range included in the optimisation
             
         '''
         self.grid = grid
-        self.timerange = timerange
+        self.timerange = grid.timerange
         self.storage_idx_generators = grid.getIdxGeneratorsWithStorage()
         self.objectiveFunctionValue=[]    
         self.generatorOutput=[]
