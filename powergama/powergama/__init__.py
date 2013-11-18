@@ -8,9 +8,10 @@ PowerGAMA package
 
 """
 
-import .GridData
-import .constants
-import .LpProblem
-import .Results
-import .scenarios
+from .GridData import GridData
+from .LpProblem import LpProblem
+from . Results import Results
+from . import constants
+from . import scenarios
 
+print "Imported PowerGAMA modules"
