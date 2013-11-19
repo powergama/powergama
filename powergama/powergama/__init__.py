@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
+'''
 PowerGAMA
 =========
 
@@ -56,7 +56,7 @@ Plot results
 
 >>> res.plotMapGrid(nodetype="nodalprice")
 
-"""
+'''
 
 from .GridData import GridData
 from .LpProblem import LpProblem

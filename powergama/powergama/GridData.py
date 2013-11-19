@@ -1,11 +1,9 @@
 # -*- coding: utf-8 -*-
-"""
-Created on Fri Sep 06 11:43:58 2013
-
-@author: Harald G Svendsen
+'''
+Module containing PowerGAMA GridData class and sub-classes
 
 Grid data and time-dependent profiles
-"""
+'''
 
 import csv
 import numpy

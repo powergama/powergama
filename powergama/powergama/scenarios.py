@@ -1,13 +1,8 @@
 # -*- coding: utf-8 -*-
-"""
-Created on Wed Nov 06 12:25:21 2013
-
-@author: Harald G Svendsen, SINTEF Energy Research
-
-Module for creating different scenarios by scaling grid model parameters 
+'''
+Module for creating different PowerGAMA scenarios by scaling grid model parameters 
 according to specified input.
-
-"""
+'''
 
 import csv
 import constants as const

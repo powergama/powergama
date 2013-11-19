@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
-"""
-Created on Thu Sep 12 16:19:07 2013
+'''
+Module containing the PowerGAMA Results class
+'''
 
-@author: hsven
-"""
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import numpy as np
@@ -169,7 +168,8 @@ class Results(object):
 
 
         
-    def plotMapGrid(self,nodetype='',branchtype='',show_node_labels=False):
+    def plotMapGrid(self,nodetype='',branchtype='',\
+                    show_node_labels=False,latlon=None):
         '''
         Plot results to map
         
@@ -179,15 +179,25 @@ class Results(object):
             "area", "nodalprice"
         branchtype (str) (default = "")
             "area", "utilisation", "flow", "sensitivity"
+        show_node_labels (bool) (default=False)
+            show node names (true/false)
+        latlon (list) (default=None)
+            map area [lat_min, lon_min, lat_max, lon_max]
         '''
         
         data = self.grid
         res = self
         
-        lat_max =  max(data.node.lat)+1
-        lat_min =  min(data.node.lat)-1
-        lon_max =  max(data.node.lon)+1
-        lon_min =  min(data.node.lon)-1
+        if latlon is None:
+            lat_max =  max(data.node.lat)+1
+            lat_min =  min(data.node.lat)-1
+            lon_max =  max(data.node.lon)+1
+            lon_min =  min(data.node.lon)-1
+        else:
+            lat_min = latlon[0]
+            lon_min = latlon[1]
+            lat_max = latlon[2]
+            lon_max = latlon[3]
         
         # Use the average latitude as latitude of true scale
         lat_truescale = np.mean(data.node.lat)

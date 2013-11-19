@@ -1,10 +1,9 @@
 # -*- coding: utf-8 -*-
-"""
-Created on Sat Sep  7 21:58:28 2013
+'''
+Module containing PowerGAMA LpProblem class
+'''
 
-@author: Harald G. Svendsen
-
-
+'''
  Power flow equations:       
         
  Linearised ("DC") power flow equation
@@ -19,8 +18,7 @@ Created on Sat Sep  7 21:58:28 2013
            Pb_k = power flow branch k
            D = diag(-b_k) (negative of susceptance on branch k)
            A = Mx(N-1) node-branch incidence (adjacency) matrix
-
-"""
+'''
 
 import pulp
 from numpy import pi, asarray, vstack, inf
