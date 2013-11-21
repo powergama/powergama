@@ -36,7 +36,8 @@ number of hours per timestep
 Import grid model and time series data from files
 
 >>> data = powergama.GridData()
->>> data.readGridData(nodes="nodes.csv",branches="branches.csv",\\
+>>> data.readGridData(nodes="nodes.csv",ac_branches="branches.csv",\\
+>>>                   dc_branches="hvdc.csv",\\  
 >>>                   generators="generators.csv",consumers="consumers.csv")
 >>> data.readProfileData(inflow="inflow.csv",demand="demand.csv", \\
 >>>                      storagevalues="storagevalue.csv", \\

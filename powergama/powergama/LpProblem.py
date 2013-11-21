@@ -21,7 +21,7 @@ Module containing PowerGAMA LpProblem class
 '''
 
 import pulp
-from numpy import pi, asarray, vstack, inf
+from numpy import pi, asarray, vstack
 from datetime import datetime as datetime
 import constants as const
 import scipy.sparse
@@ -45,27 +45,40 @@ class LpProblem(object):
         self.num_nodes = grid.node.numNodes()        
         self.num_generators = grid.generator.numGenerators()
         self.num_branches = grid.branch.numBranches()
+        self.num_dc_branches = grid.dcbranch.numBranches()
         self._idx_generatorsWithStorage = grid.getIdxGeneratorsWithStorage()
-        self._idx_generatorsStorageType = asarray([grid.generator.storagevalue_type[i] for i in self._idx_generatorsWithStorage])
+        self._idx_generatorsStorageType = asarray(
+            [grid.generator.storagevalue_type[i] 
+            for i in self._idx_generatorsWithStorage])
 
                 
         # Initial values of marginal costs, storage and storage values      
-        self._storage = asarray(grid.generator.storagelevel_init)*asarray(grid.generator.storage)
+        self._storage = (
+            asarray(grid.generator.storagelevel_init)
+            *asarray(grid.generator.storage) )
         self._marginalcosts = asarray(self._grid.generator.marginalcost)        
         
         range_nodes = range(self.num_nodes)
         range_generators = range(self.num_generators)
         range_branches = range(self.num_branches)
+        range_dc_branches = range(self.num_dc_branches)
 
 
         #print "Creating LP problem..."        
-        self.prob = pulp.LpProblem("PowerGAMA "+str(datetime.now()), pulp.LpMinimize)
+        self.prob = pulp.LpProblem(
+            "PowerGAMA "+str(datetime.now()), pulp.LpMinimize)
 
         # Define (and keep track of) LP problem variables
-        self._var_generation = [pulp.LpVariable("Pgen%d" %(i)) for i in range_generators] 
-        self._var_branchflow = [pulp.LpVariable("Pbranch%d" %(i)) for i in range_branches] 
-        self._var_angle = [pulp.LpVariable("theta%d" %(i)) for i in range_nodes] 
-        self._var_loadshedding = [pulp.LpVariable("Pshed%d" %(i)) for i in range_nodes] 
+        self._var_generation = [
+            pulp.LpVariable("Pgen%d" %(i)) for i in range_generators] 
+        self._var_branchflow = [
+            pulp.LpVariable("Pbranch%d" %(i)) for i in range_branches] 
+        self._var_dc = [
+            pulp.LpVariable("Pdc%d" %(i)) for i in range_dc_branches] 
+        self._var_angle = [
+            pulp.LpVariable("theta%d" %(i)) for i in range_nodes] 
+        self._var_loadshedding = [
+            pulp.LpVariable("Pshed%d" %(i)) for i in range_nodes] 
 
         self._idx_load = [[]]*self.num_nodes
         
@@ -75,7 +88,8 @@ class LpProblem(object):
         print "Creating B.theta and DA.theta expressions"
 
          # Matrix * vector product -- Using coo_matrix
-        # (http://stackoverflow.com/questions/4319014/iterating-through-a-scipy-sparse-vector-or-matrix)
+        # (http://stackoverflow.com/questions/4319014/
+        #  iterating-through-a-scipy-sparse-vector-or-matrix)
         
         cx = scipy.sparse.coo_matrix(self._DA)
         self._DAtheta = [0]*cx.shape[0]
@@ -102,12 +116,13 @@ class LpProblem(object):
  
         print "Defining constraints..."
         idxBranchesConstr = self._grid.getIdxBranchesWithFlowConstraints()
+        idxDcBranchesConstr = self._grid.getIdxDcBranchesWithFlowConstraints()
 
         # Initialise lists of constraints
-        #self._constraints_branchLowerBounds = ['']*self.num_branches
-        #self._constraints_branchUpperBounds = ['']*self.num_branches
         self._constraints_branchLowerBounds = [[]]*len(idxBranchesConstr)
         self._constraints_branchUpperBounds = [[]]*len(idxBranchesConstr)
+        self._constraints_dcbranchLowerBounds = [[]]*len(idxDcBranchesConstr)
+        self._constraints_dcbranchUpperBounds = [[]]*len(idxDcBranchesConstr)
         self._constraints_pf = [pulp.pulp.LpConstraint()]*self.num_nodes
 
         # Swing bus angle = 0 (reference)
@@ -115,7 +130,7 @@ class LpProblem(object):
         self.prob.addConstraint(probConstraintSwing,name="swingbus_angle")
         #prob += probConstraintSwing,"swingbus_angle"
        
-        # Max and min power flow
+        # Max and min power flow on AC branches
         for i in idxBranchesConstr:
         #for i in range_branches:
             cl = self._var_branchflow[i] >= -self._grid.branch.capacity[i]
@@ -130,6 +145,20 @@ class LpProblem(object):
             self._constraints_branchLowerBounds[idx_branch_constr] = cl_name
             self._constraints_branchUpperBounds[idx_branch_constr] = cu_name
 
+        # Max and min powr flow on DC branches        
+        for i in idxDcBranchesConstr:
+            dc_cl = self._var_dc[i] >= -self._grid.dcbranch.capacity[i]
+            dc_cu = self._var_dc[i] <= self._grid.dcbranch.capacity[i]
+            dc_cl_name = "dcflow_min_%d" %(i)            
+            dc_cu_name = "dcflow_max_%d" %(i)            
+            self.prob.addConstraint(dc_cl,name=dc_cl_name)
+            self.prob.addConstraint(dc_cu,name=dc_cu_name)
+            # need to keep track of these constraints since we want to get
+            # sensitivity information from solution:
+            idx_dcbranch_constr = idxDcBranchesConstr.index(i)
+            self._constraints_dcbranchLowerBounds[idx_dcbranch_constr] = dc_cl_name
+            self._constraints_dcbranchUpperBounds[idx_dcbranch_constr] = dc_cu_name
+        
         # Equations giving the branch power flow from the nodal phase angles
         for idx_branch in range_branches:
             Pbr = self._var_branchflow[idx_branch]/const.baseMVA
@@ -150,30 +179,48 @@ class LpProblem(object):
         self._pfPgen = [[]]*self.num_nodes
         self._pfPflow = [[]]*self.num_nodes
         self._pfPshed = [[]]*self.num_nodes
+        self._pfPdc = [[]]*self.num_nodes
         
-        #TODO Speed up this loop        
         for idx_node in range_nodes:                        
             # Find generators connected to this node:            
             idx_gen = grid.getGeneratorsAtNode(idx_node)
+            
+            # Find DC branches connected to node (direction is important)
+            idx_dc_from = grid.getDcBranchesAtNode(idx_node,'from')
+            idx_dc_to = grid.getDcBranchesAtNode(idx_node,'to')
             # Find indices of loads connected to this node:
             self._idx_load[idx_node] = grid.getLoadsAtNode(idx_node)
 
             # Constant part of power flow equations            
-            self._pfPgen[idx_node] = [self._var_generation[i]/const.baseMVA for i in idx_gen]
-            self._pfPshed[idx_node] = self._var_loadshedding[idx_node]/const.baseMVA
+            self._pfPgen[idx_node] = [
+                self._var_generation[i]/const.baseMVA for i in idx_gen]
+            self._pfPshed[idx_node] = ( 
+                self._var_loadshedding[idx_node]/const.baseMVA)
+            self._pfPdc[idx_node] = (
+                 [  self._var_dc[i]/const.baseMVA for i in idx_dc_to]
+                +[ -self._var_dc[i]/const.baseMVA for i in idx_dc_from])
             self._pfPflow[idx_node] = -_Btheta[idx_node]
 
             demOutflow=[]
-            # Usually there is maximum one load per node, but it could be more,
+            # Usually there is maximum one load per node, but it could be
             # so need a loop
             for i in self._idx_load[idx_node]:
                 average = self._grid.consumer.load[i]
                 profile_ref = self._grid.consumer.load_profile[i]
-                demOutflow.append(-self._grid.demandProfiles[profile_ref][timestep]*average/const.baseMVA)
-                
+                demOutflow.append(
+                    -self._grid.demandProfiles[profile_ref][timestep] \
+                    *average/const.baseMVA)      
             self._pfPload[idx_node] = pulp.lpSum(demOutflow)
             
-            cpf = pulp.lpSum(self._pfPgen[idx_node]+self._pfPload[idx_node]+self._pfPshed[idx_node]) == self._pfPflow[idx_node]
+            # Generation is positive
+            # Demand is negative
+            # Load shed is positive
+            # Flow out of the node is positive
+            cpf = pulp.lpSum(
+                self._pfPgen[idx_node]
+                +self._pfPdc[idx_node]
+                +self._pfPload[idx_node]
+                +self._pfPshed[idx_node]) == self._pfPflow[idx_node]
             pf_name = "powerflow_eqn_%d"%(idx_node)
             self.prob.addConstraint(cpf,name=pf_name)
             self._constraints_pf[idx_node] = pf_name
@@ -182,12 +229,16 @@ class LpProblem(object):
         
         print "Objective function..."
 
-        #TODO: Get loadshedding cost from input
-        print("  Using fixed load shedding cost of %f. One per node" % const.loadshedcost)       
+        print("  Using fixed load shedding cost of %f. One per node" 
+            % const.loadshedcost)       
         self._loadsheddingcosts = [const.loadshedcost]*self.num_nodes
 
-        probObjective = pulp.lpSum([self._marginalcosts[i]*self._var_generation[i] for i in range_generators]  )       
-        probSlack = pulp.lpSum([self._loadsheddingcosts[i]*self._var_loadshedding[i] for i in range_nodes]  ) 
+        probObjective = pulp.lpSum([
+            self._marginalcosts[i]*self._var_generation[i] 
+            for i in range_generators]  )       
+        probSlack = pulp.lpSum([
+            self._loadsheddingcosts[i]*self._var_loadshedding[i] 
+            for i in range_nodes]  ) 
         self.prob.setObjective(probObjective+probSlack)      
 
         return       
@@ -224,9 +275,12 @@ class LpProblem(object):
             inflow_factor = self._grid.generator.inflow_factor[i]
             capacity = self._grid.generator.prodMax[i]
             inflow_profile = self._grid.generator.inflow_profile[i]
-            P_inflow =  capacity * inflow_factor * self._grid.inflowProfiles[inflow_profile][timestep]
-            self._var_generation[i].lowBound = min(P_inflow+P_storage[i],P_min[i])
-            self._var_generation[i].upBound = min(P_inflow+P_storage[i],P_max[i])
+            P_inflow =  (capacity * inflow_factor 
+                * self._grid.inflowProfiles[inflow_profile][timestep])
+            self._var_generation[i].lowBound = min(
+                P_inflow+P_storage[i],P_min[i])
+            self._var_generation[i].upBound = min(
+                P_inflow+P_storage[i],P_max[i])
             #print " gen=%d: P_inflow=%g, P_storage=%g, Pmin=%g, Pmax=%g" %(i,P_inflow,P_storage[i],P_min[i],P_max[i])
         return
 
@@ -240,8 +294,9 @@ class LpProblem(object):
             storagecapacity = asarray(self._grid.generator.storage[idx_gen])
             fillinglevel = self._storage[idx_gen] / storagecapacity       
             col = int(round(fillinglevel*100))
-            self._marginalcosts[idx_gen] \
-                = self._grid.generator.marginalcost[idx_gen] *self._grid.storagevalue[this_type][col]
+            self._marginalcosts[idx_gen] = (
+                self._grid.generator.marginalcost[idx_gen] 
+                *self._grid.storagevalue[this_type][col])
                 
 
 
@@ -268,12 +323,18 @@ class LpProblem(object):
             for i in idx_loads:
                 average = self._grid.consumer.load[i]
                 profile_ref = self._grid.consumer.load_profile[i]
-                demOutflow.append(-self._grid.demandProfiles[profile_ref][timestep]*average/const.baseMVA)
+                demOutflow.append(
+                    -self._grid.demandProfiles[profile_ref][timestep]
+                    *average/const.baseMVA)
                 
             self._pfPload[idx_node] = demOutflow
 
             
-            cpf = pulp.lpSum(self._pfPgen[idx_node]+self._pfPload[idx_node]+self._pfPshed[idx_node]) == self._pfPflow[idx_node]
+            cpf = pulp.lpSum(
+                self._pfPgen[idx_node]
+                +self._pfPdc[idx_node]
+                +self._pfPload[idx_node]
+                +self._pfPshed[idx_node]) == self._pfPflow[idx_node]
             # Find the associated constraint and modify it:            
             key_constr = self._constraints_pf[idx_node]
             self.prob.constraints[key_constr] = cpf
@@ -319,30 +380,42 @@ class LpProblem(object):
         #senseBranchCapacityUpper = [cval.pi if cval.pi!=None else 0 for cval in self._constraints_branchUpperBounds]
         #senseBranchCapacityLower = [cval.pi if cval.pi!=None else 0 for cval in self._constraints_branchLowerBounds]
         #senseN = [cval.pi for cval in self._constraints_pf]
-        senseBranchCapacityUpper = [self.prob.constraints[ckey].pi \
-            if self.prob.constraints[ckey].pi!=None else 0 \
+        senseBranchCapacityUpper = [self.prob.constraints[ckey].pi
+            if self.prob.constraints[ckey].pi!=None else 0
             for ckey in self._constraints_branchUpperBounds]
-        senseBranchCapacityLower = [self.prob.constraints[ckey].pi \
-            if self.prob.constraints[ckey].pi!=None else 0 \
+        senseBranchCapacityLower = [self.prob.constraints[ckey].pi
+            if self.prob.constraints[ckey].pi!=None else 0
             for ckey in self._constraints_branchLowerBounds]
-        senseN = [self.prob.constraints[ckey].pi/const.baseMVA \
-            if self.prob.constraints[ckey].pi!=None else 0 \
+        senseDcBranchCapacityUpper = [self.prob.constraints[ckey].pi
+            if self.prob.constraints[ckey].pi!=None else 0
+            for ckey in self._constraints_dcbranchUpperBounds]
+        senseDcBranchCapacityLower = [self.prob.constraints[ckey].pi
+            if self.prob.constraints[ckey].pi!=None else 0
+            for ckey in self._constraints_dcbranchLowerBounds]
+        senseN = [self.prob.constraints[ckey].pi/const.baseMVA
+            if self.prob.constraints[ckey].pi!=None else 0
             for ckey in self._constraints_pf]
-        senseB = [(i-j)/const.baseMVA for i,j in zip(senseBranchCapacityUpper, senseBranchCapacityLower)]
+        senseB = [(i-j)/const.baseMVA for i,j in 
+            zip(senseBranchCapacityUpper, senseBranchCapacityLower)]
+        senseDcB = [(i-j)/const.baseMVA for i,j in 
+            zip(senseDcBranchCapacityUpper, senseDcBranchCapacityLower)]
+            
         loadshed = [v.varValue for v in self._var_loadshedding]
         energyspilled = energyStorable-self._storage
         storagelevel = self._storage[self._idx_generatorsWithStorage]
+        marginalprice = self._marginalcosts[self._idx_generatorsWithStorage]
         
         results.addResultsFromTimestep(objective_function = F,
-                                            generator_power = Pgen,
-                                            branch_power = Pb,
-                                            node_angle = theta,
-                                            sensitivity_branch_capacity = senseB,
-                                            sensitivity_node_power = senseN,
-                                            storage = storagelevel,
-                                            inflow_spilled = energyspilled,
-                                            loadshed_power = loadshed,
-                                            marginalprice = self._marginalcosts)
+                                generator_power = Pgen,
+                                branch_power = Pb,
+                                node_angle = theta,
+                                sensitivity_branch_capacity = senseB,
+                                sensitivity_dcbranch_capacity = senseDcB,
+                                sensitivity_node_power = senseN,
+                                storage = storagelevel,
+                                inflow_spilled = energyspilled,
+                                loadshed_power = loadshed,
+                                marginalprice = marginalprice)
 
         return
     

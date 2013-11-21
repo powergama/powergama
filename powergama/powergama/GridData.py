@@ -114,6 +114,53 @@ class _Branches(object):
     def getSusceptancePu(self,baseOhm):
         return [self._susceptance[i]*baseOhm for i in range(self.numBranches())]
 
+
+
+class _DcBranches(object):
+    '''Private class for grid model HVDC branches'''
+    
+    def __init__(self):
+        self.node_from = []
+        self.node_to = []
+        self.capacity = []
+    
+    def readFromFile(self,filename):
+        with open(filename,'rb') as csvfile:
+            datareader = csv.DictReader(csvfile,delimiter=',',quoting=csv.QUOTE_NONNUMERIC)           
+            for row in datareader:
+                self.node_from.append(parseId(row["from"]))
+                self.node_to.append(parseId(row["to"]))
+                # Using float() to make sure it's not treated as an integer                
+                self.capacity.append(float(row["capacity"]))
+        return
+    
+    def writeToFile(self,filename):
+        print "Saving DC branch data to file",filename
+        
+        headers = ["from","to","capacity"]
+        with open(filename,'wb') as csvfile:
+            datawriter = csv.DictWriter(csvfile, delimiter=',',\
+                                quotechar='"', quoting=csv.QUOTE_NONNUMERIC,\
+                                fieldnames=headers)
+            datawriter.writerow(dict((fn,fn) for fn in headers))
+            for i in range(self.numBranches()):
+                datarow = {"from":self.node_from[i],"to":self.node_to[i],\
+                        "capacity":self.capacity[i]}
+                datawriter.writerow(datarow)
+        return
+
+    def numBranches(self):
+        return len(self.node_from)
+        
+    def node_fromIdx(self,nodes):
+        return [nodes.name.index(self.node_from[k]) for k in range(self.numBranches())]
+
+    def node_toIdx(self,nodes):
+        return [nodes.name.index(self.node_to[k]) for k in range(self.numBranches())]
+    
+
+
+
 class _Generators(object):
     '''Private class for grid model generators'''
     
@@ -249,6 +296,7 @@ class GridData(object):
         '''
         self.node = _Nodes()
         self.branch = _Branches()
+        self.dcbranch = _DcBranches()
         self.generator = _Generators()
         self.consumer = _Consumers()
         self.inflowProfiles = None
@@ -257,11 +305,12 @@ class GridData(object):
         self.timeDelta = None
         self.timerange = None
 
-    def readGridData(self,nodes,branches,generators,consumers):
+    def readGridData(self,nodes,ac_branches,dc_branches,generators,consumers):
         '''Read grid data from files into data variables'''
         
         self.node.readFromFile(nodes)
-        self.branch.readFromFile(branches)
+        self.branch.readFromFile(ac_branches)
+        self.dcbranch.readFromFile(dc_branches)
         self.generator.readFromFile(generators)
         self.consumer.readFromFile(consumers)
 
@@ -346,12 +395,15 @@ class GridData(object):
         return indices
 
 
-    def getHvdcAtNode(self,nodeIdx,direction):
-        """Indices of all HVDC branche attached to a particular node"""
-        #indices = [i for i, x in enumerate(self.hvdc.nodeIdx) if x == nodeIdx]
-        #return indices
-        print("not implemented!")
-        return None
+    def getDcBranchesAtNode(self,nodeIdx,direction):
+        """Indices of all DC branches attached to a particular node"""
+        if direction=='from':
+            indices = [i for i, x in enumerate(self.dcbranch.node_from) if x == self.node.name[nodeIdx]]
+        elif direction=='to':
+            indices = [i for i, x in enumerate(self.dcbranch.node_to) if x == self.node.name[nodeIdx]]
+        else:
+            raise Exception("Unknown direction in GridData.getDcBranchesAtNode")
+        return indices
 	
 	
     def getIdxNodesWithLoad(self):
@@ -375,6 +427,10 @@ class GridData(object):
         idx = [i for i,v in enumerate(self.branch.capacity) if v<numpy.inf]
         return idx
         
+    def getIdxDcBranchesWithFlowConstraints(self):
+        '''Indices of DC branches with less than infinite branch capacity'''
+        idx = [i for i,v in enumerate(self.dcbranch.capacity) if v<numpy.inf]
+        return idx
 
     def computePowerFlowMatrices(self,baseZ):
         """

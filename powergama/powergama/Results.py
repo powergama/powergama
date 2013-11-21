@@ -34,17 +34,24 @@ class Results(object):
         self.branchFlow=[]
         self.nodeAngle=[]
         self.sensitivityBranchCapacity=[]
+        self.sensitivityDcBranchCapacity=[]
         self.sensitivityNodePower=[]
         self.storage=[]
         self.marginalprice=[]
         self.inflowSpilled=[]
         self.loadshed=[]
-        self.idxConstrainedBranchCapacity = grid.getIdxBranchesWithFlowConstraints()
+        self.idxConstrainedBranchCapacity \
+            = grid.getIdxBranchesWithFlowConstraints()
         
     def addResultsFromTimestep(self,objective_function,generator_power,
-                               branch_power,node_angle,sensitivity_branch_capacity,
+                               branch_power,node_angle,
+                               sensitivity_branch_capacity,
+                               sensitivity_dcbranch_capacity,
                                sensitivity_node_power,
-                               storage,inflow_spilled,loadshed_power,marginalprice):
+                               storage,
+                               inflow_spilled,
+                               loadshed_power,
+                               marginalprice):
         '''Store results from optimal power flow for a new timestep'''
                                    
         self.objectiveFunctionValue.append(objective_function)
@@ -52,6 +59,7 @@ class Results(object):
         self.branchFlow.append(branch_power)
         self.nodeAngle.append(node_angle)
         self.sensitivityBranchCapacity.append(sensitivity_branch_capacity)
+        self.sensitivityDcBranchCapacity.append(sensitivity_dcbranch_capacity)
         self.sensitivityNodePower.append(sensitivity_node_power)
         #self.demandPower.append(demand_power)
         self.storage.append(storage)
@@ -103,7 +111,9 @@ class Results(object):
             for i in consumers:
                 ref_profile = consumer.load_profile[i]
                 # accumulate demand for all consumers in this area:
-                dem = [dem[t] + consumer.load[i] * self.grid.demandProfiles[ref_profile][t] for t in self.timerange]
+                dem = [dem[t] + consumer.load[i] 
+                    * self.grid.demandProfiles[ref_profile][t] 
+                    for t in self.timerange]
             plt.plot(self.timerange,dem)
             
         plt.legend(areas , loc="upper right")
@@ -112,9 +122,11 @@ class Results(object):
         return
     
     def plotMarginalPrice(self):
-        '''Show marginal price at each node'''
+        '''Show marginal prices for generators with storage'''
         plt.plot(self.timerange,self.marginalprice)
-        plt.legend(self.grid.generator.node , loc="upper right")
+        plt.legend(
+            self.grid.generator.node[self.storage_idx_generators], 
+            loc="upper right")
         return
         
     def plotMapGrid_old(self):
@@ -145,10 +157,15 @@ class Results(object):
         m.drawmeridians(np.arange(-30,50,10),labels=[0,0,0,1])
         
         # Plot branches (as great circles)
-        branch_lat1 = [data.node.lat[i] for i in data.branch.node_fromIdx(data.node)]        
-        branch_lon1 = [data.node.lon[i] for i in data.branch.node_fromIdx(data.node)]        
-        branch_lat2 = [data.node.lat[i] for i in data.branch.node_toIdx(data.node)]        
-        branch_lon2 = [data.node.lon[i] for i in data.branch.node_toIdx(data.node)]
+        branch_lat1 = [data.node.lat[i] 
+            for i in data.branch.node_fromIdx(data.node)]        
+        branch_lon1 = [data.node.lon[i] 
+            for i in data.branch.node_fromIdx(data.node)]        
+        branch_lat2 = [data.node.lat[i] 
+            for i in data.branch.node_toIdx(data.node)]        
+        branch_lon2 = [data.node.lon[i] 
+            for i in data.branch.node_toIdx(data.node)]
+
         for j in range(len(branch_lat1)):
             m.drawgreatcircle(branch_lon1[j],branch_lat1[j],\
                               branch_lon2[j],branch_lat2[j],\
@@ -168,7 +185,7 @@ class Results(object):
 
 
         
-    def plotMapGrid(self,nodetype='',branchtype='',\
+    def plotMapGrid(self,nodetype='',branchtype='',dcbranchtype='',
                     show_node_labels=False,latlon=None):
         '''
         Plot results to map
@@ -176,9 +193,11 @@ class Results(object):
         Parameters
         ----------
         nodetype (str) (default = "")
-            "area", "nodalprice"
+            "", "area", "nodalprice"
         branchtype (str) (default = "")
-            "area", "utilisation", "flow", "sensitivity"
+            "", "area", "utilisation", "flow", "sensitivity"
+        dcbranchtype (str) (default = "")
+            ""
         show_node_labels (bool) (default=False)
             show node names (true/false)
         latlon (list) (default=None)
@@ -211,8 +230,8 @@ class Results(object):
         # Draw coastlines, meridians and parallels.
         m.drawcoastlines()
         m.drawcountries(zorder=0)
-        m.fillcontinents(color='coral',lake_color='white',zorder=0)
-        m.drawmapboundary(fill_color='white')
+        m.fillcontinents(color='coral',lake_color='aqua',zorder=0)
+        m.drawmapboundary(fill_color='aqua')
         
         #TODO: remove hard-coding
         m.drawparallels(np.arange(10,70,10),labels=[1,1,0,0])
@@ -224,8 +243,11 @@ class Results(object):
             allareas = data.getAllAreas()
             colours_co = cm.prism(np.linspace(0, 1, len(allareas)))
         elif nodetype=='nodalprice':
-            avgprice = np.sqrt(np.average(np.asarray(res.sensitivityNodePower)**2,axis=0)) #rms
-            print "Nodal prices: max=%g, min=%g" %(max(avgprice),min(avgprice))
+            avgprice = np.sqrt(
+                np.average(np.asarray(res.sensitivityNodePower)**2,
+                           axis=0)) #rms
+            print ("Nodal prices: max=%g, min=%g" 
+                %(max(avgprice),min(avgprice)) )
         
 
         if branchtype=='area':
@@ -236,18 +258,23 @@ class Results(object):
             numBranchCategories = 11
             colours_b = cm.jet(np.linspace(0, 1, numBranchCategories))
             #colours_ut[0]=(0.1, 0.1, 0.1, 1.0) #rgba
-            avgflow = np.sqrt(np.average(np.asarray(res.branchFlow)**2,axis=0)) #rms
+            avgflow = np.sqrt(np.average(np.asarray(res.branchFlow)**2,
+                                         axis=0)) #rms
             cap = res.grid.branch.capacity
             utilisation = avgflow / cap # element-by-element
-            print "Branch utilisation: max=%g, min=%g" %(max(utilisation),min(utilisation))
+            print ("Branch utilisation: max=%g, min=%g" 
+                %(max(utilisation),min(utilisation)) )
         elif branchtype=='sensitivity':
             numBranchCategories = 11
             colours_b = cm.jet(np.linspace(0, 1, numBranchCategories))
-            avgsense = np.sqrt(np.average(np.asarray(res.sensitivityBranchCapacity)**2,axis=0)) #rms 
-            print "Branch capacity senitivity: max=%g, min=%g" %(max(avgsense),min(avgsense))
+            avgsense = np.sqrt(
+                np.average(np.asarray(res.sensitivityBranchCapacity)**2,
+                           axis=0)) #rms 
+            print ("Branch capacity senitivity: max=%g, min=%g" 
+                %(max(avgsense),min(avgsense)) )
         
         
-        # Plot branches (as great circles)
+        # Plot AC branches (as great circles)
         idx_from = data.branch.node_fromIdx(data.node)
         idx_to = data.branch.node_toIdx(data.node)
         branch_lat1 = [data.node.lat[i] for i in idx_from]        
@@ -257,7 +284,7 @@ class Results(object):
         for j in range(len(branch_lat1)):
             if branchtype=='area':
                 if areas[idx_from[j]] == areas[idx_to[j]]:
-                    col = colours_co[allareas.index(areas[idx_from[j]])]
+                    col = colours_b[allareas.index(areas[idx_from[j]])]
                     lwidth = 1
                 else:
                     col = 'black'
@@ -272,7 +299,8 @@ class Results(object):
                     lwidth = 1
             elif branchtype=='flow':
                 maxflow = max(avgflow)
-                category = math.floor(avgflow[j]/maxflow*(numBranchCategories-1))
+                category = math.floor(
+                    avgflow[j]/maxflow*(numBranchCategories-1))
                 col = colours_b[category]
                 lwidth = 1
                 if category*2 > numBranchCategories:
@@ -281,7 +309,8 @@ class Results(object):
                 maxsense = max(avgsense)
                 if j in res.idxConstrainedBranchCapacity:
                     idx = res.idxConstrainedBranchCapacity.index(j)
-                    category = math.floor(avgsense[idx]/maxsense*(numBranchCategories-1))
+                    category = math.floor(
+                        avgsense[idx]/maxsense*(numBranchCategories-1))
                     #print "sense cat=",category
                     col = colours_b[category]
                     lwidth = 2
@@ -296,12 +325,34 @@ class Results(object):
                               branch_lon2[j],branch_lat2[j],\
                               linewidth=lwidth,color=col,zorder=1)
 
+        # Plot DC branches
+        idx_from = data.dcbranch.node_fromIdx(data.node)
+        idx_to = data.dcbranch.node_toIdx(data.node)
+        branch_lat1 = [data.node.lat[i] for i in idx_from]        
+        branch_lon1 = [data.node.lon[i] for i in idx_from]        
+        branch_lat2 = [data.node.lat[i] for i in idx_to]        
+        branch_lon2 = [data.node.lon[i] for i in idx_to]
+        for j in range(len(branch_lat1)):
+            if dcbranchtype=='area':
+                if areas[idx_from[j]] == areas[idx_to[j]]:
+                    col = colours_b[allareas.index(areas[idx_from[j]])]
+                    lwidth = 1
+                else:
+                    col = 'white'
+                    lwidth = 2
+            else:
+                col = 'white'
+                lwidth = 2
+            m.drawgreatcircle(branch_lon1[j],branch_lat1[j],\
+                              branch_lon2[j],branch_lat2[j],\
+                              linewidth=lwidth,color=col,zorder=1)
             
         # Plot nodes
         x, y = m(data.node.lon,data.node.lat)
         if nodetype == 'area':
             for co in range(len(allareas)):
-                co_nodes = [i for i, v in enumerate(data.node.area) if v==allareas[co]]
+                co_nodes = [i for i, v in enumerate(data.node.area) 
+                            if v==allareas[co]]
                 co_x = [x[i] for i in co_nodes]
                 co_y = [y[i] for i in co_nodes]
                 col = colours_co[co]
@@ -319,8 +370,10 @@ class Results(object):
         # Show names of nodes
         if show_node_labels:
             labels = data.node.name
+            x1,x2,y1,y2 = plt.axis()
             for label, xpt, ypt in zip(labels, x, y):
-                plt.text(xpt, ypt, label)
+                if xpt > x1 and xpt < x2 and ypt > y1 and ypt < y2:
+                    plt.text(xpt, ypt, label)
         
         plt.title('Nodes and branches')
         plt.show()
