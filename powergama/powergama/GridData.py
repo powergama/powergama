@@ -310,7 +310,8 @@ class GridData(object):
         
         self.node.readFromFile(nodes)
         self.branch.readFromFile(ac_branches)
-        self.dcbranch.readFromFile(dc_branches)
+        if not dc_branches is None:
+            self.dcbranch.readFromFile(dc_branches)
         self.generator.readFromFile(generators)
         self.consumer.readFromFile(consumers)
 

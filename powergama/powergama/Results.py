@@ -78,12 +78,69 @@ class Results(object):
         return
         
     
-    def plotGeneratorOutput(self):
-        '''Show power output of all generators'''
-        plt.plot(self.timerange,self.generatorOutput)
-        plt.legend(self.grid.generator.node , loc="upper right")
+    def plotGeneratorOutput(self,generator_index):
+        '''Show output of a generator'''
+        fig = plt.figure()
+        ax1 = fig.add_subplot(111)
+        ax1.plot(self.timerange,
+                 [self.generatorOutput[t][generator_index] 
+                 for t in self.timerange],'-r',
+                 label="output")
+
+        if self.grid.generator.inflow_factor[generator_index] > 0:
+            profile = self.grid.generator.inflow_profile[generator_index]
+            ax1.plot([self.grid.inflowProfiles[profile][t]
+                *self.grid.generator.inflow_factor[generator_index]
+                *self.grid.generator.prodMax[generator_index] 
+                for t in self.timerange],'-b', label="inflow")
+        
+        if generator_index in self.storage_idx_generators:
+            stor_idx = self.storage_idx_generators.index(generator_index)
+            ax2 = plt.twinx() #separate y axis
+            ax2.plot([self.storage[t][stor_idx] for t in self.timerange],
+                     '-g', label='storage')
+            ax2.legend(loc="upper right")
+                     
+        ax1.legend(loc="upper left")
         return
 
+
+    def plotStoragePerArea(self,area,absolute=False):
+        '''Show generation per area '''
+        
+        generators = self.grid.getGeneratorsPerAreaAndType()
+        cap = self.grid.generator.storage
+        for gentype in generators[area].keys():
+            idxGen = generators[area][gentype]
+            idx_storage = [
+                [i,v] for i,v in enumerate(self.storage_idx_generators) 
+                if v in idxGen]
+            # idx_storage is now a list of index pairs.
+            # the first value is index in generator list
+            # the second value is index in storage list
+                
+            if len(idx_storage) > 0:
+                #stor = map(list, zip(*self.storage)) #transpose
+                
+                mystor = [sum([self.storage[t][idx_storage[i][0]]
+                            for i in range(len(idx_storage))])
+                            for t in self.timerange]
+                mycap = sum( [ cap[idx_storage[i][1]]
+                            for i in range(len(idx_storage))])
+                
+                if absolute:
+                    sumStorAreaType = mystor
+                else:
+                    sumStorAreaType = [mystor[i]/mycap for i in range(len(mystor))]
+                plt.plot(self.timerange,sumStorAreaType,label=gentype)
+            
+       # plt.legend(generators[area].keys() , loc="upper right")
+        plt.legend(loc="upper right")
+        plt.title("Storage in %s"%(area))
+
+        return
+        
+        
     def plotGenerationPerArea(self,area):
         '''Show generation per area '''
         generators = self.grid.getGeneratorsPerAreaAndType()
@@ -129,6 +186,8 @@ class Results(object):
             loc="upper right")
         return
         
+            
+        
     def plotMapGrid_old(self):
         '''Show a map with nodes and branches'''
         data=self.grid
@@ -153,8 +212,13 @@ class Results(object):
         m.drawcountries(zorder=0)
         m.fillcontinents(color='coral',lake_color='aqua',zorder=0)
         m.drawmapboundary(fill_color='aqua')
-        m.drawparallels(np.arange(10,70,10),labels=[1,1,0,0])
-        m.drawmeridians(np.arange(-30,50,10),labels=[0,0,0,1])
+        m.drawparallels(np.arange(self._myround(lat_min,10,'floor'),
+                                  self._myround(lat_max,10,'ceil'),10),
+                        labels=[1,1,0,0])
+
+        m.drawmeridians(np.arange(self._myround(lon_min,10,'floor'),
+                                  self._myround(lon_max,10,'ceil'),10),
+                        labels=[0,0,0,1])
         
         # Plot branches (as great circles)
         branch_lat1 = [data.node.lat[i] 
@@ -233,9 +297,13 @@ class Results(object):
         m.fillcontinents(color='coral',lake_color='aqua',zorder=0)
         m.drawmapboundary(fill_color='aqua')
         
-        #TODO: remove hard-coding
-        m.drawparallels(np.arange(10,70,10),labels=[1,1,0,0])
-        m.drawmeridians(np.arange(-30,50,10),labels=[0,0,0,1])
+        m.drawparallels(np.arange(_myround(lat_min,10,'floor'),
+                                  _myround(lat_max,10,'ceil'),10),
+                        labels=[1,1,0,0])
+
+        m.drawmeridians(np.arange(_myround(lon_min,10,'floor'),
+                                  _myround(lon_max,10,'ceil'),10),
+                        labels=[0,0,0,1])
         
         
         if nodetype=='area':
@@ -380,3 +448,16 @@ class Results(object):
 
         return
         # End plotGridMap
+ 
+
+       
+def _myround(x, base=1,method='round'):
+    '''Round to nearest multiple of base'''
+    if method=='round':
+        return int(base * round(float(x)/base))
+    elif method=='floor':
+        return int(base * math.floor(float(x)/base))
+    elif method=='ceil':
+        return int(base * math.ceil(float(x)/base))
+    else:
+        raise

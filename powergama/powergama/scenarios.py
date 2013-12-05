@@ -62,15 +62,26 @@ def saveScenario(base_grid_data, scenario_file):
                 else:
                     inflow_avg = None
 
+                storagelevel_this_area = [base_grid_data.generator.storagelevel_init[i] for i in generators[co][gentype]]
+                if len(storagelevel_this_area)>0:
+                    storagelevel_avg = float(sum(storagelevel_this_area))/len(storagelevel_this_area)
+                else:
+                    storagelevel_avg = None
+
                 gencap_this_area = [base_grid_data.generator.prodMax[i] for i in generators[co][gentype]]
                 gencap_MW = float(sum(gencap_this_area))
                 
+                storagecap_this_area = [base_grid_data.generator.storage[i] for i in generators[co][gentype]]
+                storagecap_MWh = float(sum(storagecap_this_area))                
+
                 gencost_this_area = [base_grid_data.generator.marginalcost[i] for i in generators[co][gentype]]
                 gencost_avg = float(sum(gencost_this_area))/len(gencost_this_area)
-                
-                print " ",gentype,": cap=",gencap_MW,\
-                    "/ cost_avg=",gencost_avg,\
-                    "/ inflow_fac=",inflow_avg,"/ inflow_ref=",inflow_ref
+                                
+                print " ", gentype, ": cap=", gencap_MW, \
+                       "/ storage=", storagecap_MWh, \
+                       "/ cost_avg=", gencost_avg, \
+                       "/ inflow_fac=", inflow_avg, \
+                       "/ inflow_ref=", inflow_ref
                     
                 if not data.has_key("gencap_%s"%gentype):
                     data["gencap_%s"%gentype]={}
@@ -80,10 +91,17 @@ def saveScenario(base_grid_data, scenario_file):
                     data["inflow_profile_%s"%gentype]={}
                 if not data.has_key("inflow_factor_%s"%gentype):
                     data["inflow_factor_%s"%gentype]={}
+                if not data.has_key("storagecap_%s"%gentype):
+                    data["storagecap_%s"%gentype]={}
+                if not data.has_key("storage_ini_%s"%gentype):
+                    data["storage_ini_%s"%gentype]={}
+                    
                 data["gencap_%s"%gentype][co] = gencap_MW
                 data["gencost_%s"%gentype][co] = gencost_avg
                 data["inflow_profile_%s"%gentype][co] = inflow_ref
                 data["inflow_factor_%s"%gentype][co] = inflow_avg
+                data["storagecap_%s"%gentype][co] = storagecap_MWh
+                data["storage_ini_%s"%gentype][co] = storagelevel_avg
         # end collecting data
                 
     # print to file
@@ -150,6 +168,8 @@ def newScenario(base_grid_data, scenario_file, newfile_prefix):
         inflowprofiles_new = base_grid_data.generator.inflow_profile[:]
         gencap_new = base_grid_data.generator.prodMax[:]
         gencost_new = base_grid_data.generator.marginalcost[:]
+        storagecap_new = base_grid_data.generator.storage[:]
+        storagelevel_new = base_grid_data.generator.storagelevel_init[:]
         
         
         for row in datareader:
@@ -188,7 +208,23 @@ def newScenario(base_grid_data, scenario_file, newfile_prefix):
                 print "Generation costs for ",gentype
                 gencost_new = updateGenCost(gencost_new,row,areas_update,generators,gentype)
 
+            elif parameter[:11] == "storagecap_":
+                gentype = parameter[11:]
+                print "Storage capacities for ",gentype
+                if not gentype in gentypes_grid:
+                    print "OBS: Generation type is not present in grid model:",gentype
+                else:
+                    gentypes_data.append(gentype)
+                    storagecap_new = scaleStoragecap(storagecap_new,row,areas_update,generators,gentype)
 
+            elif parameter[:12] == "storage_ini_":
+                gentype = parameter[12:]
+                print "Initial storage filling level for ",gentype
+                if not gentype in gentypes_grid:
+                    print "OBS: Generation type is not present in grid model:",gentype
+                else:
+                    gentypes_data.append(gentype)
+                    storagelevel_new = updateStorageLevel(storagelevel_new,row,areas_update,generators,gentype)
             else:
                 print "Unknown parameter: ",parameter
         
@@ -203,6 +239,8 @@ def newScenario(base_grid_data, scenario_file, newfile_prefix):
         base_grid_data.generator.inflow_profile[:] = inflowprofiles_new[:]
         base_grid_data.generator.prodMax[:] = gencap_new[:]
         base_grid_data.generator.marginalcost[:] = gencost_new[:]
+        base_grid_data.generator.storage[:] = storagecap_new[:]
+        base_grid_data.generator.storagelevel_init[:] = storagelevel_new[:]
         
         base_grid_data.writeGridDataToFiles(prefix=newfile_prefix)
         return
@@ -283,6 +321,33 @@ def scaleGencap(gencap,datarow,areas_update,generators,gentype):
     return gencap
 
 
+def scaleStoragecap(storagecap,datarow,areas_update,generators,gentype):
+
+    for co in areas_update:
+        storagecap_MW_new = datarow[co]
+        
+        if not generators.has_key(co):
+            generators[co] = {}
+        if not generators[co].has_key(gentype):
+            generators[co][gentype]=[]
+        storagecap_this_area = [storagecap[i] for i in generators[co][gentype]]
+        storagecap_MW_before = float(sum(storagecap_this_area))
+
+        if storagecap_MW_new==0:
+            scalefactor = 0
+        elif len(storagecap_this_area)==0:
+            print "  WARNING No generators of type %s in area %s. Cannot scale." %(gentype,co)
+        elif storagecap_MW_before==0:
+            print "  WARNING Zero capacity for generator type %s in area %s. Cannot scale." %(gentype,co)
+            scalefactor = 1
+        else:
+            scalefactor = storagecap_MW_new / float(storagecap_MW_before)
+            #print "Scale factor for %s in %s = %g" % (gentype,co,scalefactor)
+            
+        for i in generators[co][gentype]:
+            storagecap[i] = storagecap[i]*scalefactor            
+    return storagecap
+
 
 def updateInflowFactor(inflowfactor,datarow,areas_update,generators,gentype):
     '''Update inflow factors per type and area'''
@@ -294,6 +359,17 @@ def updateInflowFactor(inflowfactor,datarow,areas_update,generators,gentype):
                 inflowfactor[i] = datarow[co]
         
     return inflowfactor
+
+
+def updateStorageLevel(storagelevel,datarow,areas_update,generators,gentype):
+    '''Update initial storage level per type and area'''
+    
+    for co in areas_update:        
+        if generators.has_key(co) and generators[co].has_key(gentype):
+            for i in generators[co][gentype]:
+                # all generators of this type and area are given same inflow factor
+                storagelevel[i] = datarow[co]        
+    return storagelevel
 
 
 def updateGenCost(gencost,datarow,areas_update,generators,gentype):

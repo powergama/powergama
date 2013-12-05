@@ -26,6 +26,7 @@ from datetime import datetime as datetime
 import constants as const
 import scipy.sparse
 import itertools
+from Results import Results
 
 class LpProblem(object):
     '''
@@ -405,6 +406,9 @@ class LpProblem(object):
         storagelevel = self._storage[self._idx_generatorsWithStorage]
         marginalprice = self._marginalcosts[self._idx_generatorsWithStorage]
         
+        # TODO: Only keep track of inflow spilled for generators with 
+        # nonzero inflow
+        
         results.addResultsFromTimestep(objective_function = F,
                                 generator_power = Pgen,
                                 branch_power = Pb,
@@ -412,23 +416,31 @@ class LpProblem(object):
                                 sensitivity_branch_capacity = senseB,
                                 sensitivity_dcbranch_capacity = senseDcB,
                                 sensitivity_node_power = senseN,
-                                storage = storagelevel,
-                                inflow_spilled = energyspilled,
+                                storage = storagelevel.tolist(),
+                                inflow_spilled = energyspilled.tolist(),
                                 loadshed_power = loadshed,
-                                marginalprice = marginalprice)
+                                marginalprice = marginalprice.tolist())
 
         return
     
         
-    def solve(self,results):
+    def solve(self,results=None):
         '''
         Solve LP problem for each time step in the time range
         
         Arguments
         ---------
         results
+            PowerGAMA Results object reference (optional)
+            
+        Returns
+        ------
+        results
             PowerGAMA Results object reference
         '''
+
+        if results == None:
+            results = Results(self._grid)      
             
         print "Solving..."
         #prob0 = pulp.LpProblem("Grid Market Power - base", pulp.LpMinimize)
@@ -449,6 +461,5 @@ class LpProblem(object):
             # store results and update storage levels
             self._storeResultsAndUpdateStorage(timestep,results)
         
+        return results
 
-        
-        
