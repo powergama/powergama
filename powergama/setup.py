@@ -3,9 +3,10 @@ from setuptools import setup
 setup(name='powergama',
       version='0.1',
       description='PowerGAMA - Power Grid And Market Analysis tool',
-      url='',
+      url='https://bitbucket.org/harald_g_svendsen/powergama',
       author='Harald G Svendsen',
       author_email='harald.svendsen@sintef.no',
-      license='Mozilla Public License 2.0',
+      license='MIT License (http://opensource.org/licenses/MIT)',
       packages=['powergama'],
+	  data_files = [('', ['licence.txt'])]
       zip_safe=False)
