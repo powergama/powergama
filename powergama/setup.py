@@ -8,5 +8,6 @@ setup(name='powergama',
       author_email='harald.svendsen@sintef.no',
       license='MIT License (http://opensource.org/licenses/MIT)',
       packages=['powergama'],
-	  data_files = [('', ['licence.txt'])]
-      zip_safe=False)
+	  data_files = [('', ['licence.txt'])],
+      zip_safe = True
+	 )

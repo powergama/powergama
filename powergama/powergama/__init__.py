@@ -6,7 +6,7 @@ PowerGAMA
 Created on Fri Nov 01 13:09:04 2013
 by Harald G Svendsen
 
-Licence: `Mozilla Public License 2.0 <http://www.mozilla.org/MPL/2.0>`_
+Licence: `The MIT License (MIT) <http://opensource.org/licenses/MIT>`_
 
 Classes and modules
 -------------------

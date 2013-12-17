@@ -178,12 +178,26 @@ class Results(object):
 
         return
     
-    def plotMarginalPrice(self):
+    def plotMarginalPrice(self,generator_index=None):
         '''Show marginal prices for generators with storage'''
-        plt.plot(self.timerange,self.marginalprice)
-        plt.legend(
-            self.grid.generator.node[self.storage_idx_generators], 
-            loc="upper right")
+        if generator_index is None:
+            plt.plot(self.timerange,self.marginalprice)
+            plt.legend(
+                [self.grid.generator.node[i] 
+                    for i in self.storage_idx_generators], 
+                loc="upper right")
+        else:
+            # show a single storage generator
+            storageidx = self.storage_idx_generators.index(generator_index)
+            nodeidx = self.grid.node.name.index(
+                self.grid.generator.node[generator_index])
+            plt.plot(self.timerange,
+                     [self.marginalprice[h][storageidx] 
+                         for h in self.timerange])
+            plt.plot(self.timerange,
+                     [self.sensitivityNodePower[h][nodeidx] 
+                         for h in self.timerange])
+            plt.legend(['storage value','nodal price'])
         return
         
             

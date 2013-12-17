@@ -171,7 +171,8 @@ class _Generators(object):
         self.prodMin = []
         self.marginalcost = []
         self.storage = []
-        self.storagevalue_type = []
+        self.storagevalue_profile_filling = []
+        self.storagevalue_profile_time = []
         self.storagelevel_init = []
         self.inflow_factor = [] 
         self.inflow_profile = []
@@ -194,8 +195,9 @@ class _Generators(object):
                 self.prodMin.append(row["pmin"])
                 self.marginalcost.append(row["basecost"])
                 self.storage.append(float(row["storage_cap"]))
-                self.storagevalue_type.append(parseId(row["storagevalue_ref"]))
                 self.storagelevel_init.append(row["storage_ini"])
+                self.storagevalue_profile_filling.append(parseId(row["storval_filling_ref"]))
+                self.storagevalue_profile_time.append(parseId(row["storval_time_ref"]))
                 self.inflow_factor.append(row["inflow_fac"])
                 self.inflow_profile.append(parseId(row["inflow_ref"]))
                 self.gentype.append(row["type"])
@@ -211,20 +213,24 @@ class _Generators(object):
     def writeToFile(self,filename):
         print "Saving generator data to file",filename
         
-        headers = ["desc","type","node",\
-                    "pmax","pmin","basecost",\
-                    "inflow_fac","inflow_ref",\
-                    "storage_cap","storage_ini","storagevalue_ref"]
+        headers = ["desc","type","node",
+                    "pmax","pmin","basecost",
+                    "inflow_fac","inflow_ref",
+                    "storage_cap","storage_ini",
+                    "storval_filling_ref",
+                    "storval_time_ref"]
         with open(filename,'wb') as csvfile:
             datawriter = csv.writer(csvfile, delimiter=',',\
                                 quotechar='"', quoting=csv.QUOTE_NONNUMERIC)
             datawriter.writerow(headers)
             for i in range(self.numGenerators()):
-                datarow = [\
-                    self.desc[i], self.gentype[i], self.node[i],\
-                    self.prodMax[i], self.prodMin[i], self.marginalcost[i],\
-                    self.inflow_factor[i], self.inflow_profile[i],\
-                    self.storage[i], self.storagelevel_init[i],self.storagevalue_type[i] \
+                datarow = [
+                    self.desc[i], self.gentype[i], self.node[i],
+                    self.prodMax[i], self.prodMin[i], self.marginalcost[i],
+                    self.inflow_factor[i], self.inflow_profile[i],
+                    self.storage[i], self.storagelevel_init[i],
+                    self.storagevalue_profile_filling[i],
+                    self.storagevalue_profile_time[i]
                     ]
                 datawriter.writerow(datarow)
         return
@@ -243,7 +249,8 @@ class _Consumers(object):
     
     def readFromFile(self,filename):
         with open(filename,'rb') as csvfile:
-           datareader = csv.DictReader(csvfile,delimiter=',',quoting=csv.QUOTE_NONNUMERIC)
+           datareader = csv.DictReader(csvfile,delimiter=',',
+                                       quoting=csv.QUOTE_NONNUMERIC)
            for row in datareader:
                self.node.append(parseId(row["node"]))
                self.load.append(row["demand_avg"])
@@ -301,7 +308,8 @@ class GridData(object):
         self.consumer = _Consumers()
         self.inflowProfiles = None
         self.demandProfiles = None
-        self.storagevalue = None
+        self.storagevalue_filling = None
+        self.storagevalue_time = None
         self.timeDelta = None
         self.timerange = None
 
@@ -321,7 +329,8 @@ class GridData(object):
         with open(filename,'rb') as csvfile:
             #values = numpy.loadtxt(csvfile,delimiter=",",skiprows=1)
             
-            datareader = csv.DictReader(csvfile,delimiter=',',quoting=csv.QUOTE_NONNUMERIC)
+            datareader = csv.DictReader(csvfile,delimiter=',',
+                                        quoting=csv.QUOTE_NONNUMERIC)
             fieldnames = datareader.fieldnames
             profiles= {fn:[] for fn in fieldnames}
             rowNum=0
@@ -339,7 +348,8 @@ class GridData(object):
     def _readStoragevaluesFromFile(self,filename):          
         with open(filename,'rb') as csvfile:
             #values = numpy.loadtxt(csvfile,delimiter=",",skiprows=1)
-            datareader = csv.DictReader(csvfile,delimiter=',',quoting=csv.QUOTE_NONNUMERIC)
+            datareader = csv.DictReader(csvfile,delimiter=',',
+                                        quoting=csv.QUOTE_NONNUMERIC)
             fieldnames = datareader.fieldnames
             profiles= {fn:[] for fn in fieldnames}
             for row in datareader:
@@ -349,7 +359,8 @@ class GridData(object):
         #return values
         
         
-    def readProfileData(self,inflow,demand,storagevalues,timerange,timedelta=1.0):
+    def readProfileData(self,inflow,demand,storagevalue_filling,
+                        storagevalue_time,timerange,timedelta=1.0):
         """Read profile (timeseries) into numpy arrays"""
         
         self.inflowProfiles = self._readProfileFromFile(inflow,timerange)
@@ -358,11 +369,15 @@ class GridData(object):
         self.timeDelta = timedelta
         
         '''
-        Storage values have no time dependence
-        Instead, the dependence is on filling level (0-100%), i.e. an array
+        Storage values have both time dependence and filling level dependence
+       
+       The dependence is on filling level (0-100%), is given as an array
         with 101 elements
         '''
-        self.storagevalue = self._readStoragevaluesFromFile(storagevalues)
+        self.storagevalue_time = self._readProfileFromFile(
+            storagevalue_time,timerange)
+        self.storagevalue_filling = self._readStoragevaluesFromFile(
+            storagevalue_filling)
         
         return    
 

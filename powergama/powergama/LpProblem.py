@@ -48,8 +48,11 @@ class LpProblem(object):
         self.num_branches = grid.branch.numBranches()
         self.num_dc_branches = grid.dcbranch.numBranches()
         self._idx_generatorsWithStorage = grid.getIdxGeneratorsWithStorage()
-        self._idx_generatorsStorageType = asarray(
-            [grid.generator.storagevalue_type[i] 
+        self._idx_generatorsStorageProfileFilling = asarray(
+            [grid.generator.storagevalue_profile_filling[i] 
+            for i in self._idx_generatorsWithStorage])
+        self._idx_generatorsStorageProfileTime = asarray(
+            [grid.generator.storagevalue_profile_time[i] 
             for i in self._idx_generatorsWithStorage])
 
                 
@@ -287,17 +290,19 @@ class LpProblem(object):
 
 
     
-    def _updateMarginalcosts(self):
+    def _updateMarginalcosts(self,timestep):
         '''Marginal costs based on storage value for generators with storage'''
         for i in range(len(self._idx_generatorsWithStorage)):
             idx_gen = self._idx_generatorsWithStorage[i]
-            this_type = self._idx_generatorsStorageType[i]
+            this_type_filling = self._idx_generatorsStorageProfileFilling[i]
+            this_type_time = self._idx_generatorsStorageProfileTime[i]           
             storagecapacity = asarray(self._grid.generator.storage[idx_gen])
             fillinglevel = self._storage[idx_gen] / storagecapacity       
-            col = int(round(fillinglevel*100))
+            filling_col = int(round(fillinglevel*100))
             self._marginalcosts[idx_gen] = (
                 self._grid.generator.marginalcost[idx_gen] 
-                *self._grid.storagevalue[this_type][col])
+                *self._grid.storagevalue_filling[this_type_filling][filling_col]
+                *self._grid.storagevalue_time[this_type_time][timestep])
                 
 
 
@@ -341,7 +346,7 @@ class LpProblem(object):
             self.prob.constraints[key_constr] = cpf
  
         # Update objective function      
-        self._updateMarginalcosts()                                                 
+        self._updateMarginalcosts(timestep)                                                 
         probObjective = pulp.lpSum(\
             [self._marginalcosts[i]*self._var_generation[i]*self.timeDelta \
                 for i in range_generators]  )       
@@ -450,7 +455,7 @@ class LpProblem(object):
             self._updateLpProblem(timestep)
           
             # solve the LP problem
-            self.prob.solve(self.solver,use_mps=False)
+            self.prob.solve(self.solver)
             
             # print result summary            
             value_costfunction = pulp.value(self.prob.objective)
