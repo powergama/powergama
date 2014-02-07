@@ -10,7 +10,7 @@ import powergama
 import time
 
 datapath= "data/"
-timerange=range(0,24*3)
+timerange=range(0,6)
 
 data = powergama.GridData()
 

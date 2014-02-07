@@ -1,7 +1,7 @@
 from setuptools import setup
 
 setup(name='powergama',
-      version='0.1',
+      version='0.2.5',
       description='PowerGAMA - Power Grid And Market Analysis tool',
       url='https://bitbucket.org/harald_g_svendsen/powergama',
       author='Harald G Svendsen',

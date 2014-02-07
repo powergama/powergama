@@ -67,6 +67,13 @@ def saveScenario(base_grid_data, scenario_file):
                     storagelevel_avg = float(sum(storagelevel_this_area))/len(storagelevel_this_area)
                 else:
                     storagelevel_avg = None
+					
+                storval_filling_refs = [base_grid_data.generator.storagevalue_profile_filling[i] for i in generators[co][gentype]]
+                storval_filling_refs_set = set(storval_filling_refs)
+                storval_filling_ref = " ".join(str(x) for x in storval_filling_refs_set)
+                storval_time_refs = [base_grid_data.generator.storagevalue_profile_time[i] for i in generators[co][gentype]]
+                storval_time_refs_set = set(storval_time_refs)
+                storval_time_ref = " ".join(str(x) for x in storval_time_refs_set)
 
                 gencap_this_area = [base_grid_data.generator.prodMax[i] for i in generators[co][gentype]]
                 gencap_MW = float(sum(gencap_this_area))
@@ -77,12 +84,15 @@ def saveScenario(base_grid_data, scenario_file):
                 gencost_this_area = [base_grid_data.generator.marginalcost[i] for i in generators[co][gentype]]
                 gencost_avg = float(sum(gencost_this_area))/len(gencost_this_area)
                                 
-                print " ", gentype, ": cap=", gencap_MW, \
-                       "/ storage=", storagecap_MWh, \
-                       "/ cost_avg=", gencost_avg, \
-                       "/ inflow_fac=", inflow_avg, \
-                       "/ inflow_ref=", inflow_ref
+                print (" ", gentype, ": cap=", gencap_MW,
+                       "/ storage=", storagecap_MWh,
+                       "/ cost_avg=", gencost_avg,
+                       "/ inflow_fac=", inflow_avg,
+                       "/ inflow_ref=", inflow_ref,
+                       "/ storval_fill=", storval_filling_ref,
+                       "& _time=", storval_time_ref)
                     
+                # Create (empty) elements if they haven't already been created.
                 if not data.has_key("gencap_%s"%gentype):
                     data["gencap_%s"%gentype]={}
                 if not data.has_key("gencost_%s"%gentype):
@@ -95,6 +105,10 @@ def saveScenario(base_grid_data, scenario_file):
                     data["storagecap_%s"%gentype]={}
                 if not data.has_key("storage_ini_%s"%gentype):
                     data["storage_ini_%s"%gentype]={}
+                if not data.has_key("storval_filling_ref_%s"%gentype):
+                    data["storval_filling_ref_%s"%gentype]={}
+                if not data.has_key("storval_time_ref_%s"%gentype):
+                    data["storval_time_ref_%s"%gentype]={}
                     
                 data["gencap_%s"%gentype][co] = gencap_MW
                 data["gencost_%s"%gentype][co] = gencost_avg
@@ -102,6 +116,9 @@ def saveScenario(base_grid_data, scenario_file):
                 data["inflow_factor_%s"%gentype][co] = inflow_avg
                 data["storagecap_%s"%gentype][co] = storagecap_MWh
                 data["storage_ini_%s"%gentype][co] = storagelevel_avg
+                data["storval_filling_ref_%s"%gentype][co] = storval_filling_ref
+                data["storval_time_ref_%s"%gentype][co] =  storval_time_ref
+				
         # end collecting data
                 
     # print to file
