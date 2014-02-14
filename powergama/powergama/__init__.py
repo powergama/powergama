@@ -62,5 +62,6 @@ Plot results
 from .GridData import GridData
 from .LpProblem import LpProblem
 from .Results import Results
+from .GIS import *
 from . import constants
 from . import scenarios 
