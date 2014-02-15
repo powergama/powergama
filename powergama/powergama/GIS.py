@@ -137,6 +137,7 @@ def makekml(res,timestep):
             pnt.style.iconstyle.icon.href = circleiconstyleurl
             pnt.style.iconstyle.color = "ff00ff00"
     ## Show line
+    colorbgr = ["ffff6666","ffffff66","ff66ff66","ff66ffff","f6666fff"] 
     # Find range of branch flow
     absbranchflow = [abs(foo) for foo in res.branchFlow[timestep]]
     maxabsbranchflow =  max(absbranchflow)
@@ -152,8 +153,6 @@ def makekml(res,timestep):
             minrange = ranges[i-1][1]
             maxrange = minrange + steprange
             ranges.append([minrange,maxrange])
-    colorbgr = ["ffff6666","ffffff66","ff66ff66","ff66ffff","f6666fff"] 
-    for i in xrange(5):
         ranges[i].append(colorbgr[i])
     ## Show Line
     # Create folder for line
@@ -162,19 +161,19 @@ def makekml(res,timestep):
     ## Create sub-folder according to branch flow level
     branchrange = ranges[0]
     branchlevel1folder = branchfolder.newfolder(\
-        name="Flow LE %s"%(str(branchrange[1])))
+        name="Flow <= %s"%(str(branchrange[1])))
     branchrange = ranges[1]
     branchlevel2folder = branchfolder.newfolder(\
-        name="Flow LE %s"%(str(branchrange[1])))
+        name="Flow <= %s"%(str(branchrange[1])))
     branchrange = ranges[2]
     branchlevel3folder = branchfolder.newfolder(\
-        name="Flow LE %s"%(str(branchrange[1])))
+        name="Flow <= %s"%(str(branchrange[1])))
     branchrange = ranges[3]
     branchlevel4folder = branchfolder.newfolder(\
-        name="Flow LE %s"%(str(branchrange[1])))
+        name="Flow <= %s"%(str(branchrange[1])))
     branchrange = ranges[4]
     branchlevel5folder = branchfolder.newfolder(\
-        name="Flow LE %s"%(str(branchrange[1])))
+        name="Flow <= %s"%(str(branchrange[1])))
     # Get and arrange branch flow
     branchflowmatrix = res.branchFlow[timestep]
     for i in xrange(branchcount):
@@ -269,6 +268,90 @@ def makekml(res,timestep):
                   coords=[(startbuslon,startbuslat),(endbuslon,endbuslat)])
             lin.style.linestyle.color = color
             lin.style.linestyle.width = 1.5
+    ## Show nodal price
+    maxnodalprice = max(res.sensitivityNodePower[timestep])
+    minnodalprice = min(res.sensitivityNodePower[timestep])
+    steprange = (maxnodalprice - minnodalprice) / 5
+    ranges = []
+    for i in xrange(5):
+        if i == 0:
+            minrange = minnodalprice
+            maxrange = minrange + steprange
+            ranges.append([minrange,maxrange])
+        else:
+            minrange = ranges[i-1][1]
+            maxrange = minrange + steprange
+            ranges.append([minrange,maxrange])
+        ranges[i].append(colorbgr[i])
+    # Create folder for nodal price
+    nodalpricefolder = kml.newfolder(name="Nodal price")
+    nodalpricerange = ranges[0]
+    nodalpricelevel1folder = nodalpricefolder.newfolder(\
+        name="Price <= %s"%(str(nodalpricerange[1])))
+    nodalpricerange = ranges[1]
+    nodalpricelevel2folder = nodalpricefolder.newfolder(\
+        name="Price <= %s"%(str(nodalpricerange[1])))
+    nodalpricerange = ranges[2]
+    nodalpricelevel3folder = nodalpricefolder.newfolder(\
+        name="Price <= %s"%(str(nodalpricerange[1])))
+    nodalpricerange = ranges[3]
+    nodalpricelevel4folder = nodalpricefolder.newfolder(\
+        name="Price <= %s"%(str(nodalpricerange[1])))
+    nodalpricerange = ranges[4]
+    nodalpricelevel5folder = nodalpricefolder.newfolder(\
+        name="Price <= %s"%(str(nodalpricerange[1])))
+    # Get and arrange nodal price
+    nodalpricematrix = res.sensitivityNodePower[timestep]
+    for i in xrange(nodecount):
+        nodalprice = nodalpricematrix[i]
+        if nodalprice >= ranges[0][0] and nodalprice <= ranges[0][1]:
+            color = ranges[0][2]
+            name = res.grid.node.name[i]
+            lon = res.grid.node.lon[i]
+            lat = res.grid.node.lat[i]
+            pnt = nodalpricelevel1folder.newpoint(coords=[(lon,lat)])
+            pnt.style.iconstyle.icon.href = circleiconstyleurl
+            pnt.style.iconstyle.color = color
+    for i in xrange(nodecount):
+        nodalprice = nodalpricematrix[i]
+        if nodalprice >= ranges[1][0] and nodalprice <= ranges[1][1]:
+            color = ranges[1][2]
+            name = res.grid.node.name[i]
+            lon = res.grid.node.lon[i]
+            lat = res.grid.node.lat[i]
+            pnt = nodalpricelevel2folder.newpoint(coords=[(lon,lat)])
+            pnt.style.iconstyle.icon.href = circleiconstyleurl
+            pnt.style.iconstyle.color = color
+    for i in xrange(nodecount):
+        nodalprice = nodalpricematrix[i]
+        if nodalprice >= ranges[2][0] and nodalprice <= ranges[2][1]:
+            color = ranges[2][2]
+            name = res.grid.node.name[i]
+            lon = res.grid.node.lon[i]
+            lat = res.grid.node.lat[i]
+            pnt = nodalpricelevel3folder.newpoint(coords=[(lon,lat)])
+            pnt.style.iconstyle.icon.href = circleiconstyleurl
+            pnt.style.iconstyle.color = color
+    for i in xrange(nodecount):
+        nodalprice = nodalpricematrix[i]
+        if nodalprice >= ranges[3][0] and nodalprice <= ranges[3][1]:
+            color = ranges[3][2]
+            name = res.grid.node.name[i]
+            lon = res.grid.node.lon[i]
+            lat = res.grid.node.lat[i]
+            pnt = nodalpricelevel4folder.newpoint(coords=[(lon,lat)])
+            pnt.style.iconstyle.icon.href = circleiconstyleurl
+            pnt.style.iconstyle.color = color
+    for i in xrange(nodecount):
+        nodalprice = nodalpricematrix[i]
+        if nodalprice >= ranges[4][0] and nodalprice <= ranges[4][1]:
+            color = ranges[4][2]
+            name = res.grid.node.name[i]
+            lon = res.grid.node.lon[i]
+            lat = res.grid.node.lat[i]
+            pnt = nodalpricelevel5folder.newpoint(coords=[(lon,lat)])
+            pnt.style.iconstyle.icon.href = circleiconstyleurl
+            pnt.style.iconstyle.color = color
     # Save kml file
     kml.save("result.kml")
 
