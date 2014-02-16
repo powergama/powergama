@@ -5,7 +5,6 @@ Illustrative example based on the Nordic power system
 Note: The case setup is NOT intended to be realistic. 
 This example is for illustration of the PowerGAMA tool only
 """
-
 import powergama
 from powergama import makekml
 import time
