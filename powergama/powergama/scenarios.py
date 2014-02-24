@@ -159,6 +159,7 @@ def newScenario(base_grid_data, scenario_file, newfile_prefix):
         None, but GridData object is modified
     '''
     
+
     areas_grid = base_grid_data.getAllAreas()
     gentypes_grid = base_grid_data.getAllGeneratorTypes()
     gentypes_data = []
@@ -187,6 +188,8 @@ def newScenario(base_grid_data, scenario_file, newfile_prefix):
         gencost_new = base_grid_data.generator.marginalcost[:]
         storagecap_new = base_grid_data.generator.storage[:]
         storagelevel_new = base_grid_data.generator.storagelevel_init[:]
+        storval_filling_ref_new = base_grid_data.generator.storagevalue_profile_filling[:]
+        storval_time_ref_new =  base_grid_data.generator.storagevalue_profile_time[:]
         
         
         for row in datareader:
@@ -209,7 +212,8 @@ def newScenario(base_grid_data, scenario_file, newfile_prefix):
             elif parameter[:15] == "inflow_profile_":
                 gentype = parameter[15:]
                 print "Inflow profile references for ",gentype
-                inflowprofiles_new = updateInflowProfileRef(inflowprofiles_new,row,areas_update,generators,gentype)
+                inflowprofiles_new = updateGenProfileRef(
+                    inflowprofiles_new,row,areas_update,generators,gentype)
 
             elif parameter[:7] == "gencap_":
                 gentype = parameter[7:]
@@ -218,12 +222,14 @@ def newScenario(base_grid_data, scenario_file, newfile_prefix):
                     print "OBS: Generation type is not present in grid model:",gentype
                 else:
                     gentypes_data.append(gentype)
-                    gencap_new = scaleGencap(gencap_new,row,areas_update,generators,gentype)
+                    gencap_new = scaleGencap(
+                        gencap_new,row,areas_update,generators,gentype)
 
             elif parameter[:8] == "gencost_":
                 gentype = parameter[8:]
                 print "Generation costs for ",gentype
-                gencost_new = updateGenCost(gencost_new,row,areas_update,generators,gentype)
+                gencost_new = updateGenCost(
+                    gencost_new,row,areas_update,generators,gentype)
 
             elif parameter[:11] == "storagecap_":
                 gentype = parameter[11:]
@@ -232,7 +238,8 @@ def newScenario(base_grid_data, scenario_file, newfile_prefix):
                     print "OBS: Generation type is not present in grid model:",gentype
                 else:
                     gentypes_data.append(gentype)
-                    storagecap_new = scaleStoragecap(storagecap_new,row,areas_update,generators,gentype)
+                    storagecap_new = scaleStoragecap(
+                        storagecap_new,row,areas_update,generators,gentype)
 
             elif parameter[:12] == "storage_ini_":
                 gentype = parameter[12:]
@@ -241,7 +248,21 @@ def newScenario(base_grid_data, scenario_file, newfile_prefix):
                     print "OBS: Generation type is not present in grid model:",gentype
                 else:
                     gentypes_data.append(gentype)
-                    storagelevel_new = updateStorageLevel(storagelevel_new,row,areas_update,generators,gentype)
+                    storagelevel_new = updateStorageLevel(
+                        storagelevel_new,row,areas_update,generators,gentype)
+
+            elif parameter[:20] == "storval_filling_ref_":
+                gentype = parameter[20:]
+                print "Storage value filling level profile reference for ",gentype
+                storval_filling_ref_new = updateGenProfileRef(
+                    storval_filling_ref_new,row,areas_update,generators,gentype)
+
+            elif parameter[:17] == "storval_time_ref_":
+                gentype = parameter[17:]
+                print "Storage value time profile reference for ",gentype
+                storval_time_ref_new =  updateGenProfileRef(
+                    storval_time_ref_new,row,areas_update,generators,gentype)
+
             else:
                 print "Unknown parameter: ",parameter
         
@@ -258,6 +279,8 @@ def newScenario(base_grid_data, scenario_file, newfile_prefix):
         base_grid_data.generator.marginalcost[:] = gencost_new[:]
         base_grid_data.generator.storage[:] = storagecap_new[:]
         base_grid_data.generator.storagelevel_init[:] = storagelevel_new[:]
+        base_grid_data.generator.storagevalue_profile_filling[:] = storval_filling_ref_new[:]
+        base_grid_data.generator.storagevalue_profile_time[:] = storval_time_ref_new[:]
         
         base_grid_data.writeGridDataToFiles(prefix=newfile_prefix)
         return
@@ -341,7 +364,7 @@ def scaleGencap(gencap,datarow,areas_update,generators,gentype):
 def scaleStoragecap(storagecap,datarow,areas_update,generators,gentype):
 
     for co in areas_update:
-        storagecap_MW_new = datarow[co]
+        storagecap_MW_new = float(datarow[co])
         
         if not generators.has_key(co):
             generators[co] = {}
@@ -358,7 +381,7 @@ def scaleStoragecap(storagecap,datarow,areas_update,generators,gentype):
             print "  WARNING Zero capacity for generator type %s in area %s. Cannot scale." %(gentype,co)
             scalefactor = 1
         else:
-            scalefactor = storagecap_MW_new / float(storagecap_MW_before)
+            scalefactor = storagecap_MW_new / storagecap_MW_before
             #print "Scale factor for %s in %s = %g" % (gentype,co,scalefactor)
             
         for i in generators[co][gentype]:
@@ -403,18 +426,28 @@ def updateGenCost(gencost,datarow,areas_update,generators,gentype):
     return gencost
 
 
-def updateInflowProfileRef(inflow_profile,datarow,areas_update,generators,gentype):
+##def updateInflowProfileRef(inflow_profile,datarow,areas_update,generators,gentype):
+##
+##    #inflow_profile = griddata.generator.inflow_profile[:]
+##
+##    for co in areas_update:
+##        if generators.has_key(co) and generators[co].has_key(gentype):
+##            for i in generators[co][gentype]:
+##                inflow_profile[i] = datarow[co]            
+##
+##    return inflow_profile
 
-    #inflow_profile = griddata.generator.inflow_profile[:]
-
+def updateGenProfileRef(profile_ref,datarow,areas_update,generators,gentype):
+    '''Update profile per area and generator type'''
     for co in areas_update:
         if generators.has_key(co) and generators[co].has_key(gentype):
             for i in generators[co][gentype]:
-                inflow_profile[i] = datarow[co]            
+                profile_ref[i] = datarow[co]            
 
-    return inflow_profile
+    return profile_ref
 
 
+#for debugging:
 #global data
 #saveScenario(data,"../scenario1/scenario_base.csv")
-#newScenario(data,"../scenario1/scenario1.csv",newfile_prefix="../s2_")
+#newScenario(data,'../examples/scenario_new.csv','../examples/newscenario')
