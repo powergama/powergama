@@ -1,0 +1,6 @@
+"desc","type","node","pmax","pmin","basecost","inflow_fac","inflow_ref","storage_cap","storage_ini","storval_filling_ref","storval_time_ref"
+"gen1","gen1","bus1",200,10,20,0,"const","inf",1,"const","const"
+"gen2","gen2","bus2",50,10,5,0,"const","inf",1,"const","const"
+"gen3","gen3","bus3",300,10,10,0,"const","inf",1,"const","const"
+"wind","wind","bus4",0,0,0,1,"wind",0,0.6,"wind","const"
+"csp","csp","bus5",0,0,0,0.25,"solar",0,0.5,"csp","csp"
