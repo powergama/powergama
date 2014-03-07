@@ -21,7 +21,7 @@ Module containing PowerGAMA LpProblem class
 '''
 
 import pulp
-from numpy import pi, asarray, vstack
+from numpy import pi, asarray, vstack, inf
 from datetime import datetime as datetime
 import constants as const
 import scipy.sparse
