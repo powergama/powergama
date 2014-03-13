@@ -1,0 +1,4 @@
+"node","demand_avg","demand_ref"
+"bus5",150,"const"
+"bus7",100,"const"
+"bus9",250,"const"

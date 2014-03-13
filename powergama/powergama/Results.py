@@ -9,7 +9,6 @@ import numpy as np
 from mpl_toolkits.basemap import Basemap
 import math
 
-
 class Results(object):
     '''
     Class for storing and analysing/presenting results from PowerGAMA

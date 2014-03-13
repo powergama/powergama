@@ -21,12 +21,13 @@ Module containing PowerGAMA LpProblem class
 '''
 
 import pulp
-from numpy import pi, asarray, vstack
+from numpy import pi, asarray, vstack, inf
 from datetime import datetime as datetime
 import constants as const
 import scipy.sparse
 import itertools
 from Results import Results
+import sys
 
 class LpProblem(object):
     '''
@@ -370,7 +371,8 @@ class LpProblem(object):
         inflow_profile_refs = self._grid.generator.inflow_profile
         inflow_factor = self._grid.generator.inflow_factor
         capacity= self._grid.generator.prodMax
-        genInflow = [capacity[i] * inflow_factor[i] * self._grid.inflowProfiles[inflow_profile_refs[i]][timestep] \
+        genInflow = [capacity[i] * inflow_factor[i] 
+        			 * self._grid.inflowProfiles[inflow_profile_refs[i]][timestep]
                         for i in range(len(capacity))]
 
         energyIn = asarray(genInflow)*self.timeDelta
@@ -407,6 +409,7 @@ class LpProblem(object):
             zip(senseDcBranchCapacityUpper, senseDcBranchCapacityLower)]
             
         loadshed = [v.varValue for v in self._var_loadshedding]
+        # TODO: This subtraction generates warning - because it includes nan and inf?
         energyspilled = energyStorable-self._storage
         storagelevel = self._storage[self._idx_generatorsWithStorage]
         marginalprice = self._marginalcosts[self._idx_generatorsWithStorage]
@@ -459,12 +462,22 @@ class LpProblem(object):
             
             # print result summary            
             value_costfunction = pulp.value(self.prob.objective)
-            print "Timestep=",timestep, " => ",  \
-                pulp.LpStatus[self.prob.status], \
-                "<> cost=",value_costfunction
+            self._update_progress(timestep,numTimesteps)
+            #print "Timestep=",timestep, " => ",  \
+            #    pulp.LpStatus[self.prob.status], \
+            #    "<> cost=",value_costfunction
        
             # store results and update storage levels
             self._storeResultsAndUpdateStorage(timestep,results)
         
         return results
 
+    def _update_progress(self,n,maxn):
+        barLength = 20
+        progress = float(n+1)/maxn
+        block = int(round(barLength*progress))
+        text = "\rProgress: [{0}] {1} ({2}%)  ".format( "="*block + " "*(barLength-block), 
+           n, int(progress*100))
+        sys.stdout.write(text)
+        sys.stdout.flush()
+        
