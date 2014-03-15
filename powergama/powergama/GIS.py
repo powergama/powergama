@@ -8,8 +8,10 @@ import simplekml
 def makekml(res,timestep):
     kml = simplekml.Kml()
     kml.document.name = "Results"
-    circleiconstyleurl = \
-    "http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png"
+    circle = "http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png"
+    hydrogen = "http://maps.google.com/mapfiles/kml/shapes/water.png"
+    thermalgen = "http://maps.google.com/mapfiles/kml/shapes/firedept.png"
+    star = "http://maps.google.com/mapfiles/kml/shapes/star.png"
     ## Show node
     nodefolder = kml.newfolder(name="Node")
     nodecount = len(res.grid.node.name)
@@ -17,8 +19,9 @@ def makekml(res,timestep):
         name = res.grid.node.name[i]
         lon = res.grid.node.lon[i]
         lat = res.grid.node.lat[i]
-        pnt = nodefolder.newpoint(coords=[(lon,lat)],description="name=%s"%name)
-        pnt.style.iconstyle.icon.href = circleiconstyleurl
+        pnt = nodefolder.newpoint(name=name,coords=[(lon,lat)])
+        pnt.style.iconstyle.icon.href = circle
+        pnt.style.labelstyle.color = "00000000"
     ## Show generator
     # Create folder for generator
     genfolder = kml.newfolder(name="Generator")
@@ -43,9 +46,16 @@ def makekml(res,timestep):
                     lon = res.grid.node.lon[j]
                     lat = res.grid.node.lat[j]
                     break
-            pnt = genbiomassfolder.newpoint(coords=[(lon,lat)])
-            pnt.style.iconstyle.icon.href = circleiconstyleurl
-            pnt.style.iconstyle.color = "ff0000ff"
+            description = """ 
+            Busname .. %s           <br/>
+            Fuel .. Biomass         <br/>
+            Lon .. %s, Lat .. %s    <br/>
+            """%(name,str(lon),str(lat))
+            pnt = genbiomassfolder.newpoint(name=name,description=description,\
+                                            coords=[(lon,lat)])
+            pnt.style.iconstyle.icon.href = circle
+            pnt.style.iconstyle.color  = "ff0000ff"
+            pnt.style.labelstyle.color = "00000000"
         if res.grid.generator.gentype[i] == "coal":
             name = res.grid.generator.node[i]
             for j in xrange(nodecount):
@@ -53,9 +63,16 @@ def makekml(res,timestep):
                     lon = res.grid.node.lon[j]
                     lat = res.grid.node.lat[j]
                     break
-            pnt = gencoalfolder.newpoint(coords=[(lon,lat)])
-            pnt.style.iconstyle.icon.href = circleiconstyleurl
-            pnt.style.iconstyle.color = "ff0000ff"
+            description = """
+            Busname .. %s           <br/>
+            Fuel .. Coal            <br/>
+            Lon .. %s, Lat .. %s    <br/>
+            """%(name,str(lon),str(lat))
+            pnt = gencoalfolder.newpoint(name=name,description=description,\
+                                         coords=[(lon,lat)])
+            pnt.style.iconstyle.icon.href = circle
+            pnt.style.iconstyle.color  = "ff0000ff"
+            pnt.style.labelstyle.color = "00000000"
         if res.grid.generator.gentype[i] == "coal_lgn":
             name = res.grid.generator.node[i]
             for j in xrange(nodecount):
@@ -63,9 +80,16 @@ def makekml(res,timestep):
                     lon = res.grid.node.lon[j]
                     lat = res.grid.node.lat[j]
                     break
-            pnt = gencoallgnfolder.newpoint(coords=[(lon,lat)])
-            pnt.style.iconstyle.icon.href = circleiconstyleurl
-            pnt.style.iconstyle.color = "ff0000ff"
+            description = """
+            Busname .. %s           <br/>
+            Fuel .. Lignite coal    <br/>
+            Lon .. %s, Lat .. %s    <br/>
+            """%(name,str(lon),str(lat))
+            pnt = gencoallgnfolder.newpoint(name=name,description=description,\
+                                            coords=[(lon,lat)])
+            pnt.style.iconstyle.icon.href = circle
+            pnt.style.iconstyle.color  = "ff0000ff"
+            pnt.style.labelstyle.color = "00000000"
         if res.grid.generator.gentype[i] == "gas":
             name = res.grid.generator.node[i]
             for j in xrange(nodecount):
@@ -73,9 +97,16 @@ def makekml(res,timestep):
                     lon = res.grid.node.lon[j]
                     lat = res.grid.node.lat[j]
                     break
-            pnt = gengasfolder.newpoint(coords=[(lon,lat)])
-            pnt.style.iconstyle.icon.href = circleiconstyleurl
-            pnt.style.iconstyle.color = "ff0000ff"
+            description = """
+            Busname .. %s           <br/>
+            Fuel .. Gas             <br/>
+            Lon .. %s, Lat ..%s     <br/>
+            """%(name,str(lon),str(lat))
+            pnt = gengasfolder.newpoint(name=name,description=description,\
+                                        coords=[(lon,lat)])
+            pnt.style.iconstyle.icon.href = circle
+            pnt.style.iconstyle.color  = "ff0000ff"
+            pnt.style.labelstyle.color = "00000000"
         if res.grid.generator.gentype[i] == "hydro":
             name = res.grid.generator.node[i]
             for j in xrange(nodecount):
@@ -83,9 +114,16 @@ def makekml(res,timestep):
                     lon = res.grid.node.lon[j]
                     lat = res.grid.node.lat[j]
                     break
-            pnt = genhydrofolder.newpoint(coords=[(lon,lat)])
-            pnt.style.iconstyle.icon.href = circleiconstyleurl
-            pnt.style.iconstyle.color = "ffc76915"
+            description = """
+            Busname .. %s           <br/>
+            Fuel .. Hydro           <br/>
+            Lon .. %s, Lat .. %s    <br/>
+            """%(name,str(lon),str(lat))
+            pnt = genhydrofolder.newpoint(name=name,description=description,\
+                                          coords=[(lon,lat)])
+            pnt.style.iconstyle.icon.href = circle
+            pnt.style.iconstyle.color  = "ffff8000"
+            pnt.style.labelstyle.color = "00000000"
         if res.grid.generator.gentype[i] == "nuclear":
             name = res.grid.generator.node[i]
             for j in xrange(nodecount):
@@ -93,9 +131,16 @@ def makekml(res,timestep):
                     lon = res.grid.node.lon[j]
                     lat = res.grid.node.lat[j]
                     break
-            pnt = gennuclearfolder.newpoint(coords=[(lon,lat)])
-            pnt.style.iconstyle.icon.href = circleiconstyleurl
-            pnt.style.iconstyle.color = "ff00ffff"
+            description = """
+            Busname .. %s           <br/>
+            Fuel .. Nuclear         <br/>
+            Lon .. %s, Lat .. %s    <br/>
+            """%(name,str(lon),str(lat))
+            pnt = gennuclearfolder.newpoint(name=name,description=description,\
+                                            coords=[(lon,lat)])
+            pnt.style.iconstyle.icon.href = circle
+            pnt.style.iconstyle.color  = "ff00ffff"
+            pnt.style.labelstyle.color = "00000000"
         if res.grid.generator.gentype[i] == "oil":
             name = res.grid.generator.node[i]
             for j in xrange(nodecount):
@@ -103,9 +148,16 @@ def makekml(res,timestep):
                     lon = res.grid.node.lon[j]
                     lat = res.grid.node.lat[j]
                     break
-            pnt = genoilfolder.newpoint(coords=[(lon,lat)])
-            pnt.style.iconstyle.icon.href = circleiconstyleurl
-            pnt.style.iconstyle.color = "ff0000ff"
+            description = """
+            Busname .. %s           <br/>
+            Fuel .. Oil             <br/>
+            Lon .. %s, Lat .. %s    <br/>
+            """%(name,str(lon),str(lat))
+            pnt = genoilfolder.newpoint(name=name,description=description,\
+                                        coords=[(lon,lat)])
+            pnt.style.iconstyle.icon.href = circle
+            pnt.style.iconstyle.color  = "ff0000ff"
+            pnt.style.labelstyle.color = "00000000"
         if res.grid.generator.gentype[i] == "solar_csp":
             name = res.grid.generator.node[i]
             for j in xrange(nodecount):
@@ -113,9 +165,16 @@ def makekml(res,timestep):
                     lon = res.grid.node.lon[j]
                     lat = res.grid.node.lat[j]
                     break
-            pnt = gensolarcspfolder.newpoint(coords=[(lon,lat)])
-            pnt.style.iconstyle.icon.href = circleiconstyleurl
-            pnt.style.iconstyle.color = "ff00ff00"
+            description = """
+            Busname .. %s           <br/>
+            Fuel .. Solar CSP       <br/>
+            Lon .. %s, Lat .. %s    <br/>
+            """%(name,str(lon),str(lat))
+            pnt = gensolarcspfolder.newpoint(name=name,description=description,\
+                                             coords=[(lon,lat)])
+            pnt.style.iconstyle.icon.href = circle
+            pnt.style.iconstyle.color  = "ff00ff00"
+            pnt.style.labelstyle.color = "00000000"
         if res.grid.generator.gentype[i] == "unknown":
             name = res.grid.generator.node[i]
             for j in xrange(nodecount):
@@ -123,9 +182,16 @@ def makekml(res,timestep):
                     lon = res.grid.node.lon[j]
                     lat = res.grid.node.lat[j]
                     break
-            pnt = genunknownfolder.newpoint(coords=[(lon,lat)])
-            pnt.style.iconstyle.icon.href = circleiconstyleurl
-            pnt.style.iconstyle.color = "ffccc6bc"
+            description = """
+            Busname .. %s           <br/>
+            Fuel .. Unknown         <br/>
+            Lon .. %s, Lat .. %s    <br/>
+            """%(name,str(lon),str(lat))
+            pnt = genunknownfolder.newpoint(name=name,description=description,\
+                                            coords=[(lon,lat)])
+            pnt.style.iconstyle.icon.href = circle
+            pnt.style.iconstyle.color  = "ffccc6bc"
+            pnt.style.labelstyle.color = "00000000"
         if res.grid.generator.gentype[i] == "wind":
             name = res.grid.generator.node[i]
             for j in xrange(nodecount):
@@ -133,9 +199,16 @@ def makekml(res,timestep):
                     lon = res.grid.node.lon[j]
                     lat = res.grid.node.lat[j]
                     break
-            pnt = genwindfolder.newpoint(coords=[(lon,lat)])
-            pnt.style.iconstyle.icon.href = circleiconstyleurl
-            pnt.style.iconstyle.color = "ff00ff00"
+            description = """
+            Busname .. %s           <br/>
+            Fuel .. Wind            <br/>
+            Lon .. %s, Lat .. %s    <br/>
+            """%(name,str(lon),str(lat))
+            pnt = genwindfolder.newpoint(name=name,description=description,\
+                                         coords=[(lon,lat)])
+            pnt.style.iconstyle.icon.href = circle
+            pnt.style.iconstyle.color  = "ff00ff00"
+            pnt.style.labelstyle.color = "00000000"
     ## Show line
     colorbgr = ["ffff6666","ffffff66","ff66ff66","ff66ffff","f6666fff"] 
     # Find range of branch flow
@@ -180,6 +253,9 @@ def makekml(res,timestep):
         branchflow = branchflowmatrix[i]
         if abs(branchflow) >= ranges[0][0] and abs(branchflow) <= ranges[0][1]:
             color = ranges[0][2]
+            capacity = res.grid.branch.capacity[i]
+            reactance = res.grid.branch.reactance[i]
+            susceptance = res.grid.branch._susceptance[i]
             startbus = res.grid.branch.node_from[i]
             for j in xrange(nodecount):
                 if res.grid.node.name[j] == startbus:
@@ -192,12 +268,27 @@ def makekml(res,timestep):
                     endbuslon = res.grid.node.lon[j]
                     endbuslat = res.grid.node.lat[j]
                     break
-            lin = branchlevel1folder.newlinestring(\
+            name = "%s==%s"%(startbus,endbus)
+            description = """
+            Startbus .. %s          <br/>
+            Lon .. %s, Lat .. %s    <br/>
+            Endbus .. %s            <br/>
+            Lon .. %s, Lat .. %s    <br/>
+            Capacity .. %s          <br/>
+            Reactance .. %s         <br/>
+            Susceptance .. %s       <br/>
+            """%(startbus,startbuslon,startbuslat,endbus,endbuslon,endbuslat,\
+                 capacity,reactance,susceptance)
+            lin = branchlevel1folder.newlinestring(name=name,\
+                  description = description,\
                   coords=[(startbuslon,startbuslat),(endbuslon,endbuslat)])
             lin.style.linestyle.color = color
             lin.style.linestyle.width = 1.5    
         if abs(branchflow) > ranges[1][0] and abs(branchflow) <= ranges[1][1]:
             color = ranges[1][2]
+            capacity = res.grid.branch.capacity[i]
+            reactance = res.grid.branch.reactance[i]
+            susceptance = res.grid.branch._susceptance[i]
             startbus = res.grid.branch.node_from[i]
             for j in xrange(nodecount):
                 if res.grid.node.name[j] == startbus:
@@ -210,12 +301,27 @@ def makekml(res,timestep):
                     endbuslon = res.grid.node.lon[j]
                     endbuslat = res.grid.node.lat[j]
                     break
-            lin = branchlevel2folder.newlinestring(\
+            name = "%s==%s"%(startbus,endbus)
+            description = """
+            Startbus .. %s          <br/>
+            Lon .. %s, Lat .. %s    <br/>
+            Endbus .. %s            <br/>
+            Lon .. %s, Lat .. %s    <br/>
+            Capacity .. %s          <br/>
+            Reactance .. %s         <br/>
+            Susceptance .. %s       <br/>
+            """%(startbus,startbuslon,startbuslat,endbus,endbuslon,endbuslat,\
+                 capacity,reactance,susceptance)
+            lin = branchlevel2folder.newlinestring(name=name,\
+                  description = description,\
                   coords=[(startbuslon,startbuslat),(endbuslon,endbuslat)])
             lin.style.linestyle.color = color
             lin.style.linestyle.width = 1.5
         if abs(branchflow) > ranges[2][0] and abs(branchflow) <= ranges[2][1]:
             color = ranges[2][2]
+            capacity = res.grid.branch.capacity[i]
+            reactance = res.grid.branch.reactance[i]
+            susceptance = res.grid.branch._susceptance[i]
             startbus = res.grid.branch.node_from[i]
             for j in xrange(nodecount):
                 if res.grid.node.name[j] == startbus:
@@ -228,12 +334,27 @@ def makekml(res,timestep):
                     endbuslon = res.grid.node.lon[j]
                     endbuslat = res.grid.node.lat[j]
                     break
-            lin = branchlevel3folder.newlinestring(\
+            name = "%s==%s"%(startbus,endbus)
+            description = """
+            Startbus .. %s          <br/>
+            Lon .. %s, Lat .. %s    <br/>
+            Endbus .. %s            <br/>
+            Lon .. %s, Lat .. %s    <br/>
+            Capacity .. %s          <br/>
+            Reactance .. %s         <br/>
+            Susceptance .. %s       <br/>
+            """%(startbus,startbuslon,startbuslat,endbus,endbuslon,endbuslat,\
+                 capacity,reactance,susceptance)
+            lin = branchlevel3folder.newlinestring(name=name,\
+                  description = description,\
                   coords=[(startbuslon,startbuslat),(endbuslon,endbuslat)])
             lin.style.linestyle.color = color
             lin.style.linestyle.width = 1.5
         if abs(branchflow) > ranges[3][0] and abs(branchflow) <= ranges[3][1]:
             color = ranges[3][2]
+            capacity = res.grid.branch.capacity[i]
+            reactance = res.grid.branch.reactance[i]
+            susceptance = res.grid.branch._susceptance[i]
             startbus = res.grid.branch.node_from[i]
             for j in xrange(nodecount):
                 if res.grid.node.name[j] == startbus:
@@ -246,12 +367,27 @@ def makekml(res,timestep):
                     endbuslon = res.grid.node.lon[j]
                     endbuslat = res.grid.node.lat[j]
                     break
-            lin = branchlevel4folder.newlinestring(\
+            name = "%s==%s"%(startbus,endbus)
+            description = """
+            Startbus .. %s          <br/>
+            Lon .. %s, Lat .. %s    <br/>
+            Endbus .. %s            <br/>
+            Lon .. %s, Lat .. %s    <br/>
+            Capacity .. %s          <br/>
+            Reactance .. %s         <br/>
+            Susceptance .. %s       <br/>
+            """%(startbus,startbuslon,startbuslat,endbus,endbuslon,endbuslat,\
+                 capacity,reactance,susceptance)
+            lin = branchlevel4folder.newlinestring(name=name,\
+                  description = description,\
                   coords=[(startbuslon,startbuslat),(endbuslon,endbuslat)])
             lin.style.linestyle.color = color
             lin.style.linestyle.width = 1.5
         if abs(branchflow) > ranges[4][0] and abs(branchflow) <= ranges[4][1]:
             color = ranges[4][2]
+            capacity = res.grid.branch.capacity[i]
+            reactance = res.grid.branch.reactance[i]
+            susceptance = res.grid.branch._susceptance[i]
             startbus = res.grid.branch.node_from[i]
             for j in xrange(nodecount):
                 if res.grid.node.name[j] == startbus:
@@ -264,7 +400,19 @@ def makekml(res,timestep):
                     endbuslon = res.grid.node.lon[j]
                     endbuslat = res.grid.node.lat[j]
                     break
-            lin = branchlevel5folder.newlinestring(\
+            name = "%s==%s"%(startbus,endbus)
+            description = """
+            Startbus .. %s          <br/>
+            Lon .. %s, Lat .. %s    <br/>
+            Endbus .. %s            <br/>
+            Lon .. %s, Lat .. %s    <br/>
+            Capacity .. %s          <br/>
+            Reactance .. %s         <br/>
+            Susceptance .. %s       <br/>
+            """%(startbus,startbuslon,startbuslat,endbus,endbuslon,endbuslat,\
+                 capacity,reactance,susceptance)
+            lin = branchlevel5folder.newlinestring(name=name,\
+                  description = description,\
                   coords=[(startbuslon,startbuslat),(endbuslon,endbuslat)])
             lin.style.linestyle.color = color
             lin.style.linestyle.width = 1.5
@@ -309,8 +457,15 @@ def makekml(res,timestep):
             name = res.grid.node.name[i]
             lon = res.grid.node.lon[i]
             lat = res.grid.node.lat[i]
-            pnt = nodalpricelevel1folder.newpoint(coords=[(lon,lat)])
-            pnt.style.iconstyle.icon.href = circleiconstyleurl
+            description = """
+            Busname .. %s           <br/>
+            Lon .. %s, Lat .. %s    <br/>
+            Price .. %s             <br/>
+            """%(name,lon,lat,nodalprice)
+            pnt = nodalpricelevel1folder.newpoint(name=name,\
+                  description=description,coords=[(lon,lat)])
+            pnt.style.labelstyle.color = "00000000"
+            pnt.style.iconstyle.icon.href = circle
             pnt.style.iconstyle.color = color
     for i in xrange(nodecount):
         nodalprice = nodalpricematrix[i]
@@ -319,8 +474,15 @@ def makekml(res,timestep):
             name = res.grid.node.name[i]
             lon = res.grid.node.lon[i]
             lat = res.grid.node.lat[i]
-            pnt = nodalpricelevel2folder.newpoint(coords=[(lon,lat)])
-            pnt.style.iconstyle.icon.href = circleiconstyleurl
+            description = """
+            Busname .. %s           <br/>
+            Lon .. %s, Lat .. %s    <br/>
+            Price .. %s             <br/>
+            """%(name,lon,lat,nodalprice)
+            pnt = nodalpricelevel2folder.newpoint(name=name,\
+                  description=description,coords=[(lon,lat)])
+            pnt.style.labelstyle.color = "00000000"
+            pnt.style.iconstyle.icon.href = circle
             pnt.style.iconstyle.color = color
     for i in xrange(nodecount):
         nodalprice = nodalpricematrix[i]
@@ -329,8 +491,15 @@ def makekml(res,timestep):
             name = res.grid.node.name[i]
             lon = res.grid.node.lon[i]
             lat = res.grid.node.lat[i]
-            pnt = nodalpricelevel3folder.newpoint(coords=[(lon,lat)])
-            pnt.style.iconstyle.icon.href = circleiconstyleurl
+            description = """
+            Busname .. %s           <br/>
+            Lon .. %s, Lat .. %s    <br/>
+            Price .. %s             <br/>
+            """%(name,lon,lat,nodalprice)
+            pnt = nodalpricelevel3folder.newpoint(name=name,\
+                  description=description,coords=[(lon,lat)])
+            pnt.style.labelstyle.color = "00000000"
+            pnt.style.iconstyle.icon.href = circle
             pnt.style.iconstyle.color = color
     for i in xrange(nodecount):
         nodalprice = nodalpricematrix[i]
@@ -339,8 +508,15 @@ def makekml(res,timestep):
             name = res.grid.node.name[i]
             lon = res.grid.node.lon[i]
             lat = res.grid.node.lat[i]
-            pnt = nodalpricelevel4folder.newpoint(coords=[(lon,lat)])
-            pnt.style.iconstyle.icon.href = circleiconstyleurl
+            description = """
+            Busname .. %s           <br/>
+            Lon .. %s, Lat .. %s    <br/>
+            Price .. %s             <br/>
+            """%(name,lon,lat,nodalprice)
+            pnt = nodalpricelevel4folder.newpoint(name=name,\
+                  description=description,coords=[(lon,lat)])
+            pnt.style.labelstyle.color = "00000000"
+            pnt.style.iconstyle.icon.href = circle
             pnt.style.iconstyle.color = color
     for i in xrange(nodecount):
         nodalprice = nodalpricematrix[i]
@@ -349,8 +525,15 @@ def makekml(res,timestep):
             name = res.grid.node.name[i]
             lon = res.grid.node.lon[i]
             lat = res.grid.node.lat[i]
-            pnt = nodalpricelevel5folder.newpoint(coords=[(lon,lat)])
-            pnt.style.iconstyle.icon.href = circleiconstyleurl
+            description = """
+            Busname .. %s           <br/>
+            Lon .. %s, Lat .. %s    <br/>
+            Price .. %s             <br/>
+            """%(name,lon,lat,nodalprice)
+            pnt = nodalpricelevel5folder.newpoint(name=name,\
+                  description=description,coords=[(lon,lat)])
+            pnt.style.labelstyle.color = "00000000"
+            pnt.style.iconstyle.icon.href = circle
             pnt.style.iconstyle.color = color
     # Save kml file
     kml.save("result.kml")
