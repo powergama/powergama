@@ -337,11 +337,14 @@ class LpProblem(object):
             self._pfPload[idx_node] = demOutflow
 
             
-            cpf = pulp.lpSum(
+            # The 1e-6 constant is included to get dual variables that have 
+            # a value - don't know why this works.            
+            cpf = (
                 self._pfPgen[idx_node]
                 +self._pfPdc[idx_node]
-                +self._pfPload[idx_node]
-                +self._pfPshed[idx_node]) == self._pfPflow[idx_node]
+                +self._pfPload[idx_node]+[1e-6]
+                +self._pfPshed[idx_node] == self._pfPflow[idx_node])
+                
             # Find the associated constraint and modify it:            
             key_constr = self._constraints_pf[idx_node]
             self.prob.constraints[key_constr] = cpf
