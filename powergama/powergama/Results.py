@@ -67,13 +67,17 @@ class Results(object):
         self.marginalprice.append(marginalprice)
         
         # self.storageGeneratorsIdx.append(idx_generatorsWithStorage)
+
+
     
     def plotStorageFilling(self):
         '''Show storage filling level (MWh) for generators with storage'''
+        fig = plt.figure()
         if len(self.storage_idx_generators) > 0:
             plt.plot(self.timerange,self.storage)
         else:
             print "There are no generators with storage in this system"
+        plt.show()
         return
         
     
@@ -101,12 +105,14 @@ class Results(object):
             ax2.legend(loc="upper right")
                      
         ax1.legend(loc="upper left")
+        plt.show()
         return
 
 
     def plotStoragePerArea(self,area,absolute=False):
         '''Show generation per area '''
         
+        fig = plt.figure()
         generators = self.grid.getGeneratorsPerAreaAndType()
         cap = self.grid.generator.storage
         for gentype in generators[area].keys():
@@ -133,15 +139,17 @@ class Results(object):
                     sumStorAreaType = [mystor[i]/mycap for i in range(len(mystor))]
                 plt.plot(self.timerange,sumStorAreaType,label=gentype)
             
-       # plt.legend(generators[area].keys() , loc="upper right")
+        # plt.legend(generators[area].keys() , loc="upper right")
         plt.legend(loc="upper right")
         plt.title("Storage in %s"%(area))
+        plt.show()
 
         return
         
         
     def plotGenerationPerArea(self,area):
         '''Show generation per area '''
+        fig = plt.figure()
         generators = self.grid.getGeneratorsPerAreaAndType()
         for gentype in generators[area].keys():
             idxGen = generators[area][gentype]
@@ -152,12 +160,14 @@ class Results(object):
             
         plt.legend(generators[area].keys() , loc="upper right")
         plt.title("Generation in %s"%(area))
-
+        plt.show()
         return
+
 
     def plotDemandPerArea(self,areas):
         '''Show demand per area(s) '''
         
+        fig = plt.figure()
         consumer = self.grid.consumer
         if type(areas) is str:
             areas = [areas]
@@ -174,11 +184,13 @@ class Results(object):
             
         plt.legend(areas , loc="upper right")
         plt.title("Power demand")
-
+        plt.show()
         return
+
     
     def plotMarginalPrice(self,generator_index=None):
         '''Show marginal prices for generators with storage'''
+        fig = plt.figure()
         if generator_index is None:
             plt.plot(self.timerange,self.marginalprice)
             plt.legend(
@@ -197,6 +209,7 @@ class Results(object):
                      [self.sensitivityNodePower[h][nodeidx] 
                          for h in self.timerange])
             plt.legend(['storage value','nodal price'])
+        plt.show()
         return
         
             
@@ -205,6 +218,7 @@ class Results(object):
         '''Show a map with nodes and branches'''
         data=self.grid
         
+        fig = plt.figure()
         lat_max =  max(self.grid.node.lat)+1
         lat_min =  min(self.grid.node.lat)-1
         lon_max =  max(self.grid.node.lon)+1
@@ -281,6 +295,7 @@ class Results(object):
             map area [lat_min, lon_min, lat_max, lon_max]
         '''
         
+        fig = plt.figure()
         data = self.grid
         res = self
         
