@@ -324,8 +324,10 @@ class Results(object):
             allareas = data.getAllAreas()
             colours_co = cm.prism(np.linspace(0, 1, len(allareas)))
         elif nodetype=='nodalprice':
+            # Note that sometimes the solver may return sensitivity = None
+            # such values are converted to NAN in the asarray method
             avgprice = np.sqrt(
-                np.average(np.asarray(res.sensitivityNodePower)**2,
+                np.average(np.asarray(res.sensitivityNodePower,dtype=float)**2,
                            axis=0)) #rms
             print ("Nodal prices: max=%g, min=%g" 
                 %(max(avgprice),min(avgprice)) )
@@ -349,8 +351,9 @@ class Results(object):
             numBranchCategories = 11
             colours_b = cm.jet(np.linspace(0, 1, numBranchCategories))
             avgsense = np.sqrt(
-                np.average(np.asarray(res.sensitivityBranchCapacity)**2,
-                           axis=0)) #rms 
+                np.average(
+                np.asarray(res.sensitivityBranchCapacity,dtype=float)**2,
+                axis=0)) #rms 
             print ("Branch capacity senitivity: max=%g, min=%g" 
                 %(max(avgsense),min(avgsense)) )
         
@@ -390,11 +393,16 @@ class Results(object):
                 maxsense = max(avgsense)
                 if j in res.idxConstrainedBranchCapacity:
                     idx = res.idxConstrainedBranchCapacity.index(j)
-                    category = math.floor(
-                        avgsense[idx]/maxsense*(numBranchCategories-1))
-                    #print "sense cat=",category
-                    col = colours_b[category]
-                    lwidth = 2
+                    if not  np.isnan(avgsense[idx]):
+                        category = math.floor(
+                            avgsense[idx]/maxsense*(numBranchCategories-1))
+                        #print "sense cat=",category
+                        col = colours_b[category]
+                        lwidth = 2
+                    else:
+                        #NAN sensitivity (not returned by solver)
+                        col='grey'
+                        lwidth = 2
                 else:
                     col = 'grey'
                     lwidth = 1
@@ -442,6 +450,11 @@ class Results(object):
             s=m.scatter(x,y,marker='o',c=avgprice, cmap=cm.jet, zorder=2)
             cb=m.colorbar(s)
             cb.set_label('Nodal price')
+            #nodes with NAN nodal price plotted in gray:
+            for i in xrange(len(avgprice)):
+                if np.isnan(avgprice[i]):
+                    m.scatter(x[i],y[i],c='dimgray',zorder=2)
+            
         else:
             col='dimgray'
             m.scatter(x,y,marker='o',color=col, zorder=2)

@@ -20,7 +20,14 @@ def parseId(num):
     except ValueError:
         d=num
     return str(d)
-    
+
+def parseNum(num):
+    '''parse number and return a float'''
+    return float(num)
+
+
+#_QUOTINGTYPE=csv.QUOTE_NONNUMERIC
+_QUOTINGTYPE=csv.QUOTE_MINIMAL
 
 class _Nodes(object):
     '''Private class for grid model nodes'''
@@ -33,12 +40,12 @@ class _Nodes(object):
     
     def readFromFile(self,filename):
         with open(filename,'rb') as csvfile:
-            datareader = csv.DictReader(csvfile,delimiter=',',quoting=csv.QUOTE_NONNUMERIC)         
+            datareader = csv.DictReader(csvfile,delimiter=',',quoting=_QUOTINGTYPE)         
             for row in datareader:
                 self.name.append(parseId(row["id"]))
-                self.area.append(row["area"])
-                self.lat.append(row["lat"])
-                self.lon.append(row["lon"])
+                self.area.append(parseId(row["area"]))
+                self.lat.append(parseNum(row["lat"]))
+                self.lon.append(parseNum(row["lon"]))
         return
         
     def writeToFile(self,filename):
@@ -47,7 +54,7 @@ class _Nodes(object):
         headers = ["id","area","lat","lon"]
         with open(filename,'wb') as csvfile:
             datawriter = csv.DictWriter(csvfile, delimiter=',',fieldnames=headers,\
-                            quotechar='"', quoting=csv.QUOTE_NONNUMERIC)
+                            quotechar='"', quoting=_QUOTINGTYPE)
                         
             datawriter.writerow(dict((fn,fn) for fn in headers))
             for i in range(self.numNodes()):
@@ -72,14 +79,13 @@ class _Branches(object):
     
     def readFromFile(self,filename):
         with open(filename,'rb') as csvfile:
-            datareader = csv.DictReader(csvfile,delimiter=',',quoting=csv.QUOTE_NONNUMERIC)           
+            datareader = csv.DictReader(csvfile,delimiter=',',quoting=_QUOTINGTYPE)           
             for row in datareader:
                 self.node_from.append(parseId(row["from"]))
                 self.node_to.append(parseId(row["to"]))
-                # Using float() to make sure it's not treated as an integer                
-                self.reactance.append(float(row["reactance"])) 
-                self._susceptance.append(-1.0/row["reactance"]) #redundant, but useful
-                self.capacity.append(float(row["capacity"]))
+                self.reactance.append(parseNum(row["reactance"])) 
+                self._susceptance.append(-1.0/parseNum(row["reactance"])) #redundant, but useful
+                self.capacity.append(parseNum(row["capacity"]))
 #                if row["capacity"]=="Inf" or row["capacity"]=="inf":
 #                    self.capacity.append(inf)
 #                else:
@@ -92,7 +98,7 @@ class _Branches(object):
         headers = ["from","to","reactance","capacity"]
         with open(filename,'wb') as csvfile:
             datawriter = csv.DictWriter(csvfile, delimiter=',',\
-                                quotechar='"', quoting=csv.QUOTE_NONNUMERIC,\
+                                quotechar='"', quoting=_QUOTINGTYPE,\
                                 fieldnames=headers)
             datawriter.writerow(dict((fn,fn) for fn in headers))
             for i in range(self.numBranches()):
@@ -126,12 +132,12 @@ class _DcBranches(object):
     
     def readFromFile(self,filename):
         with open(filename,'rb') as csvfile:
-            datareader = csv.DictReader(csvfile,delimiter=',',quoting=csv.QUOTE_NONNUMERIC)           
+            datareader = csv.DictReader(csvfile,delimiter=',',quoting=_QUOTINGTYPE)           
             for row in datareader:
                 self.node_from.append(parseId(row["from"]))
                 self.node_to.append(parseId(row["to"]))
                 # Using float() to make sure it's not treated as an integer                
-                self.capacity.append(float(row["capacity"]))
+                self.capacity.append(parseNum(row["capacity"]))
         return
     
     def writeToFile(self,filename):
@@ -140,7 +146,7 @@ class _DcBranches(object):
         headers = ["from","to","capacity"]
         with open(filename,'wb') as csvfile:
             datawriter = csv.DictWriter(csvfile, delimiter=',',\
-                                quotechar='"', quoting=csv.QUOTE_NONNUMERIC,\
+                                quotechar='"', quoting=_QUOTINGTYPE,\
                                 fieldnames=headers)
             datawriter.writerow(dict((fn,fn) for fn in headers))
             for i in range(self.numBranches()):
@@ -187,21 +193,21 @@ class _Generators(object):
 
     def readFromFile(self,filename):
         with open(filename,'rb') as csvfile:
-            datareader = csv.DictReader(csvfile,delimiter=',',quoting=csv.QUOTE_NONNUMERIC)
+            datareader = csv.DictReader(csvfile,delimiter=',',quoting=_QUOTINGTYPE)
             for row in datareader:
                 #print(row)
                 self.node.append(parseId(row["node"]))
-                self.prodMax.append(row["pmax"])
-                self.prodMin.append(row["pmin"])
-                self.marginalcost.append(row["basecost"])
-                self.storage.append(float(row["storage_cap"]))
-                self.storagelevel_init.append(row["storage_ini"])
+                self.prodMax.append(parseNum(row["pmax"]))
+                self.prodMin.append(parseNum(row["pmin"]))
+                self.marginalcost.append(parseNum(row["basecost"]))
+                self.storage.append(parseNum(row["storage_cap"]))
+                self.storagelevel_init.append(parseNum(row["storage_ini"]))
                 self.storagevalue_profile_filling.append(parseId(row["storval_filling_ref"]))
                 self.storagevalue_profile_time.append(parseId(row["storval_time_ref"]))
-                self.inflow_factor.append(row["inflow_fac"])
+                self.inflow_factor.append(parseNum(row["inflow_fac"]))
                 self.inflow_profile.append(parseId(row["inflow_ref"]))
-                self.gentype.append(row["type"])
-                self.desc.append(row["desc"])
+                self.gentype.append(parseId(row["type"]))
+                self.desc.append(parseId(row["desc"]))
                 
                 #if inflow is set to zero, then use Pmax instead
                 # (unlimited amount of fuel)
@@ -221,7 +227,7 @@ class _Generators(object):
                     "storval_time_ref"]
         with open(filename,'wb') as csvfile:
             datawriter = csv.writer(csvfile, delimiter=',',\
-                                quotechar='"', quoting=csv.QUOTE_NONNUMERIC)
+                                quotechar='"', quoting=_QUOTINGTYPE)
             datawriter.writerow(headers)
             for i in range(self.numGenerators()):
                 datarow = [
@@ -250,10 +256,10 @@ class _Consumers(object):
     def readFromFile(self,filename):
         with open(filename,'rb') as csvfile:
            datareader = csv.DictReader(csvfile,delimiter=',',
-                                       quoting=csv.QUOTE_NONNUMERIC)
+                                       quoting=_QUOTINGTYPE)
            for row in datareader:
                self.node.append(parseId(row["node"]))
-               self.load.append(row["demand_avg"])
+               self.load.append(parseNum(row["demand_avg"]))
                self.load_profile.append(parseId(row["demand_ref"]))
         return
 
@@ -263,7 +269,7 @@ class _Consumers(object):
         headers = ["node","demand_avg","demand_ref"]
         with open(filename,'wb') as csvfile:
             datawriter = csv.writer(csvfile, delimiter=',',\
-                                quotechar='"', quoting=csv.QUOTE_NONNUMERIC)
+                                quotechar='"', quoting=_QUOTINGTYPE)
             datawriter.writerow(headers)
             for i in range(self.numConsumers()):
                 datarow = [self.node[i], self.load[i],self.load_profile[i]]
@@ -330,14 +336,14 @@ class GridData(object):
             #values = numpy.loadtxt(csvfile,delimiter=",",skiprows=1)
             
             datareader = csv.DictReader(csvfile,delimiter=',',
-                                        quoting=csv.QUOTE_NONNUMERIC)
+                                        quoting=_QUOTINGTYPE)
             fieldnames = datareader.fieldnames
             profiles= {fn:[] for fn in fieldnames}
             rowNum=0
             for row in datareader:
                 if rowNum in timerange:
                     for fn in fieldnames:
-                        profiles[fn].append(row[fn])
+                        profiles[fn].append(parseNum(row[fn]))
                 rowNum = rowNum+1
         return profiles
         # keep only values within given time range:
@@ -349,12 +355,12 @@ class GridData(object):
         with open(filename,'rb') as csvfile:
             #values = numpy.loadtxt(csvfile,delimiter=",",skiprows=1)
             datareader = csv.DictReader(csvfile,delimiter=',',
-                                        quoting=csv.QUOTE_NONNUMERIC)
+                                        quoting=_QUOTINGTYPE)
             fieldnames = datareader.fieldnames
             profiles= {fn:[] for fn in fieldnames}
             for row in datareader:
                 for fn in fieldnames:
-                    profiles[fn].append(row[fn])
+                    profiles[fn].append(parseNum(row[fn]))
         return profiles
         #return values
         

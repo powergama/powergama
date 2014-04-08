@@ -71,7 +71,8 @@ class LpProblem(object):
 
         #print "Creating LP problem..."        
         self.prob = pulp.LpProblem(
-            "PowerGAMA "+str(datetime.now()), pulp.LpMinimize)
+            "PowerGAMA_"+datetime.now().strftime("%Y-%m-%dT%H%M%S"), 
+            pulp.LpMinimize)
 
         # Define (and keep track of) LP problem variables
         self._var_generation = [
@@ -342,7 +343,7 @@ class LpProblem(object):
             cpf = (
                 self._pfPgen[idx_node]
                 +self._pfPdc[idx_node]
-                +self._pfPload[idx_node]+[1e-6]
+                +self._pfPload[idx_node]
                 +self._pfPshed[idx_node] == self._pfPflow[idx_node])
                 
             # Find the associated constraint and modify it:            
@@ -392,24 +393,24 @@ class LpProblem(object):
         #senseBranchCapacityLower = [cval.pi if cval.pi!=None else 0 for cval in self._constraints_branchLowerBounds]
         #senseN = [cval.pi for cval in self._constraints_pf]
         senseBranchCapacityUpper = [self.prob.constraints[ckey].pi
-            if self.prob.constraints[ckey].pi!=None else 0
+            if self.prob.constraints[ckey].pi!=None else None
             for ckey in self._constraints_branchUpperBounds]
         senseBranchCapacityLower = [self.prob.constraints[ckey].pi
-            if self.prob.constraints[ckey].pi!=None else 0
+            if self.prob.constraints[ckey].pi!=None else None
             for ckey in self._constraints_branchLowerBounds]
         senseDcBranchCapacityUpper = [self.prob.constraints[ckey].pi
-            if self.prob.constraints[ckey].pi!=None else 0
+            if self.prob.constraints[ckey].pi!=None else None
             for ckey in self._constraints_dcbranchUpperBounds]
         senseDcBranchCapacityLower = [self.prob.constraints[ckey].pi
-            if self.prob.constraints[ckey].pi!=None else 0
+            if self.prob.constraints[ckey].pi!=None else None
             for ckey in self._constraints_dcbranchLowerBounds]
         senseN = [self.prob.constraints[ckey].pi/const.baseMVA
-            if self.prob.constraints[ckey].pi!=None else 0
+            if self.prob.constraints[ckey].pi!=None else None
             for ckey in self._constraints_pf]
-        senseB = [(i-j)/const.baseMVA for i,j in 
-            zip(senseBranchCapacityUpper, senseBranchCapacityLower)]
-        senseDcB = [(i-j)/const.baseMVA for i,j in 
-            zip(senseDcBranchCapacityUpper, senseDcBranchCapacityLower)]
+        senseB = [(i-j)/const.baseMVA if i!=None and j!=None else None 
+            for i,j in zip(senseBranchCapacityUpper, senseBranchCapacityLower)]
+        senseDcB = [(i-j)/const.baseMVA  if i!=None and j!=None else None 
+            for i,j in zip(senseDcBranchCapacityUpper, senseDcBranchCapacityLower)]
             
         loadshed = [v.varValue for v in self._var_loadshedding]
         # TODO: This subtraction generates warning - because it includes nan and inf?
@@ -461,6 +462,7 @@ class LpProblem(object):
             self._updateLpProblem(timestep)
           
             # solve the LP problem
+            #self.prob.solve(self.solver,use_mps=True)
             self.prob.solve(self.solver)
             
             # print result summary            
