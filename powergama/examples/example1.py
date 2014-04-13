@@ -5,12 +5,12 @@ Illustrative example based on the Nordic power system
 Note: The case setup is NOT intended to be realistic. 
 This example is for illustration of the PowerGAMA tool only
 """
-
 import powergama
+from powergama.GIS import makekml
 import time
 
 datapath= "data/"
-timerange=range(0,24*3)
+timerange=range(0,24*1)
 
 data = powergama.GridData()
 
@@ -31,13 +31,13 @@ start_time = time.time()
 res = lp.solve()
 end_time = time.time()
 print end_time - start_time, "seconds"
+makekml(res,timeMaxMin=None)
 
 # Save results to file (for later analysis)
 #import pickle
 #import cPickle as pickle
 #with open('saved_2w.pickle','wb') as f:
 #    pickle.dump({'data':data,'lp':lp,'res':res},f)
-
 
 ## Load previously generated results from file
 #import powergama
