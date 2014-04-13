@@ -31,9 +31,10 @@ class Results(object):
         self.storage_idx_generators = grid.getIdxGeneratorsWithStorage()
         self.idxConstrainedBranchCapacity \
             = grid.getIdxBranchesWithFlowConstraints()
+        
         self.db = db.Database(databasefile)
-
         self.db.createTables(grid)
+
         '''
         self.objectiveFunctionValue=[]    
         self.generatorOutput=[]
@@ -73,7 +74,9 @@ class Results(object):
             storage = storage,
             inflow_spilled = inflow_spilled,
             loadshed_power = loadshed_power,
-            marginalprice = marginalprice)
+            marginalprice = marginalprice,
+            idx_storagegen = self.storage_idx_generators,
+            idx_branchsens = self.idxConstrainedBranchCapacity)
        
         '''
         self.objectiveFunctionValue.append(objective_function)
@@ -103,6 +106,8 @@ class Results(object):
             storagefilling = self.db.getStorageFilling(storageindx,timeMaxMin)
             plt.figure()
             plt.plot(timerange,storagefilling)
+            plt.title("Storage filling level for generator %d"
+                %(storageindx))
             plt.show()
         else:
             print "These are the generators with storage:"
@@ -134,13 +139,16 @@ class Results(object):
         
         # Storage filling level (if generator has storage)
         if generator_index in self.storage_idx_generators:
-            stor_idx = self.storage_idx_generators.index(generator_index)
-            storagefilling = self.db.getStorageFilling(stor_idx,timeMaxMin)
+            storagefilling = self.db.getStorageFilling(generator_index,timeMaxMin)
             ax2 = plt.twinx() #separate y axis
             ax2.plot(timerange,storagefilling,'-g', label='storage')
             ax2.legend(loc="upper right")
                      
         ax1.legend(loc="upper left")
+        plt.title("Generator %d (%s) at node %s" 
+            % (generator_index,
+               self.grid.generator.gentype[generator_index],
+               self.grid.generator.node[generator_index]))
         plt.show()
         return
 
@@ -160,13 +168,14 @@ class Results(object):
             idx_storage = [
                 [i,v] for i,v in enumerate(self.storage_idx_generators) 
                 if v in idxGen]
-            # idx_storage is now a list of index pairs for generators with storage
+            # idx_storage is now a list of index pairs for generators with 
+            #    storage in the given area
             # the first value is index in generator list
-            # the second value is index in storage list
+            # the second value is index in storage list (not used)
                 
             if len(idx_storage) > 0:
                 mystor = [sum([sum(
-                    self.db.getStorageFilling(idx_storage[i][0],[t,t+1]))
+                    self.db.getStorageFilling(idx_storage[i][1],[t,t+1]))
                     for i in xrange(len(idx_storage))])
                     for t in timerange]
                 mycap = sum( [ cap[idx_storage[i][1]]
@@ -180,7 +189,7 @@ class Results(object):
             
         # plt.legend(generators[area].keys() , loc="upper right")
         plt.legend(loc="upper right")
-        plt.title("Storage in %s"%(area))
+        plt.title("Total storage level in %s"%(area))
         plt.show()
 
         return
@@ -234,23 +243,34 @@ class Results(object):
         return
 
     
-    def plotStorageValues(self,storageindx, timeMaxMin=None):
-        '''Show storage values (marginal prices) for generators with storage'''
+    def plotStorageValues(self,genindx, timeMaxMin=None):
+        '''Plot storage values (marginal prices) for generators with storage
+        
+        Parameters
+        ----------
+        genindx (int)
+            index of generator for which to make the plot
+        timeMaxMin [int,int] (default=None)
+            time interval for the plot [start,end]
+        '''
 
         if timeMaxMin is None:
             timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
         timerange = range(timeMaxMin[0],timeMaxMin[-1])
 
-        if storageindx < len( self.storage_idx_generators):
+        if genindx in self.storage_idx_generators:
             nodeidx = self.grid.node.name.index(
-                self.grid.generator.node[
-                    self.storage_idx_generators[storageindx]])
-            storagevalue = self.db.getStorageValue(storageindx,timeMaxMin)
+                self.grid.generator.node[genindx])
+            storagevalue = self.db.getStorageValue(genindx,timeMaxMin)
             nodalprice = self.db.getNodalPrice(nodeidx,timeMaxMin)
             plt.figure()
             plt.plot(timerange,storagevalue)
             plt.plot(timerange,nodalprice)
             plt.legend(['storage value','nodal price'])
+            plt.title("Storage value  for generator %d (%s) in %s"
+                % (genindx,
+               self.grid.generator.gentype[genindx],
+               self.grid.generator.node[genindx]))
             plt.show()
         else:
             print "These are the generators with storage:"
@@ -262,7 +282,8 @@ class Results(object):
 
         
     def plotMapGrid(self,nodetype='',branchtype='',dcbranchtype='',
-                    show_node_labels=False,latlon=None):
+                    show_node_labels=False,latlon=None,timeMaxMin=None,
+                    dotsize=40):
         '''
         Plot results to map
         
@@ -280,6 +301,10 @@ class Results(object):
             map area [lat_min, lon_min, lat_max, lon_max]
         '''
         
+        if timeMaxMin is None:
+            timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
+        timerange = range(timeMaxMin[0],timeMaxMin[-1])
+
         plt.figure()
         data = self.grid
         res = self
@@ -326,9 +351,10 @@ class Results(object):
         elif nodetype=='nodalprice':
             # Note that sometimes the solver may return sensitivity = None
             # such values are converted to NAN in the asarray method
+            nodalprices = self.db.getResultNodalPriceAll(timeMaxMin)            
             avgprice = np.sqrt(
-                np.average(np.asarray(res.sensitivityNodePower,dtype=float)**2,
-                           axis=0)) #rms
+                np.average(np.asarray(nodalprices,dtype=float)**2,
+                           axis=1)) #rms
             print ("Nodal prices: max=%g, min=%g" 
                 %(max(avgprice),min(avgprice)) )
         
@@ -340,9 +366,9 @@ class Results(object):
         elif branchtype=='utilisation' or branchtype=='flow':
             numBranchCategories = 11
             colours_b = cm.jet(np.linspace(0, 1, numBranchCategories))
-            #colours_ut[0]=(0.1, 0.1, 0.1, 1.0) #rgba
-            avgflow = np.sqrt(np.average(np.asarray(res.branchFlow)**2,
-                                         axis=0)) #rms
+            branchflow = self.db.getResultBranchFlowAll(timeMaxMin)
+            avgflow = np.sqrt(np.average(np.asarray(
+                branchflow,dtype=float)**2,axis=1)) #rms
             cap = res.grid.branch.capacity
             utilisation = avgflow / cap # element-by-element
             print ("Branch utilisation: max=%g, min=%g" 
@@ -350,12 +376,12 @@ class Results(object):
         elif branchtype=='sensitivity':
             numBranchCategories = 11
             colours_b = cm.jet(np.linspace(0, 1, numBranchCategories))
-            avgsense = np.sqrt(
-                np.average(
-                np.asarray(res.sensitivityBranchCapacity,dtype=float)**2,
-                axis=0)) #rms 
+            branchsens = self.db.getResultBranchSensAll(timeMaxMin)
+            avgsense = np.sqrt(np.average(np.asarray(
+                branchsens,dtype=float)**2,axis=1)) #rms 
+            maxsense = np.nanmax(avgsense)
             print ("Branch capacity senitivity: max=%g, min=%g" 
-                %(max(avgsense),min(avgsense)) )
+                %(np.nanmax(avgsense),np.nanmin(avgsense)) )
         
         
         # Plot AC branches (as great circles)
@@ -390,9 +416,9 @@ class Results(object):
                 if category*2 > numBranchCategories:
                     lwidth = 2
             elif branchtype=='sensitivity':
-                maxsense = max(avgsense)
                 if j in res.idxConstrainedBranchCapacity:
-                    idx = res.idxConstrainedBranchCapacity.index(j)
+                    #idx = res.idxConstrainedBranchCapacity.index(j)
+                    idx = j
                     if not  np.isnan(avgsense[idx]):
                         category = math.floor(
                             avgsense[idx]/maxsense*(numBranchCategories-1))
@@ -445,19 +471,23 @@ class Results(object):
                 co_x = [x[i] for i in co_nodes]
                 co_y = [y[i] for i in co_nodes]
                 col = colours_co[co]
-                m.scatter(co_x,co_y,marker='o',color=col, zorder=2)
+                m.scatter(co_x,co_y,marker='o',color=col, 
+                          zorder=2,s=dotsize)
         elif nodetype == 'nodalprice':
-            s=m.scatter(x,y,marker='o',c=avgprice, cmap=cm.jet, zorder=2)
+            s=m.scatter(x,y,marker='o',c=avgprice, cmap=cm.jet, 
+                        zorder=2,s=dotsize)
             cb=m.colorbar(s)
             cb.set_label('Nodal price')
             #nodes with NAN nodal price plotted in gray:
             for i in xrange(len(avgprice)):
                 if np.isnan(avgprice[i]):
-                    m.scatter(x[i],y[i],c='dimgray',zorder=2)
+                    m.scatter(x[i],y[i],c='dimgray',
+                              zorder=2,s=dotsize)
             
         else:
             col='dimgray'
-            m.scatter(x,y,marker='o',color=col, zorder=2)
+            m.scatter(x,y,marker='o',color=col, 
+                      zorder=2,s=dotsize)
             #cb=m.colorbar()
         
         
@@ -469,7 +499,7 @@ class Results(object):
                 if xpt > x1 and xpt < x2 and ypt > y1 and ypt < y2:
                     plt.text(xpt, ypt, label)
         
-        plt.title('Nodes and branches')
+        plt.title('Nodes (%s) and branches (%s)' %(nodetype,branchtype))
         plt.show()
 
         return
