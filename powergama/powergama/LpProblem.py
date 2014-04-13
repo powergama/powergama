@@ -26,7 +26,6 @@ from datetime import datetime as datetime
 import constants as const
 import scipy.sparse
 import itertools
-from Results import Results
 import sys
 
 class LpProblem(object):
@@ -55,8 +54,9 @@ class LpProblem(object):
         self._idx_generatorsStorageProfileTime = asarray(
             [grid.generator.storagevalue_profile_time[i] 
             for i in self._idx_generatorsWithStorage])
-
                 
+        self._fancy_progressbar = False        
+
         # Initial values of marginal costs, storage and storage values      
         self._storage = (
             asarray(grid.generator.storagelevel_init)
@@ -388,6 +388,7 @@ class LpProblem(object):
         # Collect and store results
         F = pulp.value(self.prob.objective)  
         Pb = [v.varValue for v in self._var_branchflow]
+        Pdc = [v.varValue for v in self._var_dc]
         theta = [v.varValue for v in self._var_angle]
         #senseBranchCapacityUpper = [cval.pi if cval.pi!=None else 0 for cval in self._constraints_branchUpperBounds]
         #senseBranchCapacityLower = [cval.pi if cval.pi!=None else 0 for cval in self._constraints_branchLowerBounds]
@@ -421,22 +422,25 @@ class LpProblem(object):
         # TODO: Only keep track of inflow spilled for generators with 
         # nonzero inflow
         
-        results.addResultsFromTimestep(objective_function = F,
-                                generator_power = Pgen,
-                                branch_power = Pb,
-                                node_angle = theta,
-                                sensitivity_branch_capacity = senseB,
-                                sensitivity_dcbranch_capacity = senseDcB,
-                                sensitivity_node_power = senseN,
-                                storage = storagelevel.tolist(),
-                                inflow_spilled = energyspilled.tolist(),
-                                loadshed_power = loadshed,
-                                marginalprice = marginalprice.tolist())
+        results.addResultsFromTimestep(
+            timestep = self._grid.timerange[0]+timestep,
+            objective_function = F,
+            generator_power = Pgen,
+            branch_power = Pb,
+            dcbranch_power = Pdc,
+            node_angle = theta,
+            sensitivity_branch_capacity = senseB,
+            sensitivity_dcbranch_capacity = senseDcB,
+            sensitivity_node_power = senseN,
+            storage = storagelevel.tolist(),
+            inflow_spilled = energyspilled.tolist(),
+            loadshed_power = loadshed,
+            marginalprice = marginalprice.tolist())
 
         return
     
         
-    def solve(self,results=None):
+    def solve(self,results):
         '''
         Solve LP problem for each time step in the time range
         
@@ -451,13 +455,13 @@ class LpProblem(object):
             PowerGAMA Results object reference
         '''
 
-        if results == None:
-            results = Results(self._grid)      
+        #if results == None:
+        #    results = Results(self._grid)      
             
         print "Solving..."
         #prob0 = pulp.LpProblem("Grid Market Power - base", pulp.LpMinimize)
         numTimesteps = len(self._grid.timerange)
-        for timestep in range(numTimesteps):
+        for timestep in xrange(numTimesteps):
             # update LP problem (inflow, storage, profiles)                     
             self._updateLpProblem(timestep)
           
@@ -466,7 +470,7 @@ class LpProblem(object):
             self.prob.solve(self.solver)
             
             # print result summary            
-            value_costfunction = pulp.value(self.prob.objective)
+            #value_costfunction = pulp.value(self.prob.objective)
             self._update_progress(timestep,numTimesteps)
             #print "Timestep=",timestep, " => ",  \
             #    pulp.LpStatus[self.prob.status], \
@@ -478,11 +482,25 @@ class LpProblem(object):
         return results
 
     def _update_progress(self,n,maxn):
-        barLength = 20
-        progress = float(n+1)/maxn
-        block = int(round(barLength*progress))
-        text = "\rProgress: [{0}] {1} ({2}%)  ".format( "="*block + " "*(barLength-block), 
-           n, int(progress*100))
-        sys.stdout.write(text)
-        sys.stdout.flush()
+        if self._fancy_progressbar:
+            barLength = 20
+            progress = float(n+1)/maxn
+            block = int(round(barLength*progress))
+            text = "\rProgress: [{0}] {1} ({2}%)  " \
+                .format( "="*block + " "*(barLength-block), 
+                        n, int(progress*100))
+            sys.stdout.write(text)
+            sys.stdout.flush()
+        else:
+            if int(100*(n+1)/maxn) > int(100*n/maxn):
+                sys.stdout.write("\b\b\b\b\b\b%d%% "% (int(100*(n+1)/maxn)))
+                sys.stdout.flush()
+    
+    def setProgressBar(self,value):
+        if value=='fancy':
+            self._fancy_progressbar=True
+        elif value=='default':
+            self._fancy_progressbar=False
+        else:
+            raise Exception('Progress bar bust be either "default" or "fancy"')
         
