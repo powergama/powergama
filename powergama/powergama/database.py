@@ -190,7 +190,7 @@ class Database(object):
           
 ### Node results
 
-    def getNodalPrice(self,nodeindx,timeMaxMin):
+    def getResultNodalPrice(self,nodeindx,timeMaxMin):
         '''Get nodal price at specified node'''
         con = db.connect(self.filename)
         with con:        
@@ -208,7 +208,7 @@ class Database(object):
         nodelist = self.getGridNodeIndices()        
         nodalprices = []        
         for node in  nodelist:
-            nodalprices.append(self.getNodalPrice(node,timeMaxMin))
+            nodalprices.append(self.getResultNodalPrice(node,timeMaxMin))
         return nodalprices
 
 ### Branch results
@@ -262,7 +262,7 @@ class Database(object):
         
 ### Generator results
         
-    def getStorageFilling(self,storageindx,timeMaxMin):
+    def getResultStorageFilling(self,genindx,timeMaxMin):
         '''Get storage filling level for storage generators'''
         con = db.connect(self.filename)
         with con:        
@@ -271,12 +271,12 @@ class Database(object):
             cur.execute("SELECT storage FROM Res_Storage "
                 +"WHERE timestep>=? AND timestep<? AND indx=?"
                 +" ORDER BY timestep",
-                (timeMaxMin[0],timeMaxMin[-1],storageindx))
+                (timeMaxMin[0],timeMaxMin[-1],genindx))
             rows = cur.fetchall()
             values = [row[0] for row in rows]        
         return values
 
-    def getStorageValue(self,storageindx,timeMaxMin):
+    def getResultStorageValue(self,storageindx,timeMaxMin):
         '''Get storage value for storage generators'''
         con = db.connect(self.filename)
         with con:        
@@ -290,7 +290,7 @@ class Database(object):
         return values
 
     
-    def getGeneratorPower(self,generatorindx,timeMaxMin):
+    def getResultGeneratorPower(self,generatorindx,timeMaxMin):
         '''Get storage filling level for storage generators'''
         
         if not isinstance(generatorindx,list): 
@@ -311,7 +311,7 @@ class Database(object):
         return output
  
  
-    def getGeneratorPowerInArea(area,timeMaxMin):
+    def getResultGeneratorPowerInArea(self,area,timeMaxMin):
         '''Get accumulated generation per type in given area'''
         con = db.connect(self.filename)
         with con:        

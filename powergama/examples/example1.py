@@ -16,6 +16,7 @@ datapath= "data/"
 timerange=range(0,24*1)
 
 resultfile = 'example1.sqlite3'
+kmlfile = 'example1.kml'
 
 # Remove the file if it already exists. BE CAREFUL!
 if os.path.isfile(resultfile):
@@ -45,16 +46,18 @@ res = powergama.Results(data,resultfile)
 res = lp.solve(res)
 end_time = time.time()
 print end_time - start_time, "seconds"
-makekml(res,timeMaxMin=None)
 
-#Make some plots (do more from the command)
-res.plotMapGrid(nodetype='nodalprice',branchtype='sensitivity',dcbranchtype='',
-                    show_node_labels=False,latlon=None,timeMaxMin=None,
-                    dotsize=100)
+#Make Google Earth KML file:
+makekml(res,kmlfile=kmlfile,timeMaxMin=None)
+#
+##Make some plots (do more from the command)
+#res.plotMapGrid(nodetype='nodalprice',branchtype='sensitivity',dcbranchtype='',
+#                    show_node_labels=False,latlon=None,timeMaxMin=None,
+#                    dotsize=100)
 #res.plotStorageValues(2, timeMaxMin=None)
 #res.plotDemandPerArea(['NO','SE','FI'],timeMaxMin=None)
 #res.plotGenerationPerArea('FI',timeMaxMin=None)
-#res.plotStorageFilling(1, timeMaxMin=[50,54])
+#res.plotStorageFilling(1, timeMaxMin=None)
 #res.plotGeneratorOutput(2)
 #res.plotStoragePerArea('SE',absolute=False,timeMaxMin=None)
 

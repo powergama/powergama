@@ -93,21 +93,37 @@ class Results(object):
         '''
         # self.storageGeneratorsIdx.append(idx_generatorsWithStorage)
 
+    def getAverageBranchFlows(self,timeMaxMin):
+        if timeMaxMin is None:
+            timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
 
+        branchflow = self.db.getResultBranchFlowAll(timeMaxMin)
+        return np.mean(branchflow,axis=1)
+
+    def getAverageNodalPrices(self,timeMaxMin):
+        if timeMaxMin is None:
+            timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
+
+        nodalprices = self.db.getResultNodalPriceAll(timeMaxMin)
+        avgprices = np.average(np.asarray(nodalprices,dtype=float),
+                           axis=1) 
+        return avgprices
+       
     
-    def plotStorageFilling(self,storageindx,timeMaxMin=None):
+    def plotStorageFilling(self,generatorIndx,timeMaxMin=None):
         '''Show storage filling level (MWh) for generators with storage'''
 
         if timeMaxMin is None:
             timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
         timerange = xrange(timeMaxMin[0],timeMaxMin[-1]) 
 
-        if storageindx  <len( self.storage_idx_generators):
-            storagefilling = self.db.getStorageFilling(storageindx,timeMaxMin)
+        if generatorIndx  in self.storage_idx_generators:
+            storagefilling = self.db.getResultStorageFilling(
+                generatorIndx,timeMaxMin)
             plt.figure()
             plt.plot(timerange,storagefilling)
             plt.title("Storage filling level for generator %d"
-                %(storageindx))
+                %(generatorIndx))
             plt.show()
         else:
             print "These are the generators with storage:"
@@ -123,7 +139,8 @@ class Results(object):
             timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
         timerange = range(timeMaxMin[0],timeMaxMin[-1])
             
-        generatoroutput = self.db.getGeneratorPower(generator_index,timeMaxMin)
+        generatoroutput = self.db.getResultGeneratorPower(
+            generator_index,timeMaxMin)
         #powerinflow = db.getInflow(timeMaxMin,storageindx)
 
         ax1.plot(timerange,generatoroutput,'-r',label="output")
@@ -139,7 +156,8 @@ class Results(object):
         
         # Storage filling level (if generator has storage)
         if generator_index in self.storage_idx_generators:
-            storagefilling = self.db.getStorageFilling(generator_index,timeMaxMin)
+            storagefilling = self.db.getResultStorageFilling(
+                generator_index,timeMaxMin)
             ax2 = plt.twinx() #separate y axis
             ax2.plot(timerange,storagefilling,'-g', label='storage')
             ax2.legend(loc="upper right")
@@ -175,7 +193,7 @@ class Results(object):
                 
             if len(idx_storage) > 0:
                 mystor = [sum([sum(
-                    self.db.getStorageFilling(idx_storage[i][1],[t,t+1]))
+                    self.db.getResultStorageFilling(idx_storage[i][1],[t,t+1]))
                     for i in xrange(len(idx_storage))])
                     for t in timerange]
                 mycap = sum( [ cap[idx_storage[i][1]]
@@ -206,7 +224,8 @@ class Results(object):
         generators = self.grid.getGeneratorsPerAreaAndType()
         for gentype in generators[area].keys():
             idxGen = generators[area][gentype]
-            sumGenAreaType = self.db.getGeneratorPower(idxGen,timeMaxMin)
+            sumGenAreaType = self.db.getResultGeneratorPower(
+                idxGen,timeMaxMin)
             plt.plot(timerange,sumGenAreaType)
             
         plt.legend(generators[area].keys() , loc="upper right")
@@ -261,8 +280,8 @@ class Results(object):
         if genindx in self.storage_idx_generators:
             nodeidx = self.grid.node.name.index(
                 self.grid.generator.node[genindx])
-            storagevalue = self.db.getStorageValue(genindx,timeMaxMin)
-            nodalprice = self.db.getNodalPrice(nodeidx,timeMaxMin)
+            storagevalue = self.db.getResultStorageValue(genindx,timeMaxMin)
+            nodalprice = self.db.getResultNodalPrice(nodeidx,timeMaxMin)
             plt.figure()
             plt.plot(timerange,storagevalue)
             plt.plot(timerange,nodalprice)
@@ -352,9 +371,10 @@ class Results(object):
             # Note that sometimes the solver may return sensitivity = None
             # such values are converted to NAN in the asarray method
             nodalprices = self.db.getResultNodalPriceAll(timeMaxMin)            
-            avgprice = np.sqrt(
-                np.average(np.asarray(nodalprices,dtype=float)**2,
-                           axis=1)) #rms
+            avgprice = self.getAverageNodalPrices(timeMaxMin)
+            #avgprice = np.sqrt(
+            #    np.average(np.asarray(nodalprices,dtype=float)**2,
+            #               axis=1)) #rms
             print ("Nodal prices: max=%g, min=%g" 
                 %(max(avgprice),min(avgprice)) )
         
