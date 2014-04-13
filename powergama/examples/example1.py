@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 import os
 
 datapath= "data/"
-timerange=range(24*2,24*3)
+timerange=range(24*0,24*60)
 
 resultfile = 'example1.sqlite3'
 
@@ -37,11 +37,13 @@ data.readProfileData(inflow=datapath+"profiles_inflow.csv",
             timedelta=1.0)
 
 lp = powergama.LpProblem(data)
+#Fancy progress bar does not work in spyder:
+#lp.setProgressBar('fancy')
 start_time = time.time()
 res = powergama.Results(data,resultfile)
 res = lp.solve(res)
 end_time = time.time()
-print end_time - start_time, "seconds"
+print " <> execution time=",(end_time - start_time), "seconds"
 
 #Make some plots (do more from the command)
 res.plotMapGrid(nodetype='nodalprice',branchtype='sensitivity',dcbranchtype='',

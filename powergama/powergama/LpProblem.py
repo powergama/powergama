@@ -26,7 +26,6 @@ from datetime import datetime as datetime
 import constants as const
 import scipy.sparse
 import itertools
-from Results import Results
 import sys
 
 class LpProblem(object):
@@ -55,8 +54,9 @@ class LpProblem(object):
         self._idx_generatorsStorageProfileTime = asarray(
             [grid.generator.storagevalue_profile_time[i] 
             for i in self._idx_generatorsWithStorage])
-
                 
+        self._fancy_progressbar = False        
+
         # Initial values of marginal costs, storage and storage values      
         self._storage = (
             asarray(grid.generator.storagelevel_init)
@@ -482,11 +482,25 @@ class LpProblem(object):
         return results
 
     def _update_progress(self,n,maxn):
-        barLength = 20
-        progress = float(n+1)/maxn
-        block = int(round(barLength*progress))
-        text = "\rProgress: [{0}] {1} ({2}%)  ".format( "="*block + " "*(barLength-block), 
-           n, int(progress*100))
-        sys.stdout.write(text)
-        sys.stdout.flush()
+        if self._fancy_progressbar:
+            barLength = 20
+            progress = float(n+1)/maxn
+            block = int(round(barLength*progress))
+            text = "\rProgress: [{0}] {1} ({2}%)  " \
+                .format( "="*block + " "*(barLength-block), 
+                        n, int(progress*100))
+            sys.stdout.write(text)
+            sys.stdout.flush()
+        else:
+            if int(100*(n+1)/maxn) > int(100*n/maxn):
+                sys.stdout.write("\b\b\b\b\b\b%d%% "% (int(100*(n+1)/maxn)))
+                sys.stdout.flush()
+    
+    def setProgressBar(self,value):
+        if value=='fancy':
+            self._fancy_progressbar=True
+        elif value=='default':
+            self._fancy_progressbar=False
+        else:
+            raise Exception('Progress bar bust be either "default" or "fancy"')
         
