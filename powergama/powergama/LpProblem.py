@@ -388,6 +388,7 @@ class LpProblem(object):
         # Collect and store results
         F = pulp.value(self.prob.objective)  
         Pb = [v.varValue for v in self._var_branchflow]
+        Pdc = [v.varValue for v in self._var_dc]
         theta = [v.varValue for v in self._var_angle]
         #senseBranchCapacityUpper = [cval.pi if cval.pi!=None else 0 for cval in self._constraints_branchUpperBounds]
         #senseBranchCapacityLower = [cval.pi if cval.pi!=None else 0 for cval in self._constraints_branchLowerBounds]
@@ -421,22 +422,25 @@ class LpProblem(object):
         # TODO: Only keep track of inflow spilled for generators with 
         # nonzero inflow
         
-        results.addResultsFromTimestep(objective_function = F,
-                                generator_power = Pgen,
-                                branch_power = Pb,
-                                node_angle = theta,
-                                sensitivity_branch_capacity = senseB,
-                                sensitivity_dcbranch_capacity = senseDcB,
-                                sensitivity_node_power = senseN,
-                                storage = storagelevel.tolist(),
-                                inflow_spilled = energyspilled.tolist(),
-                                loadshed_power = loadshed,
-                                marginalprice = marginalprice.tolist())
+        results.addResultsFromTimestep(
+            timestep = self._grid.timerange[0]+timestep,
+            objective_function = F,
+            generator_power = Pgen,
+            branch_power = Pb,
+            dcbranch_power = Pdc,
+            node_angle = theta,
+            sensitivity_branch_capacity = senseB,
+            sensitivity_dcbranch_capacity = senseDcB,
+            sensitivity_node_power = senseN,
+            storage = storagelevel.tolist(),
+            inflow_spilled = energyspilled.tolist(),
+            loadshed_power = loadshed,
+            marginalprice = marginalprice.tolist())
 
         return
     
         
-    def solve(self,results=None):
+    def solve(self,results):
         '''
         Solve LP problem for each time step in the time range
         
@@ -451,13 +455,13 @@ class LpProblem(object):
             PowerGAMA Results object reference
         '''
 
-        if results == None:
-            results = Results(self._grid)      
+        #if results == None:
+        #    results = Results(self._grid)      
             
         print "Solving..."
         #prob0 = pulp.LpProblem("Grid Market Power - base", pulp.LpMinimize)
         numTimesteps = len(self._grid.timerange)
-        for timestep in range(numTimesteps):
+        for timestep in xrange(numTimesteps):
             # update LP problem (inflow, storage, profiles)                     
             self._updateLpProblem(timestep)
           
@@ -466,7 +470,7 @@ class LpProblem(object):
             self.prob.solve(self.solver)
             
             # print result summary            
-            value_costfunction = pulp.value(self.prob.objective)
+            #value_costfunction = pulp.value(self.prob.objective)
             self._update_progress(timestep,numTimesteps)
             #print "Timestep=",timestep, " => ",  \
             #    pulp.LpStatus[self.prob.status], \
