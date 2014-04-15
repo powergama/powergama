@@ -93,20 +93,30 @@ class Results(object):
         '''
         # self.storageGeneratorsIdx.append(idx_generatorsWithStorage)
 
-    def getAverageBranchFlows(self,timeMaxMin):
+    def getAverageBranchFlows(self,timeMaxMin=None):
+        '''
+        Average flow on branches over a given time period
+        
+        Returns
+        =======
+        List with values for each branch:
+        [flow from 1 to 2, flow from 2 to 1, average absolute flow]
+        '''
         if timeMaxMin is None:
             timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
 
-        branchflow = self.db.getResultBranchFlowAll(timeMaxMin)
-        return np.mean(branchflow,axis=1)
+        #branchflow = self.db.getResultBranchFlowAll(timeMaxMin)
+        avgflow = self.db.getResultBranchFlowsMean(timeMaxMin)
+        #np.mean(branchflow,axis=1)
+        return avgflow
 
-    def getAverageNodalPrices(self,timeMaxMin):
+    def getAverageNodalPrices(self,timeMaxMin=None):
         if timeMaxMin is None:
             timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
 
-        nodalprices = self.db.getResultNodalPriceAll(timeMaxMin)
-        avgprices = np.average(np.asarray(nodalprices,dtype=float),
-                           axis=1) 
+        avgprices = self.db.getResultNodalPricesMean(timeMaxMin)
+        # use asarray to convert None to nan
+        avgprices = np.asarray(avgprices,dtype=float)
         return avgprices
        
     
@@ -322,7 +332,6 @@ class Results(object):
         
         if timeMaxMin is None:
             timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
-        timerange = range(timeMaxMin[0],timeMaxMin[-1])
 
         plt.figure()
         data = self.grid
@@ -368,15 +377,7 @@ class Results(object):
             allareas = data.getAllAreas()
             colours_co = cm.prism(np.linspace(0, 1, len(allareas)))
         elif nodetype=='nodalprice':
-            # Note that sometimes the solver may return sensitivity = None
-            # such values are converted to NAN in the asarray method
-            nodalprices = self.db.getResultNodalPriceAll(timeMaxMin)            
             avgprice = self.getAverageNodalPrices(timeMaxMin)
-            #avgprice = np.sqrt(
-            #    np.average(np.asarray(nodalprices,dtype=float)**2,
-            #               axis=1)) #rms
-            print ("Nodal prices: max=%g, min=%g" 
-                %(max(avgprice),min(avgprice)) )
         
 
         if branchtype=='area':
@@ -391,8 +392,8 @@ class Results(object):
                 branchflow,dtype=float)**2,axis=1)) #rms
             cap = res.grid.branch.capacity
             utilisation = avgflow / cap # element-by-element
-            print ("Branch utilisation: max=%g, min=%g" 
-                %(max(utilisation),min(utilisation)) )
+            #print ("Branch utilisation: max=%g, min=%g" 
+            #    %(max(utilisation),min(utilisation)) )
         elif branchtype=='sensitivity':
             numBranchCategories = 11
             colours_b = cm.jet(np.linspace(0, 1, numBranchCategories))
@@ -400,8 +401,8 @@ class Results(object):
             avgsense = np.sqrt(np.average(np.asarray(
                 branchsens,dtype=float)**2,axis=1)) #rms 
             maxsense = np.nanmax(avgsense)
-            print ("Branch capacity senitivity: max=%g, min=%g" 
-                %(np.nanmax(avgsense),np.nanmin(avgsense)) )
+            #print ("Branch capacity senitivity: max=%g, min=%g" 
+            #    %(np.nanmax(avgsense),np.nanmin(avgsense)) )
         
         
         # Plot AC branches (as great circles)

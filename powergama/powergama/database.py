@@ -200,16 +200,41 @@ class Database(object):
                 +" ORDER BY timestep",
                 (timeMaxMin[0],timeMaxMin[-1],nodeindx))
             rows = cur.fetchall()
-            values = [row[0] for row in rows]        
+        values = [row[0] for row in rows]        
         return values
         
-    def getResultNodalPriceAll(self,timeMaxMin):
-        '''Get nodal price at all nodes - return list of list'''
-        nodelist = self.getGridNodeIndices()        
-        nodalprices = []        
-        for node in  nodelist:
-            nodalprices.append(self.getResultNodalPrice(node,timeMaxMin))
-        return nodalprices
+    def getResultNodalPricesAll(self,timeMaxMin):
+        '''
+        Get nodal price at all nodes (list of tuples)
+        
+        Returns
+        =======
+        List of tuples with values:
+        (timestep, node index, nodal price)
+        
+        '''
+        con = db.connect(self.filename)
+        with con:        
+            cur = con.cursor()
+            cur.execute("SELECT timestep,indx,nodalprice FROM Res_Nodes"
+                +" WHERE timestep>=? AND timestep<?"
+                +" ORDER BY indx,timestep",
+                (timeMaxMin[0],timeMaxMin[-1]))
+            rows = cur.fetchall()
+        return rows
+
+    def getResultNodalPricesMean(self,timeMaxMin):
+        '''Get average nodal price at all nodes'''
+        con = db.connect(self.filename)
+        with con:        
+            cur = con.cursor()
+            cur.execute("SELECT indx,AVG(nodalprice) FROM Res_Nodes"
+                +" WHERE timestep>=? AND timestep<?"
+                +" GROUP BY indx ORDER BY indx",
+                (timeMaxMin[0],timeMaxMin[-1]))
+            rows = cur.fetchall()
+        values = [row[1] for row in rows]        
+        return values
 
 ### Branch results
 
@@ -223,17 +248,71 @@ class Database(object):
                 +" ORDER BY timestep",
                 (timeMaxMin[0],timeMaxMin[-1],branchindx))
             rows = cur.fetchall()
-            values = [row[0] for row in rows]        
+        values = [row[0] for row in rows]        
         return values
 
     def getResultBranchFlowAll(self,timeMaxMin):
-        '''Get branch flow at all branches - return list of list'''
-        branches = self.getGridBranches()        
-        branchlist = branches['indx']     
-        branchflow = []        
-        for branch in  branchlist:
-            branchflow.append(self.getResultBranchFlow(branch,timeMaxMin))
-        return branchflow
+        '''
+        Get branch flow at all branches (list of tuples)
+        
+        Returns
+        =======
+        List of tuples with values:
+        (timestep, branch index, flow)
+        
+        '''
+        con = db.connect(self.filename)
+        with con:        
+            cur = con.cursor()
+            cur.execute("SELECT timestep,indx,flow FROM Res_Branches"
+                +" WHERE timestep>=? AND timestep<?"
+                +" ORDER BY indx,timestep",
+                (timeMaxMin[0],timeMaxMin[-1]))
+            rows = cur.fetchall()
+        return rows
+
+    def getResultBranchFlowsMean(self,timeMaxMin):
+        '''
+        Get average branch flow on branches in both direction
+        
+        Returns
+        =======
+        List with values for each branch:
+        [average flow 1->2, average flow 2->1, average absolute flow]
+        
+        '''
+        con = db.connect(self.filename)
+        with con:        
+            cur = con.cursor()
+            cur.execute("SELECT indx,AVG(flow) FROM Res_Branches"
+                +" WHERE timestep>=? AND timestep<? AND flow>=0"
+                +" GROUP BY indx ORDER BY indx",
+                (timeMaxMin[0],timeMaxMin[-1]))
+            rows1 = cur.fetchall()
+            cur.execute("SELECT indx,AVG(flow) FROM Res_Branches"
+                +" WHERE timestep>=? AND timestep<? AND flow<0"
+                +" GROUP BY indx ORDER BY indx",
+                (timeMaxMin[0],timeMaxMin[-1]))
+            rows2 = cur.fetchall()
+            cur.execute("SELECT MAX(indx) FROM Res_Branches")
+            numBranches = 1 + cur.fetchone()[0]
+        # The length of rows1 and rows2 may be less than the number
+        # of branches if the flow is always in one direction
+        values_pos = [0]*numBranches
+        values_neg = [0]*numBranches
+        values_abs = [0]*numBranches
+        i1=0
+        i2=0
+        for i in xrange(numBranches):
+            if i1<len(rows1) and rows1[i1][0] == i:
+                values_pos[i] = rows1[i1][1]
+                i1 = i1+1
+            if i2<len(rows2) and rows2[i2][0] == i:
+                values_neg[i] = abs(rows2[i2][1])
+                i2 = i2+1
+            values_abs[i]=values_pos[i]+values_neg[i]
+        values = [values_pos,values_neg,values_abs]
+        return values
 
     def getResultBranchSens(self,branchindx,timeMaxMin):
         '''Get branch capacity sensitivity at specified branch'''
@@ -245,7 +324,7 @@ class Database(object):
                 +" ORDER BY timestep",
                 (timeMaxMin[0],timeMaxMin[-1],branchindx))
             rows = cur.fetchall()
-            values = [row[0] for row in rows]        
+        values = [row[0] for row in rows]        
         return values
         
     def getResultBranchSensAll(self,timeMaxMin):

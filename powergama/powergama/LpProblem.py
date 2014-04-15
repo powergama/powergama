@@ -493,7 +493,7 @@ class LpProblem(object):
             sys.stdout.flush()
         else:
             if int(100*(n+1)/maxn) > int(100*n/maxn):
-                sys.stdout.write("\b\b\b\b\b\b%d%% "% (int(100*(n+1)/maxn)))
+                sys.stdout.write("%d%% "% (int(100*(n+1)/maxn)))
                 sys.stdout.flush()
     
     def setProgressBar(self,value):

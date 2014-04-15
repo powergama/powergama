@@ -5,14 +5,16 @@ Visualization of results using Google Earth
 
 import simplekml
 import math
+import numpy
 
-def makekml(res,kmlfile, timeMaxMin):
+def makekml(res,kmlfile, timeMaxMin=None):
     kml = simplekml.Kml()
     kml.document.name = "PowerGAMA Results"
     circle = "http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png"
     
     # Colours, 5 categories + NaN category
     colorbgr = ["ffff6666","ffffff66","ff66ff66","ff66ffff","f6666fff","ffaaaaaa"] 
+    numCat = len(colorbgr)-1
     
     gentypeList = res.grid.getAllGeneratorTypes()  
     
@@ -55,31 +57,35 @@ def makekml(res,kmlfile, timeMaxMin):
 
     ## Show line
     # Find range of branch flow
-    meanbranchflow= res.getAverageBranchFlows(timeMaxMin)
-    absbranchflow = abs(meanbranchflow)
+    meanflows = res.getAverageBranchFlows(timeMaxMin)
+    absbranchflow = meanflows[2]
     #absbranchflow = [abs(foo) for foo in res.branchFlow[timestep]]
     maxabsbranchflow =  max(absbranchflow)
     minabsbranchflow =  min(absbranchflow)
-    print "max flow=",maxabsbranchflow," min flow=",minabsbranchflow    
-    steprange = (maxabsbranchflow - minabsbranchflow) / 5
-    categoryMax = [minabsbranchflow+steprange*(n+1) for n in xrange(5)]        
+    steprange = (maxabsbranchflow - minabsbranchflow) / float(numCat)
+    categoryMax = [math.ceil(minabsbranchflow+steprange*(n+1) )
+        for n in xrange(numCat)]        
     # Create folder for line
     branchfolder = kml.newfolder(name="Branch")
     branchcount = len(res.grid.branch.node_from)
     ## Create sub-folder according to branch flow level
     #branchrange = ranges[0]
     branchlevelfolder=[]
-    for level in xrange(5):
+    for level in xrange(numCat):
         branchlevelfolder.append(branchfolder.newfolder(
             name="Flow <= %s" % (str(categoryMax[level]))))
+    #branchlevelfolder.append(branchfolder.newfolder(
+    #    name="Flow > %s" % (str(categoryMax[numCat-2]))))
+    branchlevelfolder.append(branchfolder.newfolder(
+            name="Flow NaN" ))
+
     # Get and arrange branch flow
     for i in xrange(branchcount):
-        branchflow = meanbranchflow[i]
 
         # Determine category        
-        branch_category=6        
-        for category in xrange(5):        
-            if abs(branchflow) <= categoryMax[category]:
+        branch_category=numCat        
+        for category in xrange(numCat):        
+            if absbranchflow[i] <= categoryMax[category]:
                 branch_category=category
                 break
         
@@ -101,7 +107,7 @@ def makekml(res,kmlfile, timeMaxMin):
         Capacity .. %s          <br/>
         Reactance .. %s         <br/>
         Mean flow .. %s         <br/>
-        """ % (startbus,endbus,capacity,reactance,branchflow)
+        """ % (startbus,endbus,capacity,reactance,absbranchflow[i])
         lin = branchlevelfolder[branch_category].newlinestring(name=name,
               description = description,
               coords=[(startbuslon,startbuslat),(endbuslon,endbuslat)])
@@ -110,18 +116,20 @@ def makekml(res,kmlfile, timeMaxMin):
         
     ## Show nodal price
     meannodalprices = res.getAverageNodalPrices(timeMaxMin)
-    maxnodalprice = max(meannodalprices)
-    minnodalprice = min(meannodalprices)
-    print "max price=",maxnodalprice," min price=",minnodalprice    
-    steprange = (maxnodalprice - minnodalprice) / 5
-    categoryMax = [math.ceil(minnodalprice+steprange*(n+1)) for n in xrange(5)]        
-    print categoryMax
+    # Obs: some values may be numpy.nan
+    maxnodalprice = numpy.nanmax(meannodalprices)
+    minnodalprice = numpy.nanmin(meannodalprices)
+    steprange = (maxnodalprice - minnodalprice) / numCat
+    categoryMax = [math.ceil(minnodalprice+steprange*(n+1)) 
+        for n in xrange(numCat)]        
     # Create folder for nodal price
     nodalpricefolder = kml.newfolder(name="Nodal price")
     nodalpricelevelfolder=[]
-    for level in xrange(5):
+    for level in xrange(numCat):
         nodalpricelevelfolder.append(nodalpricefolder.newfolder(
             name="Price <= %s" % (str(categoryMax[level]))))
+    #nodalpricelevelfolder.append(nodalpricefolder.newfolder(
+    #    name="Price > %s" % (str(categoryMax[numCat-2]))))
     nodalpricelevelfolder.append(nodalpricefolder.newfolder(
             name="Price NaN" ))
     # Get and arrange nodal price
@@ -129,11 +137,12 @@ def makekml(res,kmlfile, timeMaxMin):
         nodalprice = meannodalprices[i]
         
         # Determine category        
-        node_category=5
-        for category in xrange(5):        
-            if abs(nodalprice) <= categoryMax[category]:
+        node_category=numCat
+        for category in xrange(numCat):        
+            if nodalprice <= categoryMax[category]:
                 node_category=category
                 break
+            
         color = colorbgr[node_category]
         name = res.grid.node.name[i]
         lon = res.grid.node.lon[i]
