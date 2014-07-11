@@ -44,8 +44,11 @@ class Database(object):
             ) for i in xrange(len(data.branch.capacity)))
         
         if os.path.isfile(self.filename):
+            #delete existing file
+            print("OBS: Deleting existing SQLite file ""%s"""%self.filename )
+            os.remove(self.filename)
             #Must use a new file
-            raise IOError('Cannot append existing file. Choose new file name.')
+            #raise IOError('Cannot append existing file. Choose new file name.')
         con = db.connect(self.filename)
         with con:        
             cur = con.cursor()    
@@ -337,6 +340,19 @@ class Database(object):
             sens.append(this_sens if this_sens !=[] 
                 else [None]*(timeMaxMin[1]-timeMaxMin[0]))
         return sens
+
+    def getResultBranchSensMean(self,timeMaxMin):
+        '''Get average sensitivity of all  branches'''
+        con = db.connect(self.filename)
+        with con:        
+            cur = con.cursor()
+            cur.execute("SELECT indx,AVG(cap_sensitivity) FROM Res_BranchesSens"
+                +" WHERE timestep>=? AND timestep<?"
+                +" GROUP BY indx ORDER BY indx",
+                (timeMaxMin[0],timeMaxMin[-1]))
+            rows = cur.fetchall()
+        values = [row[1] for row in rows]        
+        return values
         
         
 ### Generator results

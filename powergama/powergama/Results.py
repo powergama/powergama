@@ -119,7 +119,40 @@ class Results(object):
         avgprices = np.asarray(avgprices,dtype=float)
         return avgprices
        
+    def getAverageBranchSensitivity(self,timeMaxMin=None):
+        '''
+        Average branch capacity sensitivity over a given time period
+        
+        Returns
+        =======
+        1-dim Array of sensitivities (one per branch)
+        '''
+        if timeMaxMin is None:
+            timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
+
+        avgsense = self.db.getResultBranchSensMean(timeMaxMin)
+        # use asarray to convert None to nan
+        avgsense = np.asarray(avgsense,dtype=float)
+        return avgsense
     
+    def getAverageUtilisation(self,timeMaxMin=None):
+        '''
+        Average branch utilisation over a given time period
+        
+        Returns
+        =======
+        1-dim Array of branch utilisation (power flow/capacity)
+        '''
+        if timeMaxMin is None:
+            timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
+
+        cap =self.grid.branch.capacity
+        avgflow = self.getAverageBranchFlows(timeMaxMin)[2]
+        utilisation = [avgflow[i] / cap[i] for i in xrange(len(cap))] 
+        utilisation = np.asarray(utilisation)
+        return utilisation
+        
+        
     def plotStorageFilling(self,generatorIndx,timeMaxMin=None):
         '''Show storage filling level (MWh) for generators with storage'''
 
@@ -387,19 +420,23 @@ class Results(object):
         elif branchtype=='utilisation' or branchtype=='flow':
             numBranchCategories = 11
             colours_b = cm.jet(np.linspace(0, 1, numBranchCategories))
-            branchflow = self.db.getResultBranchFlowAll(timeMaxMin)
-            avgflow = np.sqrt(np.average(np.asarray(
-                branchflow,dtype=float)**2,axis=1)) #rms
-            cap = res.grid.branch.capacity
-            utilisation = avgflow / cap # element-by-element
+            avgflow = self.getAverageBranchFlows(timeMaxMin)[2]
+            #branchflow = self.db.getResultBranchFlowAll(timeMaxMin)
+            #avgflow = np.sqrt(np.average(np.asarray(
+            #    branchflow,dtype=float)**2,axis=1)) #rms
+            #cap =res.grid.branch.capacity
+            #[avgflow[i] / cap[i] for i in xrange(len(cap))] 
+            utilisation = self.getAverageUtilisation(timeMaxMin)
+            # element-by-element
             #print ("Branch utilisation: max=%g, min=%g" 
             #    %(max(utilisation),min(utilisation)) )
         elif branchtype=='sensitivity':
             numBranchCategories = 11
             colours_b = cm.jet(np.linspace(0, 1, numBranchCategories))
-            branchsens = self.db.getResultBranchSensAll(timeMaxMin)
-            avgsense = np.sqrt(np.average(np.asarray(
-                branchsens,dtype=float)**2,axis=1)) #rms 
+            #branchsens = self.db.getResultBranchSensAll(timeMaxMin)
+            #avgsense = np.sqrt(np.average(np.asarray(
+            #    branchsens,dtype=float)**2,axis=1)) #rms 
+            avgsense = self.getAverageBranchSensitivity(timeMaxMin)
             maxsense = np.nanmax(avgsense)
             #print ("Branch capacity senitivity: max=%g, min=%g" 
             #    %(np.nanmax(avgsense),np.nanmin(avgsense)) )
@@ -440,7 +477,7 @@ class Results(object):
                 if j in res.idxConstrainedBranchCapacity:
                     #idx = res.idxConstrainedBranchCapacity.index(j)
                     idx = j
-                    if not  np.isnan(avgsense[idx]):
+                    if not  np.isnan(avgsense[idx]) and maxsense>0:
                         category = math.floor(
                             avgsense[idx]/maxsense*(numBranchCategories-1))
                         #print "sense cat=",category
@@ -448,6 +485,7 @@ class Results(object):
                         lwidth = 2
                     else:
                         #NAN sensitivity (not returned by solver)
+                        #Or all sensitivities are zero
                         col='grey'
                         lwidth = 2
                 else:
