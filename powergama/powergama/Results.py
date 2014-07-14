@@ -462,7 +462,8 @@ class Results(object):
                 #print "utilisation cat=",category
                 col = colours_b[category]
                 lwidth = 2
-                if cap[j]== np.inf:
+                cap =res.grid.branch.capacity[j]
+                if cap == np.inf:
                     col = 'grey'
                     lwidth = 1
             elif branchtype=='flow':
