@@ -437,7 +437,9 @@ class Results(object):
             #avgsense = np.sqrt(np.average(np.asarray(
             #    branchsens,dtype=float)**2,axis=1)) #rms 
             avgsense = self.getAverageBranchSensitivity(timeMaxMin)
-            maxsense = np.nanmax(avgsense)
+            # These sensitivities are mostly negative 
+            # (reduced cost by increasing branch capacity)
+            minsense = np.nanmin(avgsense)
             #print ("Branch capacity senitivity: max=%g, min=%g" 
             #    %(np.nanmax(avgsense),np.nanmin(avgsense)) )
         
@@ -476,11 +478,11 @@ class Results(object):
                     lwidth = 2
             elif branchtype=='sensitivity':
                 if j in res.idxConstrainedBranchCapacity:
-                    #idx = res.idxConstrainedBranchCapacity.index(j)
-                    idx = j
-                    if not  np.isnan(avgsense[idx]) and maxsense>0:
+                    idx = res.idxConstrainedBranchCapacity.index(j)
+                    #idx = j
+                    if not  np.isnan(avgsense[idx]) and minsense!=0:
                         category = math.floor(
-                            avgsense[idx]/maxsense*(numBranchCategories-1))
+                            avgsense[idx]/minsense*(numBranchCategories-1))
                         #print "sense cat=",category
                         col = colours_b[category]
                         lwidth = 2
