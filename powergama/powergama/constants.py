@@ -3,10 +3,6 @@
 Module for PowerGAMA constants
 '''
 
-VERSION = "0.6.0"
-VERSION_DATE = "2014-07-16"
-
-
 ## Per unit base value for power in W (100 MW)
 baseS = 100.0e6
 
