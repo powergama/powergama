@@ -70,3 +70,4 @@ from .LpProblem import LpProblem
 from .Results import Results
 from . import constants
 from . import scenarios 
+from .version import __version__, __version_date__
