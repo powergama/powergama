@@ -36,17 +36,23 @@ number of hours per timestep
 Import grid model and time series data from files
 
 >>> data = powergama.GridData()
->>> data.readGridData(nodes="nodes.csv",ac_branches="branches.csv",\\
->>>                   dc_branches="hvdc.csv",\\  
->>>                   generators="generators.csv",consumers="consumers.csv")
->>> data.readProfileData(inflow="inflow.csv",demand="demand.csv", \\
->>>                      storagevalues="storagevalue.csv", \\
->>>                      timerange=timerange, timedelta=timedelta)                      
+>>> data.readGridData(nodes="nodes.csv",
+>>>					  ac_branches="branches.csv",
+>>>                   dc_branches="hvdc.csv",
+>>>                   generators="generators.csv",
+>>>                   consumers="consumers.csv")
+>>> data.readProfileData(inflow="inflow.csv",
+>>>                      demand="demand.csv",
+>>>                      storagevalue_filling="profile_storval_filling.csv",
+>>>                      storagevalue_time="profile_storval_time.csv",
+>>>                      timerange=timerange,
+>>>                      timedelta=timedelta)                      
 
-Initiate results and LP problem objects
+Initiate results and LP problem objects, including name of database file
+(OBS: Will replace any existing file with the same name)
 
 >>> lp = powergama.LpProblem(data)
->>> res = powergama.Results(data)
+>>> res = powergama.Results(data,"results.sqlite3")
 
 Solve the problem, timestep by timestep, and save results in the results 
 object
