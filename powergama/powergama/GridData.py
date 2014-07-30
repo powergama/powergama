@@ -319,6 +319,7 @@ class GridData(object):
         self.timeDelta = None
         self.timerange = None
 
+
     def readGridData(self,nodes,ac_branches,dc_branches,generators,consumers):
         '''Read grid data from files into data variables'''
         
@@ -328,7 +329,20 @@ class GridData(object):
             self.dcbranch.readFromFile(dc_branches)
         self.generator.readFromFile(generators)
         self.consumer.readFromFile(consumers)
+        self._checkGridData()
 
+
+    def _checkGridData(self):
+        '''Check consistency of grid data'''
+        #generator nodes
+        for g in self.generator.node:
+            if not g in self.node.name:
+                raise Exception("Generator node does not exist: %s" %g)
+        #consumer nodes
+        for c in self.consumer.node:
+            if not c in self.node.name:
+                raise Exception("Consumer node does not exist: %s" %c)
+                
 
     def _readProfileFromFile(self,filename,timerange):          
         profiles={}      
