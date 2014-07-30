@@ -5,6 +5,7 @@ Module containing the PowerGAMA Results class
 
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
+import matplotlib as mpl
 import numpy as np
 from mpl_toolkits.basemap import Basemap
 import math
@@ -366,7 +367,7 @@ class Results(object):
         if timeMaxMin is None:
             timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
 
-        plt.figure()
+        fig = plt.figure()
         data = self.grid
         res = self
         
@@ -419,7 +420,7 @@ class Results(object):
             colours_b = cm.prism(np.linspace(0, 1, len(allareas)))
         elif branchtype=='utilisation' or branchtype=='flow':
             numBranchCategories = 11
-            colours_b = cm.jet(np.linspace(0, 1, numBranchCategories))
+            colours_b = cm.hot(np.linspace(0, 1, numBranchCategories))
             avgflow = self.getAverageBranchFlows(timeMaxMin)[2]
             #branchflow = self.db.getResultBranchFlowAll(timeMaxMin)
             #avgflow = np.sqrt(np.average(np.asarray(
@@ -462,7 +463,11 @@ class Results(object):
             elif branchtype=='utilisation':
                 category = math.floor(utilisation[j]*(numBranchCategories-1))
                 #print "utilisation cat=",category
-                col = colours_b[category]
+                #If utilisation is above 1, draw branch in different colour
+                if category>numBranchCategories:
+                    col = 'pink'
+                else:
+                    col = colours_b[category]
                 lwidth = 2
                 cap =res.grid.branch.capacity[j]
                 if cap == np.inf:
@@ -538,7 +543,7 @@ class Results(object):
         elif nodetype == 'nodalprice':
             s=m.scatter(x,y,marker='o',c=avgprice, cmap=cm.jet, 
                         zorder=2,s=dotsize)
-            cb=m.colorbar(s)
+            cb=m.colorbar(s,pad=0.50)
             cb.set_label('Nodal price')
             #nodes with NAN nodal price plotted in gray:
             for i in xrange(len(avgprice)):
@@ -563,6 +568,15 @@ class Results(object):
         
         plt.title('Nodes (%s) and branches (%s)' %(nodetype,branchtype))
         plt.show()
+        
+        # Adding second colorbar for "utilisation" plot
+        axes = plt.gca()
+        cax,kw = mpl.colorbar.make_axes(axes,location='right',pad=0.10,shrink=0.8)
+        colormap = plt.get_cmap('hot')
+        bounds = np.linspace(0,1,11)
+        norm = mpl.colors.BoundaryNorm(bounds,256)
+        colorbar = mpl.colorbar.ColorbarBase(cax, cmap=colormap,norm=norm,boundaries=bounds,spacing='uniform')
+        colorbar.set_label('Branch utilisation')
 
         return
         # End plotGridMap
