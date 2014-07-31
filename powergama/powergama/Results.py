@@ -388,8 +388,8 @@ class Results(object):
         m = Basemap(resolution='l',projection='merc',\
                       lat_ts=lat_truescale, \
                       llcrnrlon=lon_min, llcrnrlat=lat_min,\
-                      urcrnrlon=lon_max ,urcrnrlat=lat_max,
-                      )
+                      urcrnrlon=lon_max ,urcrnrlat=lat_max, \
+                      anchor='W')
          
         # Draw coastlines, meridians and parallels.
         m.drawcoastlines()
@@ -433,7 +433,7 @@ class Results(object):
             #    %(max(utilisation),min(utilisation)) )
         elif branchtype=='sensitivity':
             numBranchCategories = 11
-            colours_b = cm.jet(np.linspace(0, 1, numBranchCategories))
+            colours_b = cm.hot(np.linspace(0, 1, numBranchCategories))
             #branchsens = self.db.getResultBranchSensAll(timeMaxMin)
             #avgsense = np.sqrt(np.average(np.asarray(
             #    branchsens,dtype=float)**2,axis=1)) #rms 
@@ -441,6 +441,7 @@ class Results(object):
             # These sensitivities are mostly negative 
             # (reduced cost by increasing branch capacity)
             minsense = np.nanmin(avgsense)
+            maxsense = np.nanmax(avgsense)
             #print ("Branch capacity senitivity: max=%g, min=%g" 
             #    %(np.nanmax(avgsense),np.nanmin(avgsense)) )
         
@@ -461,20 +462,18 @@ class Results(object):
                     col = 'black'
                     lwidth = 4
             elif branchtype=='utilisation':
-                category = math.floor(utilisation[j]*(numBranchCategories-1))
+                cap = res.grid.branch.capacity[j]
                 #print "utilisation cat=",category
-                #If utilisation is above 1, draw branch in different colour
-                if category>numBranchCategories:
-                    col = 'pink'
-                else:
-                    col = colours_b[category]
-                lwidth = 2
-                cap =res.grid.branch.capacity[j]
                 if cap == np.inf:
                     col = 'grey'
                     lwidth = 1
+                else:
+                    category = math.floor(utilisation[j]*(numBranchCategories-1))
+                    col = colours_b[category]
+                    lwidth = 2
             elif branchtype=='flow':
                 maxflow = max(avgflow)
+                minflow = min(avgflow)
                 category = math.floor(
                     avgflow[j]/maxflow*(numBranchCategories-1))
                 col = colours_b[category]
@@ -543,14 +542,11 @@ class Results(object):
         elif nodetype == 'nodalprice':
             s=m.scatter(x,y,marker='o',c=avgprice, cmap=cm.jet, 
                         zorder=2,s=dotsize)
-            cb=m.colorbar(s,pad=0.50)
-            cb.set_label('Nodal price')
             #nodes with NAN nodal price plotted in gray:
             for i in xrange(len(avgprice)):
                 if np.isnan(avgprice[i]):
                     m.scatter(x[i],y[i],c='dimgray',
                               zorder=2,s=dotsize)
-            
         else:
             col='dimgray'
             m.scatter(x,y,marker='o',color=col, 
@@ -569,14 +565,60 @@ class Results(object):
         plt.title('Nodes (%s) and branches (%s)' %(nodetype,branchtype))
         plt.show()
         
-        # Adding second colorbar for "utilisation" plot
-        axes = plt.gca()
-        cax,kw = mpl.colorbar.make_axes(axes,location='right',pad=0.10,shrink=0.8)
-        colormap = plt.get_cmap('hot')
-        bounds = np.linspace(0,1,11)
-        norm = mpl.colors.BoundaryNorm(bounds,256)
-        colorbar = mpl.colorbar.ColorbarBase(cax, cmap=colormap,norm=norm,boundaries=bounds,spacing='uniform')
-        colorbar.set_label('Branch utilisation')
+        #Adding legends and colorbars
+        #Colorbar for nodal price
+        if nodetype == 'nodalprice':
+            ax_cb_node = fig.add_axes((0.70, 0.125,0.03,0.75))
+            colormap = plt.get_cmap('jet')
+            norm = mpl.colors.Normalize(min(avgprice), max(avgprice))
+            colorbar_node = mpl.colorbar.ColorbarBase(ax_cb_node, cmap=colormap, norm=norm, orientation='vertical')
+            colorbar_node.set_label('Nodal price')
+        #Legend for nodal areas
+        elif nodetype == 'area':
+            patches = []
+            p_labels = []
+            for country in range(len(allareas)):
+                patches.append(mpl.patches.Patch(color=colours_co[country]))
+                p_labels.append(allareas[country])
+            fig.legend(patches, p_labels, bbox_to_anchor=(0.75,0.15,0.03,0.75), \
+                        title='AREA', handlelength=0.7,handletextpad=0.4, frameon=False)
+        #Legend for branch area
+        if branchtype == 'area':
+            patches = []
+            p_labels = []
+            for country in range(len(allareas)):
+                patches.append(mpl.patches.Patch(color=colours_b[country]))
+                p_labels.append(allareas[country])
+            patches.append(mpl.patches.Patch(color='black'))
+            p_labels.append('INT')
+            fig.legend(patches, p_labels, bbox_to_anchor=(0.9,0.15,0.03,0.75), \
+                        title='BRANCH', handlelength=0.7,handletextpad=0.4, frameon=False)
+        #Colorbar for branch utilisation    
+        elif branchtype == 'utilisation':
+            ax_cb_branch = fig.add_axes((0.85, 0.125, 0.03, 0.75))
+            colormap = plt.get_cmap('hot')
+            bounds = np.linspace(0,1,11)
+            norm = mpl.colors.BoundaryNorm(bounds,256)
+            colorbar_branch = mpl.colorbar.ColorbarBase(ax_cb_branch, cmap=colormap, \
+                                                        norm=norm, boundaries=bounds, \
+                                                        spacing='uniform', orientation='vertical')
+            colorbar_branch.set_label('Branch utilisation')
+        #Colorbar for branch flow
+        elif branchtype == 'flow':
+            ax_cb_branch = fig.add_axes((0.85, 0.125, 0.03, 0.75))
+            colormap = plt.get_cmap('hot')
+            norm = mpl.colors.Normalize(minflow,maxflow)
+            colorbar_branch = mpl.colorbar.ColorbarBase(ax_cb_branch, cmap=colormap, \
+                                                        norm=norm, orientation='vertical')
+            colorbar_branch.set_label('Branch flow')
+        #Colorbar for branch sensitivity
+        elif branchtype == 'sensitivity':
+            ax_cb_branch = fig.add_axes((0.85, 0.125, 0.03, 0.75))
+            colormap = plt.get_cmap('hot')
+            norm = mpl.colors.Normalize(minsense,maxsense)
+            colorbar_branch = mpl.colorbar.ColorbarBase(ax_cb_branch, cmap=colormap, \
+                                                        norm=norm, orientation='vertical')
+            colorbar_branch.set_label('Branch sensitivity')
 
         return
         # End plotGridMap
