@@ -287,18 +287,22 @@ class Database(object):
         con = db.connect(self.filename)
         with con:        
             cur = con.cursor()
-            cur.execute("SELECT indx,AVG(flow) FROM Res_Branches"
+            cur.execute("SELECT indx,TOTAL(flow) FROM Res_Branches"
                 +" WHERE timestep>=? AND timestep<? AND flow>=0"
                 +" GROUP BY indx ORDER BY indx",
                 (timeMaxMin[0],timeMaxMin[-1]))
             rows1 = cur.fetchall()
-            cur.execute("SELECT indx,AVG(flow) FROM Res_Branches"
+            cur.execute("SELECT indx,TOTAL(flow) FROM Res_Branches"
                 +" WHERE timestep>=? AND timestep<? AND flow<0"
                 +" GROUP BY indx ORDER BY indx",
                 (timeMaxMin[0],timeMaxMin[-1]))
             rows2 = cur.fetchall()
             cur.execute("SELECT MAX(indx) FROM Res_Branches")
             numBranches = 1 + cur.fetchone()[0]
+            #Calculate average flow for each direction
+            numTimeSteps = timeMaxMin[-1] - timeMaxMin[0]
+            rows1 = [(index, tot_flow / numTimeSteps) for (index, tot_flow) in rows1]
+            rows2 = [(index, tot_flow / numTimeSteps) for (index, tot_flow) in rows2]
         # The length of rows1 and rows2 may be less than the number
         # of branches if the flow is always in one direction
         values_pos = [0]*numBranches
