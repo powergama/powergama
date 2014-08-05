@@ -17,14 +17,19 @@ class Results(object):
     '''    
     
     
-    def __init__(self,grid,databasefile):
+    def __init__(self,grid,databasefile,replace=True):
         '''
         Create a PowerGAMA Results object
         
         Parameters
         ----------
         grid
-            GridData object reference
+            GridData - object reference
+            databasefile - name of sqlite3 file for storage of results
+            replace - replace existing sqlite file (default=true). 
+                        replace=false is useful to analyse previously
+                        generated results
+            
             
         '''
         self.grid = grid
@@ -34,7 +39,8 @@ class Results(object):
             = grid.getIdxBranchesWithFlowConstraints()
         
         self.db = db.Database(databasefile)
-        self.db.createTables(grid)
+        if replace:
+            self.db.createTables(grid)
 
         '''
         self.objectiveFunctionValue=[]    
