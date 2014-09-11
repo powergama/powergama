@@ -10,6 +10,7 @@ import numpy as np
 from mpl_toolkits.basemap import Basemap
 import math
 import powergama.database as db
+import csv
 
 class Results(object):
     '''
@@ -352,7 +353,7 @@ class Results(object):
         
     def plotMapGrid(self,nodetype='',branchtype='',dcbranchtype='',
                     show_node_labels=False,latlon=None,timeMaxMin=None,
-                    dotsize=40):
+                    dotsize=40, filter_price=False):
         '''
         Plot results to map
         
@@ -546,6 +547,10 @@ class Results(object):
                 m.scatter(co_x,co_y,marker='o',color=col, 
                           zorder=2,s=dotsize)
         elif nodetype == 'nodalprice':
+            if filter_price:
+                for index, price in enumerate(avgprice):
+                    if (price>100) or (price<-10):
+                        avgprice[index]=0
             s=m.scatter(x,y,marker='o',c=avgprice, cmap=cm.jet, 
                         zorder=2,s=dotsize)
             #nodes with NAN nodal price plotted in gray:
@@ -572,9 +577,13 @@ class Results(object):
         plt.show()
         
         #Adding legends and colorbars
+        if branchtype == '':
+            ax_cb_node_offset = 0.15
+        else:
+            ax_cb_node_offset = 0
         #Colorbar for nodal price
         if nodetype == 'nodalprice':
-            ax_cb_node = fig.add_axes((0.70, 0.125,0.03,0.75))
+            ax_cb_node = fig.add_axes((0.70+ax_cb_node_offset, 0.125,0.03,0.75))
             colormap = plt.get_cmap('jet')
             norm = mpl.colors.Normalize(min(avgprice), max(avgprice))
             colorbar_node = mpl.colorbar.ColorbarBase(ax_cb_node, cmap=colormap, norm=norm, orientation='vertical')
@@ -586,7 +595,7 @@ class Results(object):
             for country in range(len(allareas)):
                 patches.append(mpl.patches.Patch(color=colours_co[country]))
                 p_labels.append(allareas[country])
-            fig.legend(patches, p_labels, bbox_to_anchor=(0.75,0.15,0.03,0.75), \
+            fig.legend(patches, p_labels, bbox_to_anchor=(0.75+ax_cb_node_offset,0.15,0.03,0.75), \
                         title='AREA', handlelength=0.7,handletextpad=0.4, frameon=False)
         #Legend for branch area
         if branchtype == 'area':
@@ -603,7 +612,7 @@ class Results(object):
         elif branchtype == 'utilisation':
             ax_cb_branch = fig.add_axes((0.85, 0.125, 0.03, 0.75))
             colormap = plt.get_cmap('hot')
-            bounds = np.linspace(0,1,11)
+            bounds = np.linspace(0,1,numBranchCategories)
             norm = mpl.colors.BoundaryNorm(bounds,256)
             colorbar_branch = mpl.colorbar.ColorbarBase(ax_cb_branch, cmap=colormap, \
                                                         norm=norm, boundaries=bounds, \
@@ -630,7 +639,98 @@ class Results(object):
         # End plotGridMap
  
 
-       
+    def node2area(self, nodeName):
+        #name of a single node as input and return the index of the node. 
+        #Is handy when you need to access more information about the node, 
+        #but only the node name is avaiable. (which is the case in the generator file)
+        try:
+            nodeIndex = self.grid.node.name.index(nodeName)
+            return self.grid.node.area[nodeIndex]
+        except:
+            return
+            
+    def getAreaTypeProduction(self, area, generatorType, timeMaxMin):
+        #Returns total production [MWh] in the timerange 'timeMaxMin' for
+        #all generators of 'generatorType' in 'area'
+        
+        print "Looking for generators of type " + str(generatorType) + ", in " + str(area)
+        print "Number of generator to run through: " + str(self.grid.generator.numGenerators())
+        totalProduction = 0
+        
+        
+        for genNumber in range(0, self.grid.generator.numGenerators()):
+            genName = self.grid.generator.desc[genNumber]
+            genNode = self.grid.generator.node[genNumber]
+            genType = self.grid.generator.gentype[genNumber]
+            genArea = self.node2area(genNode)
+            #print str(genNumber) + ", " + genName + ", " + genNode + ", " + genType + ", " + genArea
+            if (genType == generatorType) and (genArea == area):
+                #print "\tGenerator is of right type and area. Adding production"                
+                genProd = sum(self.db.getResultGeneratorPower(genNumber, timeMaxMin))
+                totalProduction += genProd
+                #print "\tGenerator production = " + str(genProd)
+        return totalProduction
+        
+    def getAllGeneratorProduction(self, timeMaxMin):
+        #Returns all production [MWh] for all generators in the timerange 'timeMaxMin'
+        
+        totGenNumbers = self.grid.generator.numGenerators()
+        totalProduction = 0
+        for genNumber in range(0, totGenNumbers):
+            genProd = sum(self.db.getResultGeneratorPower(genNumber, timeMaxMin))
+            print str(genProd)
+            totalProduction += genProd
+            print "Progression: " + str(genNumber+1) + " of " + str(totGenNumbers)
+        return totalProduction
+    
+    def productionOverview(self, areas, types, timeMaxMin, TimeUnitCorrectionFactor):
+        #Return a matrix (numpy matrix, remember to include numpy) with productionOverview
+        #This function is manly used as the calculation part of the writeProductionOverview
+        #Contains just numbers (production[MWH] for each type(columns) and area(rows)), not headers
+        
+        numAreas = len(areas)
+        numTypes = len(types)
+        resultMatrix = np.zeros((numAreas, numTypes))
+        for areaIndex in range(0, numAreas):
+            for typeIndex in range(0, numTypes):
+                prod = self.getAreaTypeProduction(areas[areaIndex], types[typeIndex], timeMaxMin)
+                print "Total produced " + types[typeIndex] + " energy for " + areas[areaIndex] + " equals: " + str(prod)
+                resultMatrix[areaIndex][typeIndex] = prod*TimeUnitCorrectionFactor
+        return resultMatrix 
+        
+
+    def writeProductionOverview(self, areas, types, filename=None, timeMaxMin=None, TimeUnitCorrectionFactor=1):
+        #Write an .csv overview of the production[MWh] in timespan 'timeMaxMin' with the different areas and types as headers.
+        #The vectors 'areas' and 'types' becomes headers (column- and row headers), but the different elements
+        #of 'types' and 'areas' are also the key words in the search function 'getAreaTypeProduction'.
+        #The vectors 'areas' and 'types' can be of any length. 
+
+        if timeMaxMin is None:
+            timeMaxMin = [self.timerange[0],self.timerange[-1] + 1]
+
+            
+        corner = "Countries"
+        numAreas = len(areas)
+        numTypes = len(types)        
+        prodMat = self.productionOverview(areas, types, timeMaxMin, TimeUnitCorrectionFactor)
+        if filename is not None:
+            with open(filename, "wb") as f:
+                writer = csv.writer(f)
+                types.insert(0, corner)
+                writer.writerow(types)
+                for i in range(0,numAreas):
+                    row = [areas[i]]
+                    for j in range(0, numTypes):
+                        row.append(str(prodMat[i][j]))
+                    writer.writerow(row)        
+        else:
+            title=""
+            for j in types:
+                title = title + "\t" + j
+            print "Area" + title
+            for i in range(0,numAreas):
+                print areas[i] + '\t%s' % '\t'.join(map(str,prodMat[i]))
+                
 def _myround(x, base=1,method='round'):
     '''Round to nearest multiple of base'''
     if method=='round':
