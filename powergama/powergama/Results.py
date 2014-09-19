@@ -182,8 +182,19 @@ class Results(object):
         return
         
     
-    def plotGeneratorOutput(self,generator_index,timeMaxMin=None):
-        '''Show output of a generator'''
+    def plotGeneratorOutput(self,generator_index,timeMaxMin=None,
+                            relativestorage=True):
+        '''Show output of a generator
+        
+        Parameters
+        ----------
+        generator_index (int)
+            index of generator for which to make the plot
+        timeMaxMin [int,int] (default=None)
+            time interval for the plot [start,end]
+        relativestorage (default=True)
+            use filling fraction as y axis label for storage
+        '''
         fig = plt.figure()
         ax1 = fig.add_subplot(111)
         if timeMaxMin is None:
@@ -209,6 +220,9 @@ class Results(object):
         if generator_index in self.storage_idx_generators:
             storagefilling = self.db.getResultStorageFilling(
                 generator_index,timeMaxMin)
+            if relativestorage:
+                cap = self.grid.generator.storage[generator_index]
+                storagefilling = [x/cap for x in storagefilling]
             ax2 = plt.twinx() #separate y axis
             ax2.plot(timerange,storagefilling,'-g', label='storage')
             ax2.legend(loc="upper right")
@@ -353,7 +367,7 @@ class Results(object):
         
     def plotMapGrid(self,nodetype='',branchtype='',dcbranchtype='',
                     show_node_labels=False,latlon=None,timeMaxMin=None,
-                    dotsize=40, filter_price=False):
+                    dotsize=40, filter_price=None):
         '''
         Plot results to map
         
@@ -369,6 +383,9 @@ class Results(object):
             show node names (true/false)
         latlon (list) (default=None)
             map area [lat_min, lon_min, lat_max, lon_max]
+        filter_price (list) (default=None)
+            [min,max] - lower and upper cutof for price range
+            
         '''
         
         if timeMaxMin is None:
@@ -547,10 +564,12 @@ class Results(object):
                 m.scatter(co_x,co_y,marker='o',color=col, 
                           zorder=2,s=dotsize)
         elif nodetype == 'nodalprice':
-            if filter_price:
+            if filter_price != None:
                 for index, price in enumerate(avgprice):
-                    if (price>100) or (price<-10):
-                        avgprice[index]=0
+                    if (price > filter_price[1]):
+                        avgprice[index] = filter_price[1]
+                    elif (price < filter_price[0]):
+                        avgprice[index] = filter_price[0]
             s=m.scatter(x,y,marker='o',c=avgprice, cmap=cm.jet, 
                         zorder=2,s=dotsize)
             #nodes with NAN nodal price plotted in gray:
