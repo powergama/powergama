@@ -367,7 +367,7 @@ class Results(object):
         
     def plotMapGrid(self,nodetype='',branchtype='',dcbranchtype='',
                     show_node_labels=False,latlon=None,timeMaxMin=None,
-                    dotsize=40, filter_price=None):
+                    dotsize=40, filter_price=None; draw_par_mer=True):
         '''
         Plot results to map
         
@@ -421,13 +421,14 @@ class Results(object):
         m.fillcontinents(color='coral',lake_color='aqua',zorder=0)
         m.drawmapboundary(fill_color='aqua')
         
-        m.drawparallels(np.arange(_myround(lat_min,10,'floor'),
-                                  _myround(lat_max,10,'ceil'),10),
-                        labels=[1,1,0,0])
+        if draw_par_mer:
+            m.drawparallels(np.arange(_myround(lat_min,10,'floor'),
+                _myround(lat_max,10,'ceil'),10),
+                labels=[1,1,0,0])
 
-        m.drawmeridians(np.arange(_myround(lon_min,10,'floor'),
-                                  _myround(lon_max,10,'ceil'),10),
-                        labels=[0,0,0,1])
+            m.drawmeridians(np.arange(_myround(lon_min,10,'floor'),
+                _myround(lon_max,10,'ceil'),10),
+                labels=[0,0,0,1])
         
         
         if nodetype=='area':
@@ -653,7 +654,7 @@ class Results(object):
             colorbar_branch = mpl.colorbar.ColorbarBase(ax_cb_branch, cmap=colormap, \
                                                         norm=norm, orientation='vertical')
             colorbar_branch.set_label('Branch sensitivity')
-
+        
         return
         # End plotGridMap
  
