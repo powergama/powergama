@@ -186,7 +186,26 @@ class Database(object):
                 }      
         return values
 
-
+    def getGridInterareaBranches(self):
+        '''
+        Get indices of branches between different areas as a list
+        
+        Returns
+        =======
+        
+        (indice, fromArea, toArea)
+        '''
+        con = db.connect(self.filename)
+        con.text_factory = str
+        with con:
+            cur = con.cursor()
+            cur.execute("SELECT b.indx, fromNode.area, toNode.area"
+                +" FROM Grid_Branches b"
+                +" INNER JOIN Grid_Nodes fromNode ON b.fromIndx = fromNode.indx"
+                +" INNER JOIN Grid_Nodes toNode ON b.toIndx = toNode.indx"
+                +" WHERE fromNode.area != toNode.area")
+            output = cur.fetchall()
+        return output
 
 
 ########## Get result data
@@ -357,6 +376,89 @@ class Database(object):
             rows = cur.fetchall()
         values = [row[1] for row in rows]        
         return values
+       
+    def getAverageInterareaBranchFlow(self, timeMaxMin):
+        '''
+        Get average negative flow, positive flow and total flow of branches between different areas
+        
+        Returns
+        =======
+        List of tuples for inter-area branches with following values:
+        (indices, fromArea, toArea, average negative flow, average positive flow, average flow)
+        '''
+        
+        con = db.connect(self.filename)
+        con.text_factory = db.OptimizedUnicode
+        db.enable_callback_tracebacks(True)
+        with con:
+            cur = con.cursor()
+            cur.execute("SELECT b.indx, fromNode.area, toNode.area"
+                +" FROM Grid_Branches b"
+                +" INNER JOIN Grid_Nodes fromNode ON b.fromIndx = fromNode.indx"
+                +" INNER JOIN Grid_Nodes toNode ON b.toIndx = toNode.indx"
+                +" WHERE fromNode.area != toNode.area")
+            branches = cur.fetchall()
+            
+            #fetch flows
+                        
+            cur.execute("SELECT res.indx, TOTAL(res.flow)"
+                +" FROM Res_Branches res, Grid_Branches b"
+                +" INNER JOIN Grid_Nodes fromNode ON b.fromIndx = fromNode.indx"
+                +" INNER JOIN Grid_Nodes toNode ON b.toIndx = toNode.indx"
+                +" WHERE fromNode.area != toNode.area AND res.indx = b.indx AND timestep>=? AND timestep<? AND res.flow<=0"
+                +" GROUP BY res.indx",
+                (timeMaxMin[0],timeMaxMin[-1]))
+            flow_negative = cur.fetchall()
+            
+            cur.execute("SELECT res.indx, TOTAL(res.flow)"
+                +" FROM Res_Branches res, Grid_Branches b"
+                +" INNER JOIN Grid_Nodes fromNode ON b.fromIndx = fromNode.indx"
+                +" INNER JOIN Grid_Nodes toNode ON b.toIndx = toNode.indx"
+                +" WHERE fromNode.area != toNode.area AND res.indx = b.indx AND timestep>=? AND timestep<? AND res.flow>=0"
+                +" GROUP BY res.indx",
+                (timeMaxMin[0],timeMaxMin[-1]))
+            flow_positive = cur.fetchall()
+            
+            cur.execute("SELECT res.indx, TOTAL(res.flow)"
+                +" FROM Res_Branches res, Grid_Branches b"
+                +" INNER JOIN Grid_Nodes fromNode ON b.fromIndx = fromNode.indx"
+                +" INNER JOIN Grid_Nodes toNode ON b.toIndx = toNode.indx"
+                +" WHERE fromNode.area != toNode.area AND res.indx = b.indx AND timestep>=? AND timestep<?"
+                +" GROUP BY res.indx",
+                (timeMaxMin[0],timeMaxMin[-1]))
+            flow_total = cur.fetchall()
+            
+            #calculate average flow
+            
+            numTimeSteps = timeMaxMin[-1] - timeMaxMin[0]
+            flow_negative = [(index, flow/numTimeSteps) for (index, flow) in flow_negative]
+            flow_positive = [(index, flow/numTimeSteps) for (index, flow) in flow_positive]
+            flow_total = [(index, flow/numTimeSteps) for (index, flow) in flow_total]
+            
+            #Sort results
+            # The length of flow lists may be less than the number
+            # of branches if the flow is always in one direction
+            values=[]
+            
+            #for all inter-area branches
+            for index, indice in enumerate([x for (x,y,z) in branches]):
+                #find negative flow
+                try :
+                    temp_ind = [y[0] for y in flow_negative].index(indice)
+                    neg = (flow_negative[temp_ind][1],)
+                except ValueError:
+                    neg = (0,)
+                #find positive flow
+                try :
+                    temp_ind = [y[0] for y in flow_positive].index(indice)
+                    pos = (flow_positive[temp_ind][1],)
+                except ValueError:
+                    pos = (0,)
+                #find total flow
+                tot = (flow_total[index][1],)
+
+                flow.append(branches[index] + neg + pos + tot)
+        return values
         
         
 ### Generator results
@@ -417,11 +519,11 @@ class Database(object):
             cur = con.cursor()
             cur.execute("SELECT output FROM Res_Generators "
                 +"WHERE timestep>=? AND timestep<? AND indx IN "
-                +"(SELECT indx FROM Data_Generators WHERE node IN "
-                +" (SELECT id FROM Data_Nodes WHERE area IN (?)))"
+                +"(SELECT indx FROM Grid_Generators WHERE node IN "
+                +" (SELECT id FROM Grid_Nodes WHERE area IN (?)))"
                 +" ORDER BY timestep",
                 (timeMaxMin[0],timeMaxMin[-1],area))
             rows = cur.fetchall()
             output = [row[0] for row in rows]        
         return output
-        
+           

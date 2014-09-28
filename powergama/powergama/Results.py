@@ -750,6 +750,26 @@ class Results(object):
             for i in range(0,numAreas):
                 print areas[i] + '\t%s' % '\t'.join(map(str,prodMat[i]))
                 
+    def getAverageInterareaBranchFlow(self, filename=None, timeMaxMin=None):
+    
+        if timeMaxMin is None:
+            timeMaxMin = [self.timerange[0],self.timerange[-1] + 1]
+    
+        results = self.db.getAverageInterareaBranchFlow(timeMaxMin)
+        
+        if filename is not None:
+            headers = ('branch','fromArea','toArea','average negative flow','average positive flow','average flow')
+            with open(filename, "wb") as f:
+                writer = csv.writer(f)
+                writer.writerow(headers)
+                for row in results:
+                    writer.writerow(row) 
+        else:
+            for x in results:
+                print x
+            
+        return results
+        
 def _myround(x, base=1,method='round'):
     '''Round to nearest multiple of base'''
     if method=='round':
