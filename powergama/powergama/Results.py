@@ -367,7 +367,7 @@ class Results(object):
         
     def plotMapGrid(self,nodetype='',branchtype='',dcbranchtype='',
                     show_node_labels=False,latlon=None,timeMaxMin=None,
-                    dotsize=40, filter_price=None; draw_par_mer=True):
+                    dotsize=40, filter_price=None, draw_par_mer=True):
         '''
         Plot results to map
         
@@ -752,7 +752,26 @@ class Results(object):
                 print areas[i] + '\t%s' % '\t'.join(map(str,prodMat[i]))
                 
     def getAverageInterareaBranchFlow(self, filename=None, timeMaxMin=None):
-    
+        ''' Calculate average flow in each direction and total flow for inter-area branches. Requires sqlite version newer than 3.6
+       
+        Parameters
+        ----------
+        filename (str) (default=None)
+            if a filename is given then the information is stored to file.
+            else the information is printed to console
+        timeMaxMin [int,int] (default=None)
+            time interval for the calculation [start,end]
+        '''
+        
+        # Version control of database module. Must be 3.7.x or newer
+        major = int(list(self.db.sqlite_version)[0])
+        minor = int(list(self.db.sqlite_version)[2])
+        if major > 3 or major == 3 and minor < 7 :
+            print 'current SQLite version: ', self.db.sqlite_version
+            print 'getAverageInterareaBranchFlow() requires 3.7.x or newer'
+        else:
+            print 'current SQLite version: ', self.db.sqlite_version
+            
         if timeMaxMin is None:
             timeMaxMin = [self.timerange[0],self.timerange[-1] + 1]
     

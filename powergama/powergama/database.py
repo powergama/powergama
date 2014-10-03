@@ -13,7 +13,7 @@ class Database(object):
 
     def __init__(self,filename):
         self.filename = filename
-
+        self.sqlite_version = db.sqlite_version
 
     def createTables(self,data):
         """
@@ -157,7 +157,7 @@ class Database(object):
       
 
 ########## Get grid data
-
+    
     def getGridNodeIndices(self):
         '''Get node indices as a list'''
         con = db.connect(self.filename)
@@ -457,7 +457,7 @@ class Database(object):
                 #find total flow
                 tot = (flow_total[index][1],)
 
-                flow.append(branches[index] + neg + pos + tot)
+                values.append(branches[index] + neg + pos + tot)
         return values
         
         
