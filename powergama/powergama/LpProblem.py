@@ -47,6 +47,8 @@ class LpProblem(object):
         self.num_generators = grid.generator.numGenerators()
         self.num_branches = grid.branch.numBranches()
         self.num_dc_branches = grid.dcbranch.numBranches()
+        self._idx_generatorsWithPumping = grid.getIdxGeneratorsWithPumping()
+        
         self._idx_generatorsWithStorage = grid.getIdxGeneratorsWithStorage()
         self._idx_generatorsStorageProfileFilling = asarray(
             [grid.generator.storagevalue_profile_filling[i] 
@@ -77,6 +79,9 @@ class LpProblem(object):
         # Define (and keep track of) LP problem variables
         self._var_generation = [
             pulp.LpVariable("Pgen%d" %(i)) for i in range_generators] 
+        self._var_pumping = [
+            pulp.LpVariable("Ppump%d" %(i)) 
+            for i in self._idx_generatorsWithPumping] 
         self._var_branchflow = [
             pulp.LpVariable("Pbranch%d" %(i)) for i in range_branches] 
         self._var_dc = [
@@ -151,7 +156,7 @@ class LpProblem(object):
             self._constraints_branchLowerBounds[idx_branch_constr] = cl_name
             self._constraints_branchUpperBounds[idx_branch_constr] = cu_name
 
-        # Max and min powr flow on DC branches        
+        # Max and min power flow on DC branches        
         for i in idxDcBranchesConstr:
             dc_cl = self._var_dc[i] >= -self._grid.dcbranch.capacity[i]
             dc_cu = self._var_dc[i] <= self._grid.dcbranch.capacity[i]
@@ -183,6 +188,7 @@ class LpProblem(object):
 
         self._pfPload = [[]]*self.num_nodes
         self._pfPgen = [[]]*self.num_nodes
+        self._pfPpump= [[]]*self.num_nodes
         self._pfPflow = [[]]*self.num_nodes
         self._pfPshed = [[]]*self.num_nodes
         self._pfPdc = [[]]*self.num_nodes
@@ -190,6 +196,7 @@ class LpProblem(object):
         for idx_node in range_nodes:                        
             # Find generators connected to this node:            
             idx_gen = grid.getGeneratorsAtNode(idx_node)
+            idx_pump = grid.getPumpsAtNode(idx_node)
             
             # Find DC branches connected to node (direction is important)
             idx_dc_from = grid.getDcBranchesAtNode(idx_node,'from')
@@ -200,6 +207,8 @@ class LpProblem(object):
             # Constant part of power flow equations            
             self._pfPgen[idx_node] = [
                 self._var_generation[i]/const.baseMVA for i in idx_gen]
+            self._pfPpump[idx_node] = [
+                self._var_pumping[i]/const.baseMVA for i in idx_pump]
             self._pfPshed[idx_node] = ( 
                 self._var_loadshedding[idx_node]/const.baseMVA)
             self._pfPdc[idx_node] = (
@@ -219,11 +228,13 @@ class LpProblem(object):
             self._pfPload[idx_node] = pulp.lpSum(demOutflow)
             
             # Generation is positive
+            # Pumping is negative
             # Demand is negative
             # Load shed is positive
             # Flow out of the node is positive
             cpf = pulp.lpSum(
                 self._pfPgen[idx_node]
+                +self._pfPpump[idx_node]
                 +self._pfPdc[idx_node]
                 +self._pfPload[idx_node]
                 +self._pfPshed[idx_node]) == self._pfPflow[idx_node]
@@ -241,7 +252,10 @@ class LpProblem(object):
 
         probObjective = pulp.lpSum([
             self._marginalcosts[i]*self._var_generation[i] 
-            for i in range_generators]  )       
+            for i in range_generators,
+            self._marginalcosts[i]*self._var_pumping[i] 
+            for i in self._idx_generatorsWithPumping,
+            ]  )       
         probSlack = pulp.lpSum([
             self._loadsheddingcosts[i]*self._var_loadshedding[i] 
             for i in range_nodes]  ) 

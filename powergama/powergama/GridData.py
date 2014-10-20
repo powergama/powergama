@@ -21,9 +21,14 @@ def parseId(num):
         d=num
     return str(d)
 
-def parseNum(num):
+def parseNum(num,default=None):
     '''parse number and return a float'''
-    return float(num)
+    if default is None:
+        return float(num)
+    elif num=='':
+        return default
+    else:
+        return float(num)
 
 
 #_QUOTINGTYPE=csv.QUOTE_NONNUMERIC
@@ -184,6 +189,9 @@ class _Generators(object):
         self.inflow_profile = []
         self.desc = []
         self.gentype = []
+        self.pump_cap = []
+        self.pump_efficiency = []
+        self.pump_deadband = []
     
     def numGenerators(self):
         return len(self.node)
@@ -193,7 +201,8 @@ class _Generators(object):
 
     def readFromFile(self,filename):
         with open(filename,'rb') as csvfile:
-            datareader = csv.DictReader(csvfile,delimiter=',',quoting=_QUOTINGTYPE)
+            datareader = csv.DictReader(csvfile,delimiter=',',
+                                        quoting=_QUOTINGTYPE)
             for row in datareader:
                 #print(row)
                 self.node.append(parseId(row["node"]))
@@ -202,17 +211,29 @@ class _Generators(object):
                 self.marginalcost.append(parseNum(row["basecost"]))
                 self.storage.append(parseNum(row["storage_cap"]))
                 self.storagelevel_init.append(parseNum(row["storage_ini"]))
-                self.storagevalue_profile_filling.append(parseId(row["storval_filling_ref"]))
-                self.storagevalue_profile_time.append(parseId(row["storval_time_ref"]))
+                self.storagevalue_profile_filling.append(
+                    parseId(row["storval_filling_ref"]))
+                self.storagevalue_profile_time.append(
+                    parseId(row["storval_time_ref"]))
                 self.inflow_factor.append(parseNum(row["inflow_fac"]))
                 self.inflow_profile.append(parseId(row["inflow_ref"]))
                 self.gentype.append(parseId(row["type"]))
                 self.desc.append(parseId(row["desc"]))
+                # Pumping data is optional, so check if it is present in the
+                # input files
+                if "pump_cap" in row.keys():
+                    self.pump_cap.append(parseNum(row["pump_cap"],default=0))
+                    self.pump_efficiency.append(
+                        parseNum(row["pump_efficiency"],default=0))
+                    self.pump_deadband.append(
+                        parseNum(row["pump_deadband"],default=0))
+                else:
+                    # default values are zero
+                    self.pump_cap.append(0)
+                    self.pump_efficiency.append(0)
+                    self.pump_deadband.append(0)
+                    
                 
-                #if inflow is set to zero, then use Pmax instead
-                # (unlimited amount of fuel)
-                #if self.inflow[-1]==0:
-                #    self.inflow[-1] = self.prodMax[-1]
         self.idxHasProfile = [i for i, j in enumerate(self.inflow_factor) if j != 0]      
         return
         
@@ -224,7 +245,8 @@ class _Generators(object):
                     "inflow_fac","inflow_ref",
                     "storage_cap","storage_ini",
                     "storval_filling_ref",
-                    "storval_time_ref"]
+                    "storval_time_ref",
+                    "pump_cap","pump_efficiency","pump_deadband"]
         with open(filename,'wb') as csvfile:
             datawriter = csv.writer(csvfile, delimiter=',',\
                                 quotechar='"', quoting=_QUOTINGTYPE)
@@ -234,9 +256,13 @@ class _Generators(object):
                     self.desc[i], self.gentype[i], self.node[i],
                     self.prodMax[i], self.prodMin[i], self.marginalcost[i],
                     self.inflow_factor[i], self.inflow_profile[i],
-                    self.storage[i], self.storagelevel_init[i],
+                    self.storage[i], 
+                    self.storagelevel_init[i],
                     self.storagevalue_profile_filling[i],
-                    self.storagevalue_profile_time[i]
+                    self.storagevalue_profile_time[i],
+                    self.pump_cap[i],
+                    self.pump_efficiency[i],
+                    self.pump_deadband[i]
                     ]
                 datawriter.writerow(datarow)
         return
@@ -453,10 +479,17 @@ class GridData(object):
         
     def getIdxGeneratorsWithStorage(self):
         """Indices of all generators with nonzero and non-infinite storage"""
-        idx = [i for i,v in enumerate(self.generator.storage) if v>0 and v<numpy.inf]
+        idx = [i for i,v in enumerate(self.generator.storage) 
+            if v>0 and v<numpy.inf]
         return idx
         #nonzeros = numpy.nonzero(self.generator.storage)[0]
         #return nonzeros.tolist()
+        
+    def getIdxGeneratorsWithPumping(self):
+        """Indices of all generators with pumping capacity"""
+        idx = [i for i,v in enumerate(self.generator.pump_cap) 
+            if v>0 and v<numpy.inf]
+        return idx
         
     def getIdxBranchesWithFlowConstraints(self):
         '''Indices of branches with less than infinite branch capacity'''
