@@ -36,6 +36,7 @@ class Results(object):
         self.grid = grid
         self.timerange = grid.timerange
         self.storage_idx_generators = grid.getIdxGeneratorsWithStorage()
+        self.pump_idx_generators = grid.getIdxGeneratorsWithPumping()
         self.idxConstrainedBranchCapacity \
             = grid.getIdxBranchesWithFlowConstraints()
         
@@ -57,7 +58,9 @@ class Results(object):
         self.loadshed=[]
         '''    
         
-    def addResultsFromTimestep(self,timestep,objective_function,generator_power,
+    def addResultsFromTimestep(self,timestep,objective_function,
+                               generator_power,
+                               generator_pumped,
                                branch_power,dcbranch_power,node_angle,
                                sensitivity_branch_capacity,
                                sensitivity_dcbranch_capacity,
@@ -73,6 +76,7 @@ class Results(object):
             timestep = timestep,
             objective_function = objective_function,
             generator_power = generator_power,
+            generator_pumped = generator_pumped,
             branch_flow = branch_power,
             dcbranch_flow = dcbranch_power,
             node_angle = node_angle,
@@ -84,7 +88,8 @@ class Results(object):
             loadshed_power = loadshed_power,
             marginalprice = marginalprice,
             idx_storagegen = self.storage_idx_generators,
-            idx_branchsens = self.idxConstrainedBranchCapacity)
+            idx_branchsens = self.idxConstrainedBranchCapacity,
+            idx_pumpgen = self.pump_idx_generators)
        
         '''
         self.objectiveFunctionValue.append(objective_function)
@@ -117,6 +122,17 @@ class Results(object):
         avgflow = self.db.getResultBranchFlowsMean(timeMaxMin)
         #np.mean(branchflow,axis=1)
         return avgflow
+
+
+    def getNodalPrices(self,node,timeMaxMin=None):
+        if timeMaxMin is None:
+            timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
+
+        prices = self.db.getResultNodalPrice(node,timeMaxMin)
+        # use asarray to convert None to nan
+        prices = np.asarray(prices,dtype=float)
+        return prices
+
 
     def getAverageNodalPrices(self,timeMaxMin=None):
         if timeMaxMin is None:
@@ -215,6 +231,12 @@ class Results(object):
                 *self.grid.generator.inflow_factor[generator_index]
                 *self.grid.generator.prodMax[generator_index] 
                 for t in timerange],'-b', label="inflow")
+
+        # Power pumped (if generator has nonzero pumping capacity)
+        if self.grid.generator.pump_cap[generator_index] > 0:
+            pump_output = self.db.getResultPumpPower(
+                generator_index,timeMaxMin)
+            ax1.plot(timerange,pump_output,'-c', label="pumping")
         
         # Storage filling level (if generator has storage)
         if generator_index in self.storage_idx_generators:
@@ -228,9 +250,12 @@ class Results(object):
             ax2.legend(loc="upper right")
                      
         ax1.legend(loc="upper left")
-        plt.title("Generator %d (%s) at node %s" 
+        nodeidx = self.grid.node.name.index(
+            self.grid.generator.node[generator_index])
+        plt.title("Generator %d (%s) at node %d (%s)" 
             % (generator_index,
                self.grid.generator.gentype[generator_index],
+               nodeidx, 
                self.grid.generator.node[generator_index]))
         plt.show()
         return

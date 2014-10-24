@@ -21,7 +21,7 @@ Module containing PowerGAMA LpProblem class
 '''
 
 import pulp
-from numpy import pi, asarray, vstack, inf
+from numpy import pi, asarray, vstack, zeros, inf
 from datetime import datetime as datetime
 import constants as const
 import scipy.sparse
@@ -216,7 +216,7 @@ class LpProblem(object):
             self._pfPgen[idx_node] = [
                 self._var_generation[i]/const.baseMVA for i in idx_gen]
             self._pfPpump[idx_node] = [
-                self._var_pumping[i]/const.baseMVA 
+                -self._var_pumping[i]/const.baseMVA 
                 for i in xrange(len(idx_gen_pump))]
             self._pfPshed[idx_node] = ( 
                 self._var_loadshedding[idx_node]/const.baseMVA)
@@ -264,8 +264,8 @@ class LpProblem(object):
             self._marginalcosts[i] * self._var_generation[i] 
             for i in range_generators])
         probObjective_pump = pulp.lpSum([
-            (self._marginalcosts[genpumpidx[i]]
-                -grid.generator.pump_deadband[genpumpidx[i]]) 
+            max(0,(self._marginalcosts[genpumpidx[i]]
+                -grid.generator.pump_deadband[genpumpidx[i]])) 
             * (-self._var_pumping[i]) 
             for i in xrange(len(genpumpidx))
             ]  )
@@ -371,6 +371,7 @@ class LpProblem(object):
             # a value - don't know why this works.            
             cpf = (
                 self._pfPgen[idx_node]
+                +self._pfPpump[idx_node]
                 +self._pfPdc[idx_node]
                 +self._pfPload[idx_node]
                 +self._pfPshed[idx_node] == self._pfPflow[idx_node])
@@ -381,14 +382,24 @@ class LpProblem(object):
  
         # Update objective function      
         self._updateMarginalcosts(timestep)                                                 
-        probObjective = pulp.lpSum(\
+        probObjective_gen = pulp.lpSum(\
             [self._marginalcosts[i]*self._var_generation[i]*self.timeDelta \
                 for i in range_generators]  )       
         probSlack = pulp.lpSum(\
             [self._loadsheddingcosts[i]*self._var_loadshedding[i]*self.timeDelta \
                 for i in range_nodes]  ) 
-
-        self.prob.setObjective(probObjective+probSlack)      
+        
+        genpumpidx = self._idx_generatorsWithPumping;
+        probObjective_pump = pulp.lpSum([
+            max(0,(self._marginalcosts[genpumpidx[i]]
+            -self._grid.generator.pump_deadband[genpumpidx[i]])) 
+            * (-self._var_pumping[i]) 
+            for i in xrange(len(genpumpidx))
+            ]  )
+        
+        self.prob.setObjective(probObjective_gen
+                                +probObjective_pump                                
+                                +probSlack)      
         
         return
         
@@ -399,7 +410,8 @@ class LpProblem(object):
         """Store timestep results in local arrays, and update storage"""
                 
         Pgen = [v.varValue for v in self._var_generation]
-        
+        Ppump = [v.varValue for v in self._var_pumping]
+
         # Update storage:
         inflow_profile_refs = self._grid.generator.inflow_profile
         inflow_factor = self._grid.generator.inflow_factor
@@ -409,9 +421,13 @@ class LpProblem(object):
                         for i in range(len(capacity))]
 
         energyIn = asarray(genInflow)*self.timeDelta
-        print("TODO:pumping into storage\n")        
+        pumpedIn = zeros(len(capacity))
+        for i,x in enumerate(self._idx_generatorsWithPumping):
+            pumpedIn[x] = Ppump[i]*self._grid.generator.pump_efficiency[x]
+        pumpedIn = pumpedIn*self.timeDelta
+
         energyOut = asarray(Pgen)*self.timeDelta
-        energyStorable = self._storage + energyIn - energyOut
+        energyStorable = self._storage + energyIn + pumpedIn - energyOut
         storagecapacity = asarray(self._grid.generator.storage)
         self._storage = vstack((storagecapacity,energyStorable)).min(axis=0)
 
@@ -456,6 +472,7 @@ class LpProblem(object):
             timestep = self._grid.timerange[0]+timestep,
             objective_function = F,
             generator_power = Pgen,
+            generator_pumped = Ppump,
             branch_power = Pb,
             dcbranch_power = Pdc,
             node_angle = theta,

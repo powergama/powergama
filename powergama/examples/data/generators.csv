@@ -1,36 +1,36 @@
-"desc","type","node","pmax","pmin","basecost","inflow_fac","inflow_ref","storage_cap","storage_ini","storval_filling_ref","storval_time_ref"
-"nuclear","nuclear","Nordel: 3000",5609.8907103825,1060,11,0,"const","inf",1,"const","const"
-"hydro","hydro","Nordel: 3000",1135.1724137931,0,45,0.47,"hydro",2344827.5862069,0.6,"hydro","const"
-"hydro","hydro","Nordel: 3100",2837.9310344828,0,45,0.47,"hydro",5862068.96551724,0.6,"hydro","const"
-"hydro","hydro","Nordel: 3115",4540.6896551724,0,45,0.47,"hydro",9379310.3448276,0.6,"hydro","const"
-"nuclear","nuclear","Nordel: 3200",370.4644808743,70,11,0,"const","inf",1,"const","const"
-"hydro","hydro","Nordel: 3245",1702.7586206897,0,45,0.47,"hydro",3517241.37931035,0.6,"hydro","const"
-"hydro","hydro","Nordel: 3249",6243.4482758621,0,45,0.47,"hydro",12896551.7241379,0.6,"hydro","const"
-"coal","coal","Nordel: 3300",685,0,62,0,"const","inf",1,"const","const"
-"gas","gas","Nordel: 3300",895,0,69,0,"const","inf",1,"const","const"
-"biomass","biomass","Nordel: 3300",3173,0,50,0,"const","inf",1,"const","const"
-"oil","oil","Nordel: 3300",3400,0,162,0,"const","inf",1,"const","const"
-"nuclear","nuclear","Nordel: 3359",3704.6448087432,700,11,0,"const","inf",1,"const","const"
-"hydro","hydro","Nordel: 5100",1800,0,45,0.47,"hydro",7380000,0.6,"hydro","const"
-"hydro","hydro","Nordel: 5300",2750,0,45,0.47,"hydro",11275000,0.6,"hydro","const"
-"hydro","hydro","Nordel: 5400",1900,0,45,0.47,"hydro",7790000,0.6,"hydro","const"
-"hydro","hydro","Nordel: 5500",1000,0,45,0.47,"hydro",4100000,0.6,"hydro","const"
-"hydro","hydro","Nordel: 5600",2850,0,45,0.47,"hydro",11685000,0.6,"hydro","const"
-"hydro","hydro","Nordel: 5603",100,0,45,0.47,"hydro",410000,0.6,"hydro","const"
-"hydro","hydro","Nordel: 6000",1400,0,45,0.47,"hydro",5740000,0.6,"hydro","const"
-"hydro","hydro","Nordel: 6100",2900,0,45,0.47,"hydro",11890000,0.6,"hydro","const"
-"hydro","hydro","Nordel: 6500",1900,0,45,0.47,"hydro",7790000,0.6,"hydro","const"
-"hydro","hydro","Nordel: 6700",3400,0,45,0.47,"hydro",13940000,0.6,"hydro","const"
-"nuclear","nuclear","Nordel: 7000",2600,520,11,0,"const","inf",1,"const","const"
-"coal","coal","Nordel: 7000",5620,0,62,0,"const","inf",1,"const","const"
-"gas","gas","Nordel: 7000",2900,0,69,0,"const","inf",1,"const","const"
-"biomass","biomass","Nordel: 7000",2000,0,50,0,"const","inf",1,"const","const"
-"coal_lgn","coal_lgn","Nordel: 7000",0,0,58,0,"const","inf",1,"const","const"
-"oil","oil","Nordel: 7000",1030,0,162,0,"const","inf",1,"const","const"
-"hydro","hydro","Nordel: 7100",3000,0,45,0.51,"hydro",5000000,0.6,"hydro","const"
-"coal","coal","Nordel: 8500",804,0,62,0,"const","inf",1,"const","const"
-"gas","gas","Nordel: 8500",804,0,69,0,"const","inf",1,"const","const"
-"biomass","biomass","Nordel: 8500",804,0,50,0,"const","inf",1,"const","const"
-"unknown","unknown","Russia: 9000",1030,0,69,0,"const","inf",1,"const","const"
-"solar test plant","solar_csp","Nordel: 6500",100,0,40,0.25,"solar",200,0,"const","csp"
-"wind test plant","wind","Nordel: 6100",500,0,0,0.32,"wind",0,0,"const","const"
+desc,type,node,pmax,pmin,basecost,inflow_fac,inflow_ref,storage_cap,storage_ini,storval_filling_ref,storval_time_ref,pump_cap,pump_efficiency,pump_deadband
+nuclear,nuclear,Nordel: 3000,5609.8907103825,1060,11,0,const,inf,1,const,const,,,
+hydro,hydro,Nordel: 3000,1135.1724137931,0,45,0.47,hydro,2344827.5862069,0.6,hydro,const,,,
+hydro,hydro,Nordel: 3100,2837.9310344828,0,45,0.47,hydro,5862068.96551724,0.6,hydro,const,,,
+hydro,hydro,Nordel: 3115,4540.6896551724,0,45,0.47,hydro,9379310.3448276,0.1,hydro,const,500,0.9,10
+nuclear,nuclear,Nordel: 3200,370.4644808743,70,11,0,const,inf,1,const,const,,,
+hydro,hydro,Nordel: 3245,1702.7586206897,0,45,0.47,hydro,3517241.37931035,0.6,hydro,const,,,
+hydro,hydro,Nordel: 3249,6243.4482758621,0,45,0.47,hydro,12896551.7241379,0.6,hydro,const,,,
+coal,coal,Nordel: 3300,685,0,62,0,const,inf,1,const,const,,,
+gas,gas,Nordel: 3300,895,0,69,0,const,inf,1,const,const,,,
+biomass,biomass,Nordel: 3300,3173,0,50,0,const,inf,1,const,const,,,
+oil,oil,Nordel: 3300,3400,0,162,0,const,inf,1,const,const,,,
+nuclear,nuclear,Nordel: 3359,3704.6448087432,700,11,0,const,inf,1,const,const,,,
+hydro,hydro,Nordel: 5100,1800,0,45,0.47,hydro,7380000,0.6,hydro,const,,,
+hydro,hydro,Nordel: 5300,2750,0,45,0.47,hydro,11275000,0.6,hydro,const,,,
+hydro,hydro,Nordel: 5400,1900,0,45,0.47,hydro,7790000,0.6,hydro,const,,,
+hydro,hydro,Nordel: 5500,1000,0,45,0.47,hydro,4100000,0.6,hydro,const,,,
+hydro,hydro,Nordel: 5600,2850,0,45,0.47,hydro,11685000,0.6,hydro,const,,,
+hydro,hydro,Nordel: 5603,100,0,45,0.47,hydro,410000,0.6,hydro,const,,,
+hydro,hydro,Nordel: 6000,1400,0,45,0.47,hydro,5740000,0.6,hydro,const,,,
+hydro,hydro,Nordel: 6100,2900,0,45,0.47,hydro,11890000,0.6,hydro,const,,,
+hydro,hydro,Nordel: 6500,1900,0,45,0.47,hydro,7790000,0.6,hydro,const,,,
+hydro,hydro,Nordel: 6700,3400,0,45,0.47,hydro,13940000,0.6,hydro,const,,,
+nuclear,nuclear,Nordel: 7000,2600,520,11,0,const,inf,1,const,const,,,
+coal,coal,Nordel: 7000,5620,0,62,0,const,inf,1,const,const,,,
+gas,gas,Nordel: 7000,2900,0,69,0,const,inf,1,const,const,,,
+biomass,biomass,Nordel: 7000,2000,0,50,0,const,inf,1,const,const,,,
+coal_lgn,coal_lgn,Nordel: 7000,0,0,58,0,const,inf,1,const,const,,,
+oil,oil,Nordel: 7000,1030,0,162,0,const,inf,1,const,const,,,
+hydro,hydro,Nordel: 7100,3000,0,45,0.51,hydro,5000000,0.6,hydro,const,,,
+coal,coal,Nordel: 8500,804,0,62,0,const,inf,1,const,const,,,
+gas,gas,Nordel: 8500,804,0,69,0,const,inf,1,const,const,,,
+biomass,biomass,Nordel: 8500,804,0,50,0,const,inf,1,const,const,,,
+unknown,unknown,Russia: 9000,1030,0,69,0,const,inf,1,const,const,,,
+solar test plant,solar_csp,Nordel: 6500,100,0,40,0.25,solar,200,0,const,csp,,,
+wind test plant,wind,Nordel: 6100,500,0,0,0.32,wind,0,0,const,const,,,

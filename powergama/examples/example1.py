@@ -10,17 +10,12 @@ import powergama
 from powergama.GIS import makekml
 import time
 import matplotlib.pyplot as plt
-import os
 
 datapath= "data/"
 timerange=range(0,24*1)
 
 resultfile = 'example1.sqlite3'
 kmlfile = 'example1.kml'
-
-# Remove the file if it already exists. BE CAREFUL!
-if os.path.isfile(resultfile):
-    os.remove(resultfile)
 
 plt.close('all')
 
@@ -42,10 +37,11 @@ lp = powergama.LpProblem(data)
 #Fancy progress bar does not work in spyder:
 #lp.setProgressBar('fancy')
 start_time = time.time()
-res = powergama.Results(data,resultfile)
+res = powergama.Results(data,resultfile,replace=True)
+
 res = lp.solve(res)
 end_time = time.time()
-print end_time - start_time, "seconds"
+print "\nExecution time = ",end_time - start_time, "seconds"
 
 #Make Google Earth KML file:
 makekml(res,kmlfile=kmlfile,timeMaxMin=None)

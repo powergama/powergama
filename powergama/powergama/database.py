@@ -78,11 +78,14 @@ class Database(object):
                         +"output DOUBLE, inflow_spilled DOUBLE)")
             cur.execute("CREATE TABLE Res_Storage(timestep INT, indx INT,"
                         +"storage DOUBLE, marginalprice DOUBLE)")
+            cur.execute("CREATE TABLE Res_Pumping(timestep INT, indx INT,"
+                        +"output DOUBLE)")
     
     
         return nodes
     
-    def appendResults(self,timestep,objective_function,generator_power,
+    def appendResults(self,timestep,objective_function,
+                       generator_power,generator_pumped,
                        branch_flow,dcbranch_flow,node_angle,
                        sensitivity_branch_capacity,
                        sensitivity_dcbranch_capacity,
@@ -92,7 +95,8 @@ class Database(object):
                        loadshed_power,
                        marginalprice,
                        idx_storagegen,
-                       idx_branchsens):
+                       idx_branchsens,
+                       idx_pumpgen):
         '''
         Store results from a given timestep to the database
     
@@ -104,6 +108,8 @@ class Database(object):
             value of objective function
         generator_power (list of floats)
             power output of generators
+        generator_pumped (list of floats)
+            pumped power for generators
         branch_power (list of floats)
             power flow on branches
         node_angle (list of floats)
@@ -126,6 +132,8 @@ class Database(object):
             index in generator list of generators with storage
         idx_branchsens
             index in branch list of branches with limited capacity
+        idx_pumpgen
+            index in generator list of generators with pumping
         '''
         
         con = db.connect(self.filename)
@@ -154,6 +162,10 @@ class Database(object):
                     tuple((timestep,idx_storagegen[i],
                            storage[i],marginalprice[i]) 
                     for i in xrange(len(storage))))
+            cur.executemany("INSERT INTO Res_Pumping VALUES(?,?,?)",
+                    tuple((timestep,idx_pumpgen[i],
+                           generator_pumped[i],) 
+                    for i in xrange(len(generator_pumped))))
       
 
 ########## Get grid data
@@ -463,6 +475,21 @@ class Database(object):
         
 ### Generator results
         
+
+    def getResultPumpPower(self,genindx,timeMaxMin):
+        '''Get pumping for generators with pumping'''
+        con = db.connect(self.filename)
+        with con:        
+            #con.row_factory = db.Row
+            cur = con.cursor()
+            cur.execute("SELECT output FROM Res_Pumping "
+                +"WHERE timestep>=? AND timestep<? AND indx=?"
+                +" ORDER BY timestep",
+                (timeMaxMin[0],timeMaxMin[-1],genindx))
+            rows = cur.fetchall()
+            values = [row[0] for row in rows]        
+        return values
+
     def getResultStorageFilling(self,genindx,timeMaxMin):
         '''Get storage filling level for storage generators'''
         con = db.connect(self.filename)
