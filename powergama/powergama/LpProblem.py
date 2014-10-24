@@ -67,6 +67,7 @@ class LpProblem(object):
         
         range_nodes = range(self.num_nodes)
         range_generators = range(self.num_generators)
+        range_pumps = range(len(self._idx_generatorsWithPumping))
         range_branches = range(self.num_branches)
         range_dc_branches = range(self.num_dc_branches)
 
@@ -123,6 +124,10 @@ class LpProblem(object):
             # upper bound should not exceed total demand at load
             #TODO: Replace unlimited upper bound by real value 
 
+        for i in range_pumps:
+            self._var_pumping[i].lowBound = 0
+            self._var_pumping[i].upBound = grid.generator.pump_cap[
+                                        self._idx_generatorsWithPumping[i]]
 
  
         print "Defining constraints..."
@@ -196,7 +201,10 @@ class LpProblem(object):
         for idx_node in range_nodes:                        
             # Find generators connected to this node:            
             idx_gen = grid.getGeneratorsAtNode(idx_node)
-            idx_pump = grid.getPumpsAtNode(idx_node)
+            
+            # the idx_gen_pump has  indices referring to the list of generators
+            # the number of pumps is equal to the length of this list
+            idx_gen_pump = grid.getGeneratorsWithPumpAtNode(idx_node)
             
             # Find DC branches connected to node (direction is important)
             idx_dc_from = grid.getDcBranchesAtNode(idx_node,'from')
@@ -208,7 +216,8 @@ class LpProblem(object):
             self._pfPgen[idx_node] = [
                 self._var_generation[i]/const.baseMVA for i in idx_gen]
             self._pfPpump[idx_node] = [
-                self._var_pumping[i]/const.baseMVA for i in idx_pump]
+                self._var_pumping[i]/const.baseMVA 
+                for i in xrange(len(idx_gen_pump))]
             self._pfPshed[idx_node] = ( 
                 self._var_loadshedding[idx_node]/const.baseMVA)
             self._pfPdc[idx_node] = (
@@ -250,16 +259,22 @@ class LpProblem(object):
             % const.loadshedcost)       
         self._loadsheddingcosts = [const.loadshedcost]*self.num_nodes
 
-        probObjective = pulp.lpSum([
-            self._marginalcosts[i]*self._var_generation[i] 
-            for i in range_generators,
-            self._marginalcosts[i]*self._var_pumping[i] 
-            for i in self._idx_generatorsWithPumping,
-            ]  )       
+        genpumpidx = self._idx_generatorsWithPumping;
+        probObjective_gen = pulp.lpSum([
+            self._marginalcosts[i] * self._var_generation[i] 
+            for i in range_generators])
+        probObjective_pump = pulp.lpSum([
+            (self._marginalcosts[genpumpidx[i]]
+                -grid.generator.pump_deadband[genpumpidx[i]]) 
+            * (-self._var_pumping[i]) 
+            for i in xrange(len(genpumpidx))
+            ]  )
         probSlack = pulp.lpSum([
             self._loadsheddingcosts[i]*self._var_loadshedding[i] 
             for i in range_nodes]  ) 
-        self.prob.setObjective(probObjective+probSlack)      
+        self.prob.setObjective(probObjective_gen
+                                + probObjective_pump
+                                + probSlack)      
 
         return       
         ## END init
@@ -394,6 +409,7 @@ class LpProblem(object):
                         for i in range(len(capacity))]
 
         energyIn = asarray(genInflow)*self.timeDelta
+        print("TODO:pumping into storage\n")        
         energyOut = asarray(Pgen)*self.timeDelta
         energyStorable = self._storage + energyIn - energyOut
         storagecapacity = asarray(self._grid.generator.storage)

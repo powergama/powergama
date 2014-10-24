@@ -447,9 +447,17 @@ class GridData(object):
     def getGeneratorsAtNode(self,nodeIdx):
         """Indices of all generators attached to a particular node"""
         #indices = [i for i, x in enumerate(self.generator.nodeIdx(self.node)) if x == nodeIdx]
-        indices = [i for i, x in enumerate(self.generator.node) if x == self.node.name[nodeIdx]]
+        indices = [i for i, x in enumerate(self.generator.node) 
+                    if x == self.node.name[nodeIdx]]
         return indices
         
+    def getGeneratorsWithPumpAtNode(self,nodeIdx):
+        """Indices of all pumps attached to a particular node"""
+        #indices = [i for i, x in enumerate(self.generator.nodeIdx(self.node)) if x == nodeIdx]
+        indices = [i for i, x in enumerate(self.generator.node) 
+                    if x == self.node.name[nodeIdx]
+                    and self.generator.pump_cap[i]>0]
+        return indices
         
     def getLoadsAtNode(self,nodeIdx):
         """Indices of all loads (consumers) attached to a particular node"""
