@@ -176,6 +176,7 @@ class _Generators(object):
         self.prodMax = []
         self.prodMin = []
         self.marginalcost = []
+        self.fuelcost = []
         self.storage = []
         self.storagevalue_profile_filling = []
         self.storagevalue_profile_time = []
@@ -200,6 +201,7 @@ class _Generators(object):
                 self.prodMax.append(parseNum(row["pmax"]))
                 self.prodMin.append(parseNum(row["pmin"]))
                 self.marginalcost.append(parseNum(row["basecost"]))
+                self.fuelcost.append(parseNum(row["fuelcost"]))
                 self.storage.append(parseNum(row["storage_cap"]))
                 self.storagelevel_init.append(parseNum(row["storage_ini"]))
                 self.storagevalue_profile_filling.append(parseId(row["storval_filling_ref"]))
@@ -221,9 +223,9 @@ class _Generators(object):
         
         headers = ["desc","type","node",
                     "pmax","pmin","basecost",
-                    "inflow_fac","inflow_ref",
-                    "storage_cap","storage_ini",
-                    "storval_filling_ref",
+                    "fuelcost","inflow_fac",
+                    "inflow_ref","storage_cap",
+                    "storage_ini","storval_filling_ref",
                     "storval_time_ref"]
         with open(filename,'wb') as csvfile:
             datawriter = csv.writer(csvfile, delimiter=',',\
@@ -233,8 +235,9 @@ class _Generators(object):
                 datarow = [
                     self.desc[i], self.gentype[i], self.node[i],
                     self.prodMax[i], self.prodMin[i], self.marginalcost[i],
-                    self.inflow_factor[i], self.inflow_profile[i],
-                    self.storage[i], self.storagelevel_init[i],
+                    self.fuelcost[i],self.inflow_factor[i], 
+                    self.inflow_profile[i],self.storage[i], 
+                    self.storagelevel_init[i],
                     self.storagevalue_profile_filling[i],
                     self.storagevalue_profile_time[i]
                     ]
