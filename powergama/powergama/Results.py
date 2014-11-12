@@ -105,6 +105,11 @@ class Results(object):
         '''
         Average flow on branches over a given time period
         
+        Parameters
+        ----------
+        timeMaxMin (list) (default = None)
+            [min, max] - lower and upper time interval
+            
         Returns
         =======
         List with values for each branch:
@@ -119,6 +124,18 @@ class Results(object):
         return avgflow
 
     def getAverageNodalPrices(self,timeMaxMin=None):
+        '''
+        Average nodal price over a given time period
+        
+        Parameters
+        ----------
+        timeMaxMin (list) (default = None)
+            [min, max] - lower and upper time interval
+            
+        Returns
+        =======
+        1-dim Array of nodal prices (one per node)
+        '''
         if timeMaxMin is None:
             timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
 
@@ -131,6 +148,11 @@ class Results(object):
         '''
         Average branch capacity sensitivity over a given time period
         
+        Parameters
+        ----------
+        timeMaxMin (list) (default = None)
+            [min, max] - lower and upper time interval
+            
         Returns
         =======
         1-dim Array of sensitivities (one per branch)
@@ -146,7 +168,12 @@ class Results(object):
     def getAverageUtilisation(self,timeMaxMin=None):
         '''
         Average branch utilisation over a given time period
-        
+
+        Parameters
+        ----------
+        timeMaxMin (list) (default = None)
+            [min, max] - lower and upper time interval
+            
         Returns
         =======
         1-dim Array of branch utilisation (power flow/capacity)
@@ -164,6 +191,11 @@ class Results(object):
         '''
         Description
         Calculates system cost for energy produced by using generator fuel cost. 
+        
+        Parameters
+        ----------
+        timeMaxMin (list) (default = None)
+            [min, max] - lower and upper time interval
         
         Returns
         =======
@@ -187,8 +219,18 @@ class Results(object):
         return systemcost
               
     def plotNodalPrice(self,nodeIndx,timeMaxMin=None):
-        '''Show nodal price in single node'''
+        '''Show nodal price in single node
+        
+        Parameters
+        ----------
+        nodeIndx (int)
+            index of node to plot from
+        timeMaxMin (list) (default = None)
+            [min, max] - lower and upper time interval
+        '''
 
+        # TODO allow for input to be multiple nodes
+        # TODO plot storage price for storage in the same node?
         if timeMaxMin is None:
             timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
         timerange = xrange(timeMaxMin[0],timeMaxMin[-1]) 
@@ -207,7 +249,15 @@ class Results(object):
         
         
     def plotStorageFilling(self,generatorIndx,timeMaxMin=None):
-        '''Show storage filling level (MWh) for generators with storage'''
+        '''Show storage filling level (MWh) for generators with storage
+        
+        Parameters
+        ----------
+        generatorIndx (int)
+            index of generator to plot from
+        timeMaxMin (list) (default = None)
+            [min, max] - lower and upper time interval
+        '''
 
         if timeMaxMin is None:
             timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
@@ -240,6 +290,7 @@ class Results(object):
         relativestorage (default=True)
             use filling fraction as y axis label for storage
         '''
+        # TODO allow for input to be multiple generators
         fig = plt.figure()
         ax1 = fig.add_subplot(111)
         if timeMaxMin is None:
@@ -282,7 +333,15 @@ class Results(object):
 
 
     def plotStoragePerArea(self,area,absolute=False,timeMaxMin=None):
-        '''Show generation storage accumulated per area '''
+        '''Show generation storage accumulated per area 
+        
+        Parameters
+        ----------
+        area (str)
+        absolute (bool)(default=False)
+            plot storage value in absolute or relative to maximum
+        timeMaxMin (list) (default = None)
+            [min, max] - lower and upper time interval'''
         
         if timeMaxMin is None:
             timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
@@ -324,8 +383,15 @@ class Results(object):
         
         
     def plotGenerationPerArea(self,area,timeMaxMin=None):
-        '''Show generation per area '''
-
+        '''Show generation per area 
+        
+        Parameters
+        ----------
+        area (str)
+        timeMaxMin (list) (default = None)
+            [min, max] - lower and upper time interval
+        '''
+        
         if timeMaxMin is None:
             timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
         timerange = range(timeMaxMin[0],timeMaxMin[-1])
@@ -345,7 +411,15 @@ class Results(object):
 
 
     def plotDemandPerArea(self,areas,timeMaxMin=None):
-        '''Show demand in area(s) '''
+        '''Show demand in area(s) 
+        
+        Parameters
+        ----------
+        areas (list?)
+            list of areas to be plotted
+        timeMaxMin (list) (default = None)
+            [min, max] - lower and upper time interval
+        '''
         
         if timeMaxMin is None:
             timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
@@ -811,13 +885,18 @@ class Results(object):
             else the information is printed to console
         timeMaxMin [int,int] (default=None)
             time interval for the calculation [start,end]
+            
+        Returns
+        =======
+        List with values for each inter-area branch:
+        [flow from 1 to 2, flow from 2 to 1, average absolute flow]
         '''
         
         # Version control of database module. Must be 3.7.x or newer
         major = int(list(self.db.sqlite_version)[0])
         minor = int(list(self.db.sqlite_version)[2])
         version = major + minor / 10.0
-        print version
+        # print version
         if version < 3.7 :
             print 'current SQLite version: ', self.db.sqlite_version
             print 'getAverageInterareaBranchFlow() requires 3.7.x or newer'
