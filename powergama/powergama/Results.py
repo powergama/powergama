@@ -186,6 +186,26 @@ class Results(object):
             systemcost.append(tuple([area, areacost]))
         return systemcost
               
+    def plotNodalPrice(self,nodeIndx,timeMaxMin=None):
+        '''Show nodal price in single node'''
+
+        if timeMaxMin is None:
+            timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
+        timerange = xrange(timeMaxMin[0],timeMaxMin[-1]) 
+
+        if nodeIndx  in self.db.getGridNodeIndices():
+            nodalprice = self.db.getResultNodalPrice(
+                nodeIndx,timeMaxMin)
+            plt.figure()
+            plt.plot(timerange,nodalprice)
+            plt.title("Nodal price for node %d"
+                %(nodeIndx))
+            plt.show()
+        else:
+            print "Node not found"
+        return
+        
+        
     def plotStorageFilling(self,generatorIndx,timeMaxMin=None):
         '''Show storage filling level (MWh) for generators with storage'''
 
