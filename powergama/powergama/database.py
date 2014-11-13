@@ -83,6 +83,19 @@ class Database(object):
     
     
         return nodes
+    def getTimerange(self):
+        """
+        Get the timesteps
+        """
+        con = db.connect(self.filename)
+        with con:        
+            cur = con.cursor()    
+            cur.execute("SELECT timestep FROM Res_ObjFunc")
+            rows = cur.fetchall()
+            values = [row[0] for row in rows]  
+        return values
+
+        
     
     def appendResults(self,timestep,objective_function,
                        generator_power,generator_pumped,

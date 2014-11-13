@@ -43,6 +43,14 @@ class Results(object):
         self.db = db.Database(databasefile)
         if replace:
             self.db.createTables(grid)
+        else:
+            # check that the length of the specified timerange matches the 
+            # database
+            timerange_db = self.db.getTimerange()
+            if timerange_db != self.timerange:
+                print("Database time range = [%d,%d]\n" %
+                      (timerange_db[0],timerange_db[-1]))
+                raise Exception('Database time range mismatch')
 
         '''
         self.objectiveFunctionValue=[]    
