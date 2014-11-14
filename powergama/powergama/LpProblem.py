@@ -56,18 +56,31 @@ class LpProblem(object):
         self._idx_generatorsStorageProfileTime = asarray(
             [grid.generator.storagevalue_profile_time[i] 
             for i in self._idx_generatorsWithStorage])
-                
+
+        self._idx_consumersWithFlexLoad = grid.getIdxConsumersWithFlexibleLoad()                
         self._fancy_progressbar = False        
 
         # Initial values of marginal costs, storage and storage values      
         self._storage = (
             asarray(grid.generator.storagelevel_init)
             *asarray(grid.generator.storage) )
-        self._marginalcosts = asarray(self._grid.generator.marginalcost)        
+        self._marginalcosts = asarray(grid.generator.marginalcost)        
         
+        # Flexible load storage (initial filling level 0.5)  
+        self._storage_flexload = (
+                0.5*asarray(grid.consumer.flex_storage) 
+                * asarray(grid.consumer.flex_fraction)
+                * asarray(grid.consumer.load)
+                )
+        self._marginalcosts_flexload = asarray(grid.consumer.flex_basevalue)      
+        self._idx_consumersStorageProfileFilling = asarray(
+            [grid.consumer.flex_storagevalue_profile_filling[i]
+            for i in self._idx_consumersWithFlexLoad])
+
         range_nodes = range(self.num_nodes)
         range_generators = range(self.num_generators)
         range_pumps = range(len(self._idx_generatorsWithPumping))
+        range_flexloads = range(len(self._idx_consumersWithFlexLoad))
         range_branches = range(self.num_branches)
         range_dc_branches = range(self.num_dc_branches)
 
@@ -83,6 +96,9 @@ class LpProblem(object):
         self._var_pumping = [
             pulp.LpVariable("Ppump%d" %(i)) 
             for i in self._idx_generatorsWithPumping] 
+        self._var_flexload = [
+            pulp.LpVariable("Pflexload%d" %(i)) 
+            for i in self._idx_consumersWithFlexLoad] 
         self._var_branchflow = [
             pulp.LpVariable("Pbranch%d" %(i)) for i in range_branches] 
         self._var_dc = [
@@ -129,6 +145,14 @@ class LpProblem(object):
             self._var_pumping[i].upBound = grid.generator.pump_cap[
                                         self._idx_generatorsWithPumping[i]]
 
+        for i in range_flexloads:
+            idx_cons = self._idx_consumersWithFlexLoad[i]
+            self._var_flexload[i].lowBound = 0
+            self._var_flexload[i].upBound = (
+                grid.consumer.load[idx_cons]
+                * grid.consumer.flex_fraction[idx_cons]
+                / grid.consumer.flex_on_off[idx_cons]
+                )
  
         print "Defining constraints..."
         idxBranchesConstr = self._grid.getIdxBranchesWithFlowConstraints()
@@ -194,6 +218,7 @@ class LpProblem(object):
         self._pfPload = [[]]*self.num_nodes
         self._pfPgen = [[]]*self.num_nodes
         self._pfPpump= [[]]*self.num_nodes
+        self._pfPflexload= [[]]*self.num_nodes
         self._pfPflow = [[]]*self.num_nodes
         self._pfPshed = [[]]*self.num_nodes
         self._pfPdc = [[]]*self.num_nodes
@@ -209,33 +234,45 @@ class LpProblem(object):
             # Find DC branches connected to node (direction is important)
             idx_dc_from = grid.getDcBranchesAtNode(idx_node,'from')
             idx_dc_to = grid.getDcBranchesAtNode(idx_node,'to')
+
             # Find indices of loads connected to this node:
             self._idx_load[idx_node] = grid.getLoadsAtNode(idx_node)
 
+            # the idx_flexload has  indices referring to the list of loads
+            # the number of flexible loads equals the length of this list
+            idx_flexload = grid.getLoadsFlexibleAtNode(idx_node)
+            
             # Constant part of power flow equations            
             self._pfPgen[idx_node] = [
                 self._var_generation[i]/const.baseMVA for i in idx_gen]
             self._pfPpump[idx_node] = [
                 -self._var_pumping[i]/const.baseMVA 
                 for i in xrange(len(idx_gen_pump))]
+            self._pfPflexload[idx_node] = [
+                -self._var_flexload[i]/const.baseMVA 
+                for i in xrange(len(idx_flexload))]
             self._pfPshed[idx_node] = ( 
                 self._var_loadshedding[idx_node]/const.baseMVA)
             self._pfPdc[idx_node] = (
                  [  self._var_dc[i]/const.baseMVA for i in idx_dc_to]
                 +[ -self._var_dc[i]/const.baseMVA for i in idx_dc_from])
             self._pfPflow[idx_node] = -_Btheta[idx_node]
-
+            
+            # this value will be updated later:            
+            self._pfPload[idx_node] = pulp.lpSum(0) 
+            '''            
             demOutflow=[]
             # Usually there is maximum one load per node, but it could be
             # so need a loop
             for i in self._idx_load[idx_node]:
-                average = self._grid.consumer.load[i]
+                average = self._grid.consumer.load[i]*(
+                            1-self._grid.consumer.flex_fraction[i])
                 profile_ref = self._grid.consumer.load_profile[i]
                 demOutflow.append(
                     -self._grid.demandProfiles[profile_ref][timestep] \
                     *average/const.baseMVA)      
             self._pfPload[idx_node] = pulp.lpSum(demOutflow)
-            
+            '''
             # Generation is positive
             # Pumping is negative
             # Demand is negative
@@ -244,13 +281,14 @@ class LpProblem(object):
             cpf = pulp.lpSum(
                 self._pfPgen[idx_node]
                 +self._pfPpump[idx_node]
+                +self._pfPflexload[idx_node]
                 +self._pfPdc[idx_node]
                 +self._pfPload[idx_node]
                 +self._pfPshed[idx_node]) == self._pfPflow[idx_node]
             pf_name = "powerflow_eqn_%d"%(idx_node)
             self.prob.addConstraint(cpf,name=pf_name)
             self._constraints_pf[idx_node] = pf_name
-
+            
 
         
         print "Objective function..."
@@ -258,8 +296,8 @@ class LpProblem(object):
         print("  Using fixed load shedding cost of %f. One per node" 
             % const.loadshedcost)       
         self._loadsheddingcosts = [const.loadshedcost]*self.num_nodes
-
-        genpumpidx = self._idx_generatorsWithPumping;
+        '''
+        genpumpidx = self._idx_generatorsWithPumping
         probObjective_gen = pulp.lpSum([
             self._marginalcosts[i] * self._var_generation[i] 
             for i in range_generators])
@@ -269,13 +307,20 @@ class LpProblem(object):
             * (-self._var_pumping[i]) 
             for i in xrange(len(genpumpidx))
             ]  )
+        flexloadidx = self._idx_consumersWithFlexLoad
+        probObjective_flexload = pulp.lpSum([
+            -self._marginalcosts_flexload[i]* self._var_flexload[i]
+            for i in xrange(len(flexloadidx))
+            ])
         probSlack = pulp.lpSum([
             self._loadsheddingcosts[i]*self._var_loadshedding[i] 
             for i in range_nodes]  ) 
         self.prob.setObjective(probObjective_gen
                                 + probObjective_pump
+                                + probObjective_flexload
                                 + probSlack)      
-
+        '''
+        self._updateLpProblem(timestep)
         return       
         ## END init
 
@@ -334,6 +379,25 @@ class LpProblem(object):
                 self._grid.generator.marginalcost[idx_gen] 
                 *self._grid.storagevalue_filling[this_type_filling][filling_col]
                 *self._grid.storagevalue_time[this_type_time][timestep])
+
+        # flexible load:
+        for i in range(len(self._idx_consumersWithFlexLoad)):
+            idx_cons = self._idx_consumersWithFlexLoad[i]
+            this_type_filling = self._idx_consumersStorageProfileFilling[i]
+            # flex_storage = hours
+            # flex_fraction * load = average demand
+            storagecapacity = asarray(
+                self._grid.consumer.flex_storage[idx_cons]
+                * self._grid.consumer.flex_fraction[idx_cons]
+                * self._grid.consumer.load[idx_cons])
+            fillinglevel = self._storage_flexload[idx_gen] / storagecapacity       
+            filling_col = int(round(fillinglevel*100))
+            self._marginalcosts_flexload[idx_cons] = (
+                self._grid.consumer.flex_basevalue[idx_cons] 
+                *self._grid.storagevalue_filling[this_type_filling][filling_col]
+                )
+
+        return
                 
 
 
@@ -358,7 +422,8 @@ class LpProblem(object):
             demOutflow=[]
             # Usually there is maximum one load per node, but it could be more
             for i in idx_loads:
-                average = self._grid.consumer.load[i]
+                average = self._grid.consumer.load[i]*(
+                            1-self._grid.consumer.flex_fraction[i])
                 profile_ref = self._grid.consumer.load_profile[i]
                 demOutflow.append(
                     -self._grid.demandProfiles[profile_ref][timestep]
@@ -367,8 +432,6 @@ class LpProblem(object):
             self._pfPload[idx_node] = demOutflow
 
             
-            # The 1e-6 constant is included to get dual variables that have 
-            # a value - don't know why this works.            
             cpf = (
                 self._pfPgen[idx_node]
                 +self._pfPpump[idx_node]
@@ -396,9 +459,15 @@ class LpProblem(object):
             * (-self._var_pumping[i]) 
             for i in xrange(len(genpumpidx))
             ]  )
+        flexloadidx = self._idx_consumersWithFlexLoad
+        probObjective_flexload = pulp.lpSum([
+            -self._marginalcosts_flexload[i]* self._var_flexload[i]
+            for i in xrange(len(flexloadidx))
+            ])
         
         self.prob.setObjective(probObjective_gen
-                                +probObjective_pump                                
+                                +probObjective_pump
+                                +probObjective_flexload                                
                                 +probSlack)      
         
         return
@@ -411,6 +480,7 @@ class LpProblem(object):
                 
         Pgen = [v.varValue for v in self._var_generation]
         Ppump = [v.varValue for v in self._var_pumping]
+        Pflexload = [v.varValue for v in self._var_flexload]
 
         # Update storage:
         inflow_profile_refs = self._grid.generator.inflow_profile
@@ -431,6 +501,17 @@ class LpProblem(object):
         storagecapacity = asarray(self._grid.generator.storage)
         self._storage = vstack((storagecapacity,energyStorable)).min(axis=0)
 
+        print("TODO: Update flexible load storage: line 504")
+        energyIn_flexload = zeros(len(self._grid.consumer.flex_fraction))        
+        for i,x in enumerate(self._idx_consumersWithFlexLoad):
+            energyIn_flexload[x] = Pflexload[i]*self.timeDelta
+        energyOut_flexload = (
+            asarray(self._grid.consumer.flex_fraction)
+            * asarray(self._grid.consumer.load)
+            * self.timeDelta )
+        self._storage_flexload = (
+            self._storage_flexload + energyIn_flexload - energyOut_flexload )
+        
         # Collect and store results
         F = pulp.value(self.prob.objective)  
         Pb = [v.varValue for v in self._var_branchflow]

@@ -244,15 +244,12 @@ class _Generators(object):
         
         headers = ["desc","type","node",
                     "pmax","pmin","basecost",
+                    "fuelcost",
                     "inflow_fac","inflow_ref",
                     "storage_cap","storage_ini",
                     "storval_filling_ref",
                     "storval_time_ref",
                     "pump_cap","pump_efficiency","pump_deadband"]
-                    "fuelcost","inflow_fac",
-                    "inflow_ref","storage_cap",
-                    "storage_ini","storval_filling_ref",
-                    "storval_time_ref"]
         with open(filename,'wb') as csvfile:
             datawriter = csv.writer(csvfile, delimiter=',',\
                                 quotechar='"', quoting=_QUOTINGTYPE)
@@ -284,6 +281,11 @@ class _Consumers(object):
         self.node = []
         self.load = []
         self.load_profile = []
+        self.flex_fraction = []
+        self.flex_on_off =[]
+        self.flex_basevalue = []
+        self.flex_storage = []
+        self.flex_storagevalue_profile_filling = []
     
     def readFromFile(self,filename):
         with open(filename,'rb') as csvfile:
@@ -293,18 +295,45 @@ class _Consumers(object):
                self.node.append(parseId(row["node"]))
                self.load.append(parseNum(row["demand_avg"]))
                self.load_profile.append(parseId(row["demand_ref"]))
+               if "flex_fraction" in row.keys():
+                   self.flex_fraction.append(
+                       parseNum(row["flex_fraction"],default=0))
+                   self.flex_on_off.append(
+                       parseNum(row["flex_on_off"],default=0))
+                   self.flex_basevalue.append(
+                       parseNum(row["flex_basevalue"],default=0))
+                   self.flex_storage.append(
+                       parseNum(row["flex_storage"],default=0))
+                   self.flex_storagevalue_profile_filling.append(
+                       parseId(row["flex_storval_filling"]))
+               else:
+                   # default values are zero
+                   self.flex_fraction.append(0)
+                   self.flex_on_off.append(0)
+                   self.flex_basevalue.append(0)
+                   self.flex_storage.append(0)
+                   self.flex_storagevalue_profile_filling.append(0)
         return
 
     def writeToFile(self,filename):
         print "Saving consumer data to file",filename
         
-        headers = ["node","demand_avg","demand_ref"]
+        headers = ["node","demand_avg","demand_ref",
+                   "flex_fraction","flex_on_off",
+                   "flex_basevalue","flex_storage",
+                   "flex_storval_filling"]
         with open(filename,'wb') as csvfile:
             datawriter = csv.writer(csvfile, delimiter=',',\
                                 quotechar='"', quoting=_QUOTINGTYPE)
             datawriter.writerow(headers)
             for i in range(self.numConsumers()):
-                datarow = [self.node[i], self.load[i],self.load_profile[i]]
+                datarow = [self.node[i], self.load[i],self.load_profile[i],
+                           self.flex_fraction[i],
+                           self.flex_on_off[i],
+                           self.flex_basevalue[i],
+                           self.flex_storage[i],
+                           self.flex_storagevalue_profile_filling[i] 
+                           ]                    
                 datawriter.writerow(datarow)
         return
         
@@ -452,14 +481,12 @@ class GridData(object):
     
     def getGeneratorsAtNode(self,nodeIdx):
         """Indices of all generators attached to a particular node"""
-        #indices = [i for i, x in enumerate(self.generator.nodeIdx(self.node)) if x == nodeIdx]
         indices = [i for i, x in enumerate(self.generator.node) 
                     if x == self.node.name[nodeIdx]]
         return indices
         
     def getGeneratorsWithPumpAtNode(self,nodeIdx):
         """Indices of all pumps attached to a particular node"""
-        #indices = [i for i, x in enumerate(self.generator.nodeIdx(self.node)) if x == nodeIdx]
         indices = [i for i, x in enumerate(self.generator.node) 
                     if x == self.node.name[nodeIdx]
                     and self.generator.pump_cap[i]>0]
@@ -467,9 +494,17 @@ class GridData(object):
         
     def getLoadsAtNode(self,nodeIdx):
         """Indices of all loads (consumers) attached to a particular node"""
-        indices = [i for i, x in enumerate(self.consumer.node) if x == self.node.name[nodeIdx]]
+        indices = [i for i, x in enumerate(self.consumer.node) 
+                    if x == self.node.name[nodeIdx]]
         return indices
 
+    def getLoadsFlexibleAtNode(self,nodeIdx):
+        """Indices of all flexible nodes attached to a particular node"""
+        indices = [i for i, x in enumerate(self.consumer.node) 
+                    if x == self.node.name[nodeIdx]
+                    and self.consumer.flex_fraction[i]>0]
+        return indices
+        
 
     def getDcBranchesAtNode(self,nodeIdx,direction):
         """Indices of all DC branches attached to a particular node"""
@@ -502,6 +537,12 @@ class GridData(object):
     def getIdxGeneratorsWithPumping(self):
         """Indices of all generators with pumping capacity"""
         idx = [i for i,v in enumerate(self.generator.pump_cap) 
+            if v>0 and v<numpy.inf]
+        return idx
+        
+    def getIdxConsumersWithFlexibleLoad(self):
+        """Indices of all consumers with flexible load"""
+        idx = [i for i,v in enumerate(self.consumer.flex_fraction) 
             if v>0 and v<numpy.inf]
         return idx
         
