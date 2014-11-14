@@ -118,6 +118,11 @@ class Results(object):
         '''
         Average flow on branches over a given time period
         
+        Parameters
+        ----------
+        timeMaxMin (list) (default = None)
+            [min, max] - lower and upper time interval
+            
         Returns
         =======
         List with values for each branch:
@@ -143,6 +148,18 @@ class Results(object):
 
 
     def getAverageNodalPrices(self,timeMaxMin=None):
+        '''
+        Average nodal price over a given time period
+        
+        Parameters
+        ----------
+        timeMaxMin (list) (default = None)
+            [min, max] - lower and upper time interval
+            
+        Returns
+        =======
+        1-dim Array of nodal prices (one per node)
+        '''
         if timeMaxMin is None:
             timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
 
@@ -155,6 +172,11 @@ class Results(object):
         '''
         Average branch capacity sensitivity over a given time period
         
+        Parameters
+        ----------
+        timeMaxMin (list) (default = None)
+            [min, max] - lower and upper time interval
+            
         Returns
         =======
         1-dim Array of sensitivities (one per branch)
@@ -170,7 +192,12 @@ class Results(object):
     def getAverageUtilisation(self,timeMaxMin=None):
         '''
         Average branch utilisation over a given time period
-        
+
+        Parameters
+        ----------
+        timeMaxMin (list) (default = None)
+            [min, max] - lower and upper time interval
+            
         Returns
         =======
         1-dim Array of branch utilisation (power flow/capacity)
@@ -183,10 +210,78 @@ class Results(object):
         utilisation = [avgflow[i] / cap[i] for i in xrange(len(cap))] 
         utilisation = np.asarray(utilisation)
         return utilisation
+            
+    def getSystemCost(self,timeMaxMin=None):
+        '''
+        Description
+        Calculates system cost for energy produced by using generator fuel cost. 
+        
+        Parameters
+        ----------
+        timeMaxMin (list) (default = None)
+            [min, max] - lower and upper time interval
+        
+        Returns
+        =======
+        array of tuples of total cost of energy per area for all areas
+        [(area, costs), ...]
+        '''
+        
+        if timeMaxMin is None:
+            timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
+
+        systemcost = []
+        # for each area
+        for area in self.grid.getAllAreas():
+            areacost = 0
+            # for each generator
+            for gen in self.db.getGridGeneratorFromArea(area):
+                    # sum generator output and multiply by fuel cost
+                    for power in self.db.getResultGeneratorPower(gen[0],timeMaxMin):
+                        areacost +=  power * self.grid.generator.fuelcost[gen[0]]
+            systemcost.append(tuple([area, areacost]))
+        return systemcost
+              
+    def plotNodalPrice(self,nodeIndx,timeMaxMin=None):
+        '''Show nodal price in single node
+        
+        Parameters
+        ----------
+        nodeIndx (int)
+            index of node to plot from
+        timeMaxMin (list) (default = None)
+            [min, max] - lower and upper time interval
+        '''
+
+        # TODO allow for input to be multiple nodes
+        # TODO plot storage price for storage in the same node?
+        if timeMaxMin is None:
+            timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
+        timerange = xrange(timeMaxMin[0],timeMaxMin[-1]) 
+
+        if nodeIndx  in self.db.getGridNodeIndices():
+            nodalprice = self.db.getResultNodalPrice(
+                nodeIndx,timeMaxMin)
+            plt.figure()
+            plt.plot(timerange,nodalprice)
+            plt.title("Nodal price for node %d"
+                %(nodeIndx))
+            plt.show()
+        else:
+            print "Node not found"
+        return
         
         
     def plotStorageFilling(self,generatorIndx,timeMaxMin=None):
-        '''Show storage filling level (MWh) for generators with storage'''
+        '''Show storage filling level (MWh) for generators with storage
+        
+        Parameters
+        ----------
+        generatorIndx (int)
+            index of generator to plot from
+        timeMaxMin (list) (default = None)
+            [min, max] - lower and upper time interval
+        '''
 
         if timeMaxMin is None:
             timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
@@ -219,6 +314,7 @@ class Results(object):
         relativestorage (default=True)
             use filling fraction as y axis label for storage
         '''
+        # TODO allow for input to be multiple generators
         fig = plt.figure()
         ax1 = fig.add_subplot(111)
         if timeMaxMin is None:
@@ -270,7 +366,15 @@ class Results(object):
 
 
     def plotStoragePerArea(self,area,absolute=False,timeMaxMin=None):
-        '''Show generation storage accumulated per area '''
+        '''Show generation storage accumulated per area 
+        
+        Parameters
+        ----------
+        area (str)
+        absolute (bool)(default=False)
+            plot storage value in absolute or relative to maximum
+        timeMaxMin (list) (default = None)
+            [min, max] - lower and upper time interval'''
         
         if timeMaxMin is None:
             timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
@@ -312,8 +416,15 @@ class Results(object):
         
         
     def plotGenerationPerArea(self,area,timeMaxMin=None):
-        '''Show generation per area '''
-
+        '''Show generation per area 
+        
+        Parameters
+        ----------
+        area (str)
+        timeMaxMin (list) (default = None)
+            [min, max] - lower and upper time interval
+        '''
+        
         if timeMaxMin is None:
             timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
         timerange = range(timeMaxMin[0],timeMaxMin[-1])
@@ -333,7 +444,15 @@ class Results(object):
 
 
     def plotDemandPerArea(self,areas,timeMaxMin=None):
-        '''Show demand in area(s) '''
+        '''Show demand in area(s) 
+        
+        Parameters
+        ----------
+        areas (list?)
+            list of areas to be plotted
+        timeMaxMin (list) (default = None)
+            [min, max] - lower and upper time interval
+        '''
         
         if timeMaxMin is None:
             timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
@@ -414,11 +533,14 @@ class Results(object):
             ""
         show_node_labels (bool) (default=False)
             show node names (true/false)
+        dotsize (int) (default=40)
+            set dot size for each plotted node
         latlon (list) (default=None)
             map area [lat_min, lon_min, lat_max, lon_max]
         filter_price (list) (default=None)
             [min,max] - lower and upper cutof for price range
-            
+        draw_par_mer (bool) (default=True)
+            draw parallels and meridians on map    
         '''
         
         if timeMaxMin is None:
@@ -606,11 +728,13 @@ class Results(object):
                         avgprice[index] = filter_price[0]
             s=m.scatter(x,y,marker='o',c=avgprice, cmap=cm.jet, 
                         zorder=2,s=dotsize)
-            #nodes with NAN nodal price plotted in gray:
-            for i in xrange(len(avgprice)):
-                if np.isnan(avgprice[i]):
-                    m.scatter(x[i],y[i],c='dimgray',
-                              zorder=2,s=dotsize)
+            
+            # #TODO: Er dette nødvendig lenger, Harald?
+            # #nodes with NAN nodal price plotted in gray:
+            # for i in xrange(len(avgprice)):
+                # if np.isnan(avgprice[i]):
+                    # m.scatter(x[i],y[i],c='dimgray',
+                              # zorder=2,s=dotsize)
         else:
             col='dimgray'
             m.scatter(x,y,marker='o',color=col, 
@@ -693,7 +817,7 @@ class Results(object):
  
 
     def node2area(self, nodeName):
-        #name of a single node as input and return the index of the node. 
+        '''name of a single node as input and return the index of the node.''' 
         #Is handy when you need to access more information about the node, 
         #but only the node name is avaiable. (which is the case in the generator file)
         try:
@@ -794,16 +918,21 @@ class Results(object):
             else the information is printed to console
         timeMaxMin [int,int] (default=None)
             time interval for the calculation [start,end]
+            
+        Returns
+        =======
+        List with values for each inter-area branch:
+        [flow from 1 to 2, flow from 2 to 1, average absolute flow]
         '''
         
         # Version control of database module. Must be 3.7.x or newer
         major = int(list(self.db.sqlite_version)[0])
         minor = int(list(self.db.sqlite_version)[2])
-        if major > 3 or major == 3 and minor < 7 :
+        version = major + minor / 10.0
+        # print version
+        if version < 3.7 :
             print 'current SQLite version: ', self.db.sqlite_version
             print 'getAverageInterareaBranchFlow() requires 3.7.x or newer'
-        else:
-            print 'current SQLite version: ', self.db.sqlite_version
             
         if timeMaxMin is None:
             timeMaxMin = [self.timerange[0],self.timerange[-1] + 1]

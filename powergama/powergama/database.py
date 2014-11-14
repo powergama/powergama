@@ -232,6 +232,28 @@ class Database(object):
             output = cur.fetchall()
         return output
 
+    def getGridGeneratorFromArea(self, area):
+        '''
+        Get indices of generators  in given area as a list
+        
+        Returns
+        =======
+        
+        (indice)
+        '''
+        con = db.connect(self.filename)
+        con.text_factory = str
+        with con:
+            cur = con.cursor()
+            cur.execute("SELECT g.indx FROM Res_Generators g"
+                +" INNER JOIN Grid_Generators gg ON g.indx = gg.indx"
+                +" INNER JOIN Grid_Nodes gn ON gg.node = gn.id"
+                +" WHERE gn.area=?"
+                +" GROUP BY g.indx", (area,))
+            output = cur.fetchall()
+        return output
+        
+        
 
 ########## Get result data
           
@@ -530,9 +552,8 @@ class Database(object):
             values = [row[0] for row in rows]        
         return values
 
-    
     def getResultGeneratorPower(self,generatorindx,timeMaxMin):
-        '''Get storage filling level for storage generators'''
+        '''Get generator output'''
         
         if not isinstance(generatorindx,list): 
             generatorindx = [generatorindx]
@@ -550,7 +571,6 @@ class Database(object):
             rows = cur.fetchall()
             output = [row[1] for row in rows]        
         return output
- 
  
     def getResultGeneratorPowerInArea(self,area,timeMaxMin):
         '''Get accumulated generation per type in given area'''
