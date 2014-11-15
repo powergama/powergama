@@ -80,6 +80,8 @@ class Database(object):
                         +"storage DOUBLE, marginalprice DOUBLE)")
             cur.execute("CREATE TABLE Res_Pumping(timestep INT, indx INT,"
                         +"output DOUBLE)")
+            cur.execute("CREATE TABLE Res_FlexibleLoad(timestep INT, indx INT,"
+                        +"demand DOUBLE, storage DOUBLE, value DOUBLE)")
     
     
         return nodes
@@ -107,9 +109,13 @@ class Database(object):
                        inflow_spilled,
                        loadshed_power,
                        marginalprice,
+                       flexload_power,
+                       flexload_storage,
+                       flexload_storagevalue,
                        idx_storagegen,
                        idx_branchsens,
-                       idx_pumpgen):
+                       idx_pumpgen,
+                       idx_flexload):
         '''
         Store results from a given timestep to the database
     
@@ -141,12 +147,20 @@ class Database(object):
             unmet power demand at nodes
         marginalprice
             price of generators with storage
+        flexload_power (list of floats)
+            flexible load power consumption
+        flexload_storage
+            storage filling level of flexible load
+        flexload_storagevalue
+            storage value in flexible load energy storage
         idx_storagegen
             index in generator list of generators with storage
         idx_branchsens
             index in branch list of branches with limited capacity
         idx_pumpgen
             index in generator list of generators with pumping
+        idx_flexload
+            index in consumer list of flexible loads
         '''
         
         con = db.connect(self.filename)
@@ -179,6 +193,12 @@ class Database(object):
                     tuple((timestep,idx_pumpgen[i],
                            generator_pumped[i],) 
                     for i in xrange(len(generator_pumped))))
+            cur.executemany("INSERT INTO Res_FlexibleLoad VALUES(?,?,?,?,?)",
+                    tuple((timestep,idx_flexload[i],
+                           flexload_power[i],
+                           flexload_storage[i],
+                           flexload_storagevalue[i]) 
+                    for i in xrange(len(flexload_power))))
       
 
 ########## Get grid data

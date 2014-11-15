@@ -37,6 +37,7 @@ class Results(object):
         self.timerange = grid.timerange
         self.storage_idx_generators = grid.getIdxGeneratorsWithStorage()
         self.pump_idx_generators = grid.getIdxGeneratorsWithPumping()
+        self.flex_idx_consumers = grid.getIdxConsumersWithFlexibleLoad()
         self.idxConstrainedBranchCapacity \
             = grid.getIdxBranchesWithFlowConstraints()
         
@@ -76,7 +77,10 @@ class Results(object):
                                storage,
                                inflow_spilled,
                                loadshed_power,
-                               marginalprice):
+                               marginalprice,
+                               flexload_power,
+                               flexload_storage,
+                               flexload_storagevalue):
         '''Store results from optimal power flow for a new timestep'''
         
         # Store results in sqlite database on disk (to avoid memory problems)
@@ -95,9 +99,13 @@ class Results(object):
             inflow_spilled = inflow_spilled,
             loadshed_power = loadshed_power,
             marginalprice = marginalprice,
+            flexload_power = flexload_power,
+            flexload_storage = flexload_storage,
+            flexload_storagevalue = flexload_storagevalue,
             idx_storagegen = self.storage_idx_generators,
             idx_branchsens = self.idxConstrainedBranchCapacity,
-            idx_pumpgen = self.pump_idx_generators)
+            idx_pumpgen = self.pump_idx_generators,
+            idx_flexload = self.flex_idx_consumers)
        
         '''
         self.objectiveFunctionValue.append(objective_function)

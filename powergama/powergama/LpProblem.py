@@ -384,18 +384,23 @@ class LpProblem(object):
         for i in range(len(self._idx_consumersWithFlexLoad)):
             idx_cons = self._idx_consumersWithFlexLoad[i]
             this_type_filling = self._idx_consumersStorageProfileFilling[i]
-            # flex_storage = hours
-            # flex_fraction * load = average demand
-            storagecapacity = asarray(
-                self._grid.consumer.flex_storage[idx_cons]
-                * self._grid.consumer.flex_fraction[idx_cons]
-                * self._grid.consumer.load[idx_cons])
-            fillinglevel = self._storage_flexload[idx_gen] / storagecapacity       
+            # Compute storage capacity in Mwh (from value in hours)
+            storagecapacity_flexload = asarray(
+                self._grid.consumer.flex_storage[idx_cons]      # h
+                * self._grid.consumer.flex_fraction[idx_cons]   #
+                * self._grid.consumer.load[idx_cons])           # MW
+            fillinglevel = (
+                self._storage_flexload[idx_cons] / storagecapacity_flexload  )     
             filling_col = int(round(fillinglevel*100))
-            self._marginalcosts_flexload[idx_cons] = (
-                self._grid.consumer.flex_basevalue[idx_cons] 
-                *self._grid.storagevalue_filling[this_type_filling][filling_col]
-                )
+            if fillinglevel > 1:
+                self._marginalcosts_flexload[idx_cons] = inf
+            elif fillinglevel < 0:
+                self._marginalcosts_flexload[idx_cons] = -inf
+            else:
+                self._marginalcosts_flexload[idx_cons] = (
+                    self._grid.consumer.flex_basevalue[idx_cons] 
+                    *self._grid.storagevalue_filling[this_type_filling][filling_col]
+                    )
 
         return
                 
@@ -545,6 +550,8 @@ class LpProblem(object):
         energyspilled = energyStorable-self._storage
         storagelevel = self._storage[self._idx_generatorsWithStorage]
         marginalprice = self._marginalcosts[self._idx_generatorsWithStorage]
+        flexload_storagelevel = self._storage_flexload[self._idx_consumersWithFlexLoad]
+        flexload_marginalprice = self._marginalcosts_flexload[self._idx_consumersWithFlexLoad]
         
         # TODO: Only keep track of inflow spilled for generators with 
         # nonzero inflow
@@ -563,7 +570,10 @@ class LpProblem(object):
             storage = storagelevel.tolist(),
             inflow_spilled = energyspilled.tolist(),
             loadshed_power = loadshed,
-            marginalprice = marginalprice.tolist())
+            marginalprice = marginalprice.tolist(),
+            flexload_power = Pflexload,
+            flexload_storage = flexload_storagelevel.tolist(),
+            flexload_storagevalue = flexload_marginalprice.tolist())
 
         return
     
