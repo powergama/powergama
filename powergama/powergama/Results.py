@@ -372,6 +372,58 @@ class Results(object):
         plt.show()
         return
 
+    def plotDemandAtLoad(self,consumer_index,timeMaxMin=None,
+                            relativestorage=True):
+        '''Show demand by a load
+        
+        Parameters
+        ----------
+        consumer_index (int)
+            index of consumer for which to make the plot
+        timeMaxMin [int,int] (default=None)
+            time interval for the plot [start,end]
+        relativestorage (default=True)
+            use filling fraction as y axis label for storage
+        '''
+        fig = plt.figure()
+        ax1 = fig.add_subplot(111)
+        if timeMaxMin is None:
+            timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
+        timerange = range(timeMaxMin[0],timeMaxMin[-1])
+
+        # Fixed load 
+        profile = self.grid.consumer.load_profile[consumer_index]
+        ax1.plot(timerange,[self.grid.demandProfiles[profile][t-self.timerange[0]]
+            *self.grid.consumer.load[consumer_index]
+            *(1 - self.grid.consumer.flex_fraction[consumer_index]) 
+            for t in timerange],'-b', label="fixed load")
+
+        # Flexible load  (if consumer has nonzero flexible load)
+        if self.grid.consumer.flex_fraction[consumer_index] > 0:
+            flexload_power = self.db.getResultFlexloadPower(
+                consumer_index,timeMaxMin)
+            ax1.plot(timerange,flexload_power,'-c', label="flexible load")
+        
+            # Storage filling level
+            storagefilling = self.db.getResultFlexloadStorageFilling(
+                consumer_index,timeMaxMin)
+            if relativestorage:
+                cap = self.grid.consumer.getFlexibleLoadStorageCapacity(
+                            consumer_index)
+                storagefilling = [x/cap for x in storagefilling]
+            ax2 = plt.twinx() #separate y axis
+            ax2.plot(timerange,storagefilling,'-g', label='storage')
+            ax2.legend(loc="upper right")
+            
+        ax1.legend(loc="upper left")
+        nodeidx = self.grid.node.name.index(
+            self.grid.generator.node[consumer_index])
+        plt.title("Consumer %d at node %d (%s)" 
+            % (consumer_index, nodeidx, 
+               self.grid.consumer.node[consumer_index]))
+        plt.show()
+        return
+
 
     def plotStoragePerArea(self,area,absolute=False,timeMaxMin=None):
         '''Show generation storage accumulated per area 
@@ -522,6 +574,39 @@ class Results(object):
         return
         
             
+    def plotFlexibleLoadStorageValues(self,consumerindx, timeMaxMin=None):
+        '''Plot storage valuesfor flexible loads
+        
+        Parameters
+        ----------
+        consumerindx (int)
+            index of consumer for which to make the plot
+        timeMaxMin [int,int] (default=None)
+            time interval for the plot [start,end]
+        '''
+
+        if timeMaxMin is None:
+            timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
+        timerange = range(timeMaxMin[0],timeMaxMin[-1])
+
+        if consumerindx in self.flex_idx_consumers:
+            nodeidx = self.grid.node.name.index(
+                self.grid.consumer.node[consumerindx])
+            storagevalue = self.db.getResultFlexloadStorageValue(
+                                consumerindx,timeMaxMin)
+            nodalprice = self.db.getResultNodalPrice(nodeidx,timeMaxMin)
+            plt.figure()
+            plt.plot(timerange,storagevalue)
+            plt.plot(timerange,nodalprice)
+            plt.legend(['storage value','nodal price'])
+            plt.title("Storage value  for consumer %d at %s"
+                % (consumerindx,
+               self.grid.consumer.node[consumerindx]))
+            plt.show()
+        else:
+            print "These are the consumers with flexible load:"
+            print self.flex_idx_consumers
+        return
 
 
         

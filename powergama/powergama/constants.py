@@ -9,7 +9,7 @@ baseS = 100.0e6
 ## Per unit base value for voltage in V (400 kV)
 baseV = 400.0e3
 
-## Penalty (€/MWh) for load shedding
+## Penalty (Â€/MWh) for load shedding
 loadshedcost = 1000.0
 
 ## Hours per year (365*24 = 8760)
@@ -21,3 +21,6 @@ MWh_per_GWh = 1000.0
 # Derived quantities
 baseZ = baseV**2/baseS
 baseMVA = baseS*1e-6
+
+## "Almost infinitity storage value for flexible demand outside flecibility range
+flexload_outside_cost = 1000.0

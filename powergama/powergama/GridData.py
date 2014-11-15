@@ -348,6 +348,11 @@ class _Consumers(object):
         # return average demand for now.
         return self.load
 
+    def getFlexibleLoadStorageCapacity(self,indx):
+        ''' flexible load storage capacity in MWh'''
+        cap = (self.load[indx] * self.flex_fraction[indx] 
+                * self.flex_storage[indx] )
+        return cap
 
 
 

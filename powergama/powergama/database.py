@@ -606,4 +606,46 @@ class Database(object):
             rows = cur.fetchall()
             output = [row[0] for row in rows]        
         return output
+        
+    def getResultFlexloadPower(self,consumerindx,timeMaxMin):
+        '''Get flexible load for consumer with flexible load'''
+        con = db.connect(self.filename)
+        with con:        
+            #con.row_factory = db.Row
+            cur = con.cursor()
+            cur.execute("SELECT demand FROM Res_FlexibleLoad "
+                +"WHERE timestep>=? AND timestep<? AND indx=?"
+                +" ORDER BY timestep",
+                (timeMaxMin[0],timeMaxMin[-1],consumerindx))
+            rows = cur.fetchall()
+            values = [row[0] for row in rows]        
+        return values
+        
+    def getResultFlexloadStorageFilling(self,consumerindx,timeMaxMin):
+        '''Get storage filling level for flexible loads '''
+        con = db.connect(self.filename)
+        with con:        
+            #con.row_factory = db.Row
+            cur = con.cursor()
+            cur.execute("SELECT storage FROM Res_FlexibleLoad "
+                +"WHERE timestep>=? AND timestep<? AND indx=?"
+                +" ORDER BY timestep",
+                (timeMaxMin[0],timeMaxMin[-1],consumerindx))
+            rows = cur.fetchall()
+            values = [row[0] for row in rows]        
+        return values
+    
+    def getResultFlexloadStorageValue(self,consumerindx,timeMaxMin):
+        '''Get storage value for flexible loads'''
+        con = db.connect(self.filename)
+        with con:        
+            cur = con.cursor()
+            cur.execute("SELECT value FROM Res_FlexibleLoad "
+                +"WHERE timestep>=? AND timestep<? AND indx=?"
+                +" ORDER BY timestep",
+                (timeMaxMin[0],timeMaxMin[-1],consumerindx))
+            rows = cur.fetchall()
+            values = [row[0] for row in rows]        
+        return values
+        
            

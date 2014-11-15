@@ -393,9 +393,9 @@ class LpProblem(object):
                 self._storage_flexload[idx_cons] / storagecapacity_flexload  )     
             filling_col = int(round(fillinglevel*100))
             if fillinglevel > 1:
-                self._marginalcosts_flexload[idx_cons] = inf
+                self._marginalcosts_flexload[idx_cons] = -const.flexload_outside_cost
             elif fillinglevel < 0:
-                self._marginalcosts_flexload[idx_cons] = -inf
+                self._marginalcosts_flexload[idx_cons] = const.flexload_outside_cost
             else:
                 self._marginalcosts_flexload[idx_cons] = (
                     self._grid.consumer.flex_basevalue[idx_cons] 
@@ -440,6 +440,7 @@ class LpProblem(object):
             cpf = (
                 self._pfPgen[idx_node]
                 +self._pfPpump[idx_node]
+                +self._pfPflexload[idx_node]
                 +self._pfPdc[idx_node]
                 +self._pfPload[idx_node]
                 +self._pfPshed[idx_node] == self._pfPflow[idx_node])
@@ -506,7 +507,6 @@ class LpProblem(object):
         storagecapacity = asarray(self._grid.generator.storage)
         self._storage = vstack((storagecapacity,energyStorable)).min(axis=0)
 
-        print("TODO: Update flexible load storage: line 504")
         energyIn_flexload = zeros(len(self._grid.consumer.flex_fraction))        
         for i,x in enumerate(self._idx_consumersWithFlexLoad):
             energyIn_flexload[x] = Pflexload[i]*self.timeDelta
