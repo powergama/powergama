@@ -524,16 +524,23 @@ class Results(object):
             areas = [areas]
         for co in areas:
             dem=[0]*len(self.timerange)
+            flexdemand = [0]*len(self.timerange)
             consumers = self.grid.getConsumersPerArea()[co]
             for i in consumers:
                 ref_profile = consumer.load_profile[i]
                 # accumulate demand for all consumers in this area:
                 dem = [dem[t-self.timerange[0]] + consumer.load[i] 
-                    * self.grid.demandProfiles[ref_profile][t-self.timerange[0]] 
+                    * (1 - consumer.flex_fraction[i])
+                    * self.grid.demandProfiles[ref_profile][t-self.timerange[0]]
                     for t in timerange]
-            plt.plot(timerange,dem)
+                flexdemand_i = self.db.getResultFlexloadPower(i,timeMaxMin)
+                if len(flexdemand_i)>0:
+                    flexdemand = [sum(x) for x in zip(flexdemand,flexdemand_i)]
+            sumdemand = [sum(x) for x in zip(dem,flexdemand)]
+            p, = plt.plot(timerange,sumdemand,label=co)
+            plt.plot(timerange,dem,'--',color=p.get_color())
             
-        plt.legend(areas , loc="upper right")
+        plt.legend(loc="upper right")
         plt.title("Power demand")
         plt.show()
         return
@@ -559,10 +566,17 @@ class Results(object):
                 self.grid.generator.node[genindx])
             storagevalue = self.db.getResultStorageValue(genindx,timeMaxMin)
             nodalprice = self.db.getResultNodalPrice(nodeidx,timeMaxMin)
+            pumpprice = [x - self.grid.generator.pump_deadband[genindx]
+                         for x in storagevalue]
             plt.figure()
-            plt.plot(timerange,storagevalue)
-            plt.plot(timerange,nodalprice)
-            plt.legend(['storage value','nodal price'])
+            p, = plt.plot(timerange,storagevalue,label='storage value')
+            if genindx in self.pump_idx_generators:
+                pumpprice = [x - self.grid.generator.pump_deadband[genindx]
+                             for x in storagevalue]
+                plt.plot(timerange,pumpprice,'--',color=p.get_color(),
+                         label='pump threshold')
+            plt.plot(timerange,nodalprice,label='nodal price')
+            plt.legend()
             plt.title("Storage value  for generator %d (%s) in %s"
                 % (genindx,
                self.grid.generator.gentype[genindx],

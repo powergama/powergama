@@ -21,7 +21,7 @@ Module containing PowerGAMA LpProblem class
 '''
 
 import pulp
-from numpy import pi, asarray, vstack, zeros, inf
+from numpy import pi, asarray, vstack, zeros, random
 from datetime import datetime as datetime
 import constants as const
 import scipy.sparse
@@ -67,8 +67,10 @@ class LpProblem(object):
         self._marginalcosts = asarray(grid.generator.marginalcost)        
         
         # Flexible load storage (initial filling level 0.5)  
+        print("TODO: Use initial flexible storage filling different from 0.5")        
         self._storage_flexload = (
-                0.5*asarray(grid.consumer.flex_storage) 
+                random.rand(len(grid.consumer.flex_fraction))
+                * asarray(grid.consumer.flex_storage) 
                 * asarray(grid.consumer.flex_fraction)
                 * asarray(grid.consumer.load)
                 )
@@ -241,16 +243,18 @@ class LpProblem(object):
             # the idx_flexload has  indices referring to the list of loads
             # the number of flexible loads equals the length of this list
             idx_flexload = grid.getLoadsFlexibleAtNode(idx_node)
-            
+                      
             # Constant part of power flow equations            
             self._pfPgen[idx_node] = [
                 self._var_generation[i]/const.baseMVA for i in idx_gen]
             self._pfPpump[idx_node] = [
-                -self._var_pumping[i]/const.baseMVA 
-                for i in xrange(len(idx_gen_pump))]
+                -self._var_pumping[
+                    self._idx_generatorsWithPumping.index(i)]/const.baseMVA 
+                for i in idx_gen_pump]
             self._pfPflexload[idx_node] = [
-                -self._var_flexload[i]/const.baseMVA 
-                for i in xrange(len(idx_flexload))]
+                -self._var_flexload[
+                    self._idx_consumersWithFlexLoad.index(i)]/const.baseMVA 
+                for i in idx_flexload]
             self._pfPshed[idx_node] = ( 
                 self._var_loadshedding[idx_node]/const.baseMVA)
             self._pfPdc[idx_node] = (
@@ -258,22 +262,10 @@ class LpProblem(object):
                 +[ -self._var_dc[i]/const.baseMVA for i in idx_dc_from])
             self._pfPflow[idx_node] = -_Btheta[idx_node]
             
-            # this value will be updated later:            
+            # this value will be updated later, so using zero for now:            
             self._pfPload[idx_node] = pulp.lpSum(0) 
-            '''            
-            demOutflow=[]
-            # Usually there is maximum one load per node, but it could be
-            # so need a loop
-            for i in self._idx_load[idx_node]:
-                average = self._grid.consumer.load[i]*(
-                            1-self._grid.consumer.flex_fraction[i])
-                profile_ref = self._grid.consumer.load_profile[i]
-                demOutflow.append(
-                    -self._grid.demandProfiles[profile_ref][timestep] \
-                    *average/const.baseMVA)      
-            self._pfPload[idx_node] = pulp.lpSum(demOutflow)
-            '''
-            # Generation is positive
+
+           # Generation is positive
             # Pumping is negative
             # Demand is negative
             # Load shed is positive
@@ -296,30 +288,7 @@ class LpProblem(object):
         print("  Using fixed load shedding cost of %f. One per node" 
             % const.loadshedcost)       
         self._loadsheddingcosts = [const.loadshedcost]*self.num_nodes
-        '''
-        genpumpidx = self._idx_generatorsWithPumping
-        probObjective_gen = pulp.lpSum([
-            self._marginalcosts[i] * self._var_generation[i] 
-            for i in range_generators])
-        probObjective_pump = pulp.lpSum([
-            max(0,(self._marginalcosts[genpumpidx[i]]
-                -grid.generator.pump_deadband[genpumpidx[i]])) 
-            * (-self._var_pumping[i]) 
-            for i in xrange(len(genpumpidx))
-            ]  )
-        flexloadidx = self._idx_consumersWithFlexLoad
-        probObjective_flexload = pulp.lpSum([
-            -self._marginalcosts_flexload[i]* self._var_flexload[i]
-            for i in xrange(len(flexloadidx))
-            ])
-        probSlack = pulp.lpSum([
-            self._loadsheddingcosts[i]*self._var_loadshedding[i] 
-            for i in range_nodes]  ) 
-        self.prob.setObjective(probObjective_gen
-                                + probObjective_pump
-                                + probObjective_flexload
-                                + probSlack)      
-        '''
+
         self._updateLpProblem(timestep)
         return       
         ## END init
@@ -465,9 +434,11 @@ class LpProblem(object):
             * (-self._var_pumping[i]) 
             for i in xrange(len(genpumpidx))
             ]  )
+            
         flexloadidx = self._idx_consumersWithFlexLoad
         probObjective_flexload = pulp.lpSum([
-            -self._marginalcosts_flexload[i]* self._var_flexload[i]
+            -self._marginalcosts_flexload[flexloadidx[i]]
+            * self._var_flexload[i]
             for i in xrange(len(flexloadidx))
             ])
         
