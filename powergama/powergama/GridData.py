@@ -180,9 +180,9 @@ class _Generators(object):
         self.node = []
         self.prodMax = []
         self.prodMin = []
-        self.marginalcost = []
         self.fuelcost = []
         self.storage = []
+        self.storagevalue_abs= []
         self.storagevalue_profile_filling = []
         self.storagevalue_profile_time = []
         self.storagelevel_init = []
@@ -206,21 +206,24 @@ class _Generators(object):
                                         quoting=_QUOTINGTYPE)
             for row in datareader:
                 #print(row)
+                self.gentype.append(parseId(row["type"]))
+                self.desc.append(parseId(row["desc"]))
                 self.node.append(parseId(row["node"]))
                 self.prodMax.append(parseNum(row["pmax"]))
                 self.prodMin.append(parseNum(row["pmin"]))
-                self.marginalcost.append(parseNum(row["basecost"]))
                 self.fuelcost.append(parseNum(row["fuelcost"]))
-                self.storage.append(parseNum(row["storage_cap"]))
-                self.storagelevel_init.append(parseNum(row["storage_ini"]))
+                self.inflow_factor.append(parseNum(row["inflow_fac"]))
+                self.inflow_profile.append(parseId(row["inflow_ref"]))
+                self.storage.append(
+                    parseNum(row["storage_cap"],default=0))
+                self.storagevalue_abs.append(
+                    parseNum(row["storage_price"],default=0))
+                self.storagelevel_init.append(
+                    parseNum(row["storage_ini"],default=0))
                 self.storagevalue_profile_filling.append(
                     parseId(row["storval_filling_ref"]))
                 self.storagevalue_profile_time.append(
                     parseId(row["storval_time_ref"]))
-                self.inflow_factor.append(parseNum(row["inflow_fac"]))
-                self.inflow_profile.append(parseId(row["inflow_ref"]))
-                self.gentype.append(parseId(row["type"]))
-                self.desc.append(parseId(row["desc"]))
                 # Pumping data is optional, so check if it is present in the
                 # input files
                 if "pump_cap" in row.keys():
@@ -243,9 +246,10 @@ class _Generators(object):
         print "Saving generator data to file",filename
         
         headers = ["desc","type","node",
-                    "pmax","pmin","basecost",
+                    "pmax","pmin",
                     "fuelcost",
                     "inflow_fac","inflow_ref",
+                    "storage_price",
                     "storage_cap","storage_ini",
                     "storval_filling_ref",
                     "storval_time_ref",
@@ -257,9 +261,11 @@ class _Generators(object):
             for i in range(self.numGenerators()):
                 datarow = [
                     self.desc[i], self.gentype[i], self.node[i],
-                    self.prodMax[i], self.prodMin[i], self.marginalcost[i],
+                    self.prodMax[i], self.prodMin[i], 
                     self.fuelcost[i],self.inflow_factor[i], 
-                    self.inflow_profile[i],self.storage[i], 
+                    self.inflow_profile[i],
+                    self.storagevalue_abs[i],
+                    self.storage[i], 
                     self.storagelevel_init[i],
                     self.storagevalue_profile_filling[i],
                     self.storagevalue_profile_time[i],
@@ -514,9 +520,11 @@ class GridData(object):
     def getDcBranchesAtNode(self,nodeIdx,direction):
         """Indices of all DC branches attached to a particular node"""
         if direction=='from':
-            indices = [i for i, x in enumerate(self.dcbranch.node_from) if x == self.node.name[nodeIdx]]
+            indices = [i for i, x in enumerate(self.dcbranch.node_from) 
+            if x == self.node.name[nodeIdx]]
         elif direction=='to':
-            indices = [i for i, x in enumerate(self.dcbranch.node_to) if x == self.node.name[nodeIdx]]
+            indices = [i for i, x in enumerate(self.dcbranch.node_to) 
+            if x == self.node.name[nodeIdx]]
         else:
             raise Exception("Unknown direction in GridData.getDcBranchesAtNode")
         return indices

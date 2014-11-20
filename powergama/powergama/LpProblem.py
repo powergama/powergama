@@ -64,7 +64,7 @@ class LpProblem(object):
         self._storage = (
             asarray(grid.generator.storagelevel_init)
             *asarray(grid.generator.storage) )
-        self._marginalcosts = asarray(grid.generator.marginalcost)        
+        self._marginalcosts = asarray(grid.generator.fuelcost)        
         
         # Flexible load storage (initial filling level 0.5)  
         print("TODO: Use initial flexible storage filling different from 0.5")        
@@ -345,7 +345,7 @@ class LpProblem(object):
             fillinglevel = self._storage[idx_gen] / storagecapacity       
             filling_col = int(round(fillinglevel*100))
             self._marginalcosts[idx_gen] = (
-                self._grid.generator.marginalcost[idx_gen] 
+                self._grid.generator.storagevalue_abs[idx_gen] 
                 *self._grid.storagevalue_filling[this_type_filling][filling_col]
                 *self._grid.storagevalue_time[this_type_time][timestep])
 
