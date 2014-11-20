@@ -176,6 +176,38 @@ class Results(object):
         avgprices = np.asarray(avgprices,dtype=float)
         return avgprices
        
+    def getAverageEnergyBalance(self,timeMaxMin=None):
+        '''
+        Average energy balance (generation minus demand) over a time period
+        
+        timeMaxMin (list) (default = None)
+            [min, max] - lower and upper time interval
+            
+        Returns
+        =======
+        1-dim Array of nodal prices (one per node)
+        '''
+        if timeMaxMin is None:
+            timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
+
+        branchflows = self.db.getResultBranchFlowsMean(timeMaxMin)
+        br_from = self.grid.branch.node_fromIdx(self.grid.node)
+        br_to = self.grid.branch.node_toIdx(self.grid.node)
+        energybalance = []
+        for n in xrange(len(self.grid.node.name)):
+            idx_from = [ i for i,x in enumerate(br_from) if x==n]
+            idx_to = [ i for i,x in enumerate(br_to) if x==n]
+            energybalance.append(
+                sum([branchflows[0][i]-branchflows[1][i] for i in idx_from])
+                -sum([branchflows[0][j]-branchflows[1][j] for j in idx_to]) )
+            
+        print("TODO: Include also power flow on DC branches")
+        
+        # use asarray to convert None to nan
+        energybalance = np.asarray(energybalance,dtype=float)
+        return energybalance
+           
+
     def getAverageBranchSensitivity(self,timeMaxMin=None):
         '''
         Average branch capacity sensitivity over a given time period
@@ -633,7 +665,7 @@ class Results(object):
         Parameters
         ----------
         nodetype (str) (default = "")
-            "", "area", "nodalprice"
+            "", "area", "nodalprice", "energybalance"
         branchtype (str) (default = "")
             "", "area", "utilisation", "flow", "sensitivity"
         dcbranchtype (str) (default = "")
@@ -693,13 +725,6 @@ class Results(object):
                 labels=[0,0,0,1])
         
         
-        if nodetype=='area':
-            areas = data.node.area
-            allareas = data.getAllAreas()
-            colours_co = cm.prism(np.linspace(0, 1, len(allareas)))
-        elif nodetype=='nodalprice':
-            avgprice = self.getAverageNodalPrices(timeMaxMin)
-        
 
         if branchtype=='area':
             areas = data.node.area
@@ -709,28 +734,15 @@ class Results(object):
             numBranchCategories = 11
             colours_b = cm.hot(np.linspace(0, 1, numBranchCategories))
             avgflow = self.getAverageBranchFlows(timeMaxMin)[2]
-            #branchflow = self.db.getResultBranchFlowAll(timeMaxMin)
-            #avgflow = np.sqrt(np.average(np.asarray(
-            #    branchflow,dtype=float)**2,axis=1)) #rms
-            #cap =res.grid.branch.capacity
-            #[avgflow[i] / cap[i] for i in xrange(len(cap))] 
             utilisation = self.getAverageUtilisation(timeMaxMin)
-            # element-by-element
-            #print ("Branch utilisation: max=%g, min=%g" 
-            #    %(max(utilisation),min(utilisation)) )
         elif branchtype=='sensitivity':
             numBranchCategories = 11
             colours_b = cm.hot(np.linspace(0, 1, numBranchCategories))
-            #branchsens = self.db.getResultBranchSensAll(timeMaxMin)
-            #avgsense = np.sqrt(np.average(np.asarray(
-            #    branchsens,dtype=float)**2,axis=1)) #rms 
             avgsense = self.getAverageBranchSensitivity(timeMaxMin)
             # These sensitivities are mostly negative 
             # (reduced cost by increasing branch capacity)
             minsense = np.nanmin(avgsense)
             maxsense = np.nanmax(avgsense)
-            #print ("Branch capacity senitivity: max=%g, min=%g" 
-            #    %(np.nanmax(avgsense),np.nanmin(avgsense)) )
         
         
         # Plot AC branches (as great circles)
@@ -816,6 +828,17 @@ class Results(object):
                               linewidth=lwidth,color=col,zorder=1)
             
         # Plot nodes
+
+        if nodetype=='area':
+            areas = data.node.area
+            allareas = data.getAllAreas()
+            colours_co = cm.prism(np.linspace(0, 1, len(allareas)))
+        elif nodetype=='nodalprice':
+            avgprice = self.getAverageNodalPrices(timeMaxMin)
+        elif nodetype=='energybalance':
+            avg_energybalance = self.getAverageEnergyBalance(timeMaxMin)
+        
+
         x, y = m(data.node.lon,data.node.lat)
         if nodetype == 'area':
             for co in range(len(allareas)):
@@ -842,6 +865,16 @@ class Results(object):
                 # if np.isnan(avgprice[i]):
                     # m.scatter(x[i],y[i],c='dimgray',
                               # zorder=2,s=dotsize)
+        elif nodetype == 'energybalance':
+            if filter_price != None:
+                for index, price in enumerate(avg_energybalance):
+                    if (price > filter_price[1]):
+                        avg_energybalance[index] = filter_price[1]
+                    elif (price < filter_price[0]):
+                        avg_energybalance[index] = filter_price[0]
+            m.scatter(x,y,marker='o',c=avg_energybalance, cmap=cm.jet, 
+                        zorder=2,s=dotsize)
+            
         else:
             col='dimgray'
             m.scatter(x,y,marker='o',color=col, 
@@ -872,6 +905,15 @@ class Results(object):
             norm = mpl.colors.Normalize(min(avgprice), max(avgprice))
             colorbar_node = mpl.colorbar.ColorbarBase(ax_cb_node, cmap=colormap, norm=norm, orientation='vertical')
             colorbar_node.set_label('Nodal price')
+        if nodetype == 'energybalance':
+            ax_cb_node = fig.add_axes((0.70+ax_cb_node_offset, 0.125,0.03,0.75))
+            colormap = plt.get_cmap('jet')
+            norm = mpl.colors.Normalize(
+                #-1*np.std(avg_energybalance), 1*np.std(avg_energybalance))
+                min(avg_energybalance), max(avg_energybalance))
+            colorbar_node = mpl.colorbar.ColorbarBase(
+                ax_cb_node, cmap=colormap, norm=norm, orientation='vertical')
+            colorbar_node.set_label('Energy balance')
         #Legend for nodal areas
         elif nodetype == 'area':
             patches = []

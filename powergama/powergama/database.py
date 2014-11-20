@@ -324,6 +324,7 @@ class Database(object):
             rows = cur.fetchall()
         values = [row[1] for row in rows]        
         return values
+        
 
 ### Branch results
 

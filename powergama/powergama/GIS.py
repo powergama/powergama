@@ -39,15 +39,18 @@ def makekml(res,kmlfile, timeMaxMin=None):
     # Get generators
     for i in xrange(gencount):
         typ = res.grid.generator.gentype[i]
-        name = res.grid.generator.node[i]
-        nodeIndx = res.grid.node.name.index(name)
+        cap = res.grid.generator.prodMax[i]
+        name = simplekml.makeunicode.u("GENERATOR %s" % res.grid.generator.desc[i])
+        node = res.grid.generator.node[i]
+        nodeIndx = res.grid.node.name.index(node)
         lon = res.grid.node.lon[nodeIndx]
         lat = res.grid.node.lat[nodeIndx]
         description = """ 
             Busname .. %s           <br/>
             Fuel .. %s         <br/>
+            Capacity .. %s         <br/>
             Lon .. %s, Lat .. %s    <br/>
-            """ % (name,typ,str(lon),str(lat))
+            """ % (node,typ,str(cap),str(lon),str(lat))
         pnt = gentypefolders[typ].newpoint(
             name=name,description=description, coords=[(lon,lat)])
         pnt.style.iconstyle.icon.href = circle
