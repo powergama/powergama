@@ -191,18 +191,23 @@ class Results(object):
             timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
 
         branchflows = self.db.getResultBranchFlowsMean(timeMaxMin)
+        branchflowsDc = self.db.getResultBranchFlowsMean(timeMaxMin,ac=False)
         br_from = self.grid.branch.node_fromIdx(self.grid.node)
         br_to = self.grid.branch.node_toIdx(self.grid.node)
+        dcbr_from = self.grid.dcbranch.node_fromIdx(self.grid.node)
+        dcbr_to = self.grid.dcbranch.node_toIdx(self.grid.node)
         energybalance = []
         for n in xrange(len(self.grid.node.name)):
             idx_from = [ i for i,x in enumerate(br_from) if x==n]
             idx_to = [ i for i,x in enumerate(br_to) if x==n]
+            dc_idx_from = [ i for i,x in enumerate(dcbr_from) if x==n]
+            dc_idx_to = [ i for i,x in enumerate(dcbr_to) if x==n]
             energybalance.append(
                 sum([branchflows[0][i]-branchflows[1][i] for i in idx_from])
-                -sum([branchflows[0][j]-branchflows[1][j] for j in idx_to]) )
+                -sum([branchflows[0][j]-branchflows[1][j] for j in idx_to])
+                +sum([branchflowsDc[0][i]-branchflowsDc[1][i] for i in dc_idx_from])
+                -sum([branchflowsDc[0][j]-branchflowsDc[1][j] for j in dc_idx_to]) )
             
-        print("TODO: Include also power flow on DC branches")
-        
         # use asarray to convert None to nan
         energybalance = np.asarray(energybalance,dtype=float)
         return energybalance
@@ -818,10 +823,10 @@ class Results(object):
                     col = colours_b[allareas.index(areas[idx_from[j]])]
                     lwidth = 1
                 else:
-                    col = 'white'
+                    col = 'blue'
                     lwidth = 2
             else:
-                col = 'white'
+                col = 'blue'
                 lwidth = 2
             m.drawgreatcircle(branch_lon1[j],branch_lat1[j],\
                               branch_lon2[j],branch_lat2[j],\
@@ -872,7 +877,7 @@ class Results(object):
                         avg_energybalance[index] = filter_price[1]
                     elif (price < filter_price[0]):
                         avg_energybalance[index] = filter_price[0]
-            m.scatter(x,y,marker='o',c=avg_energybalance, cmap=cm.jet, 
+            m.scatter(x,y,marker='o',c=avg_energybalance, cmap=cm.hot, 
                         zorder=2,s=dotsize)
             
         else:
@@ -907,7 +912,7 @@ class Results(object):
             colorbar_node.set_label('Nodal price')
         if nodetype == 'energybalance':
             ax_cb_node = fig.add_axes((0.70+ax_cb_node_offset, 0.125,0.03,0.75))
-            colormap = plt.get_cmap('jet')
+            colormap = plt.get_cmap('hot')
             norm = mpl.colors.Normalize(
                 #-1*np.std(avg_energybalance), 1*np.std(avg_energybalance))
                 min(avg_energybalance), max(avg_energybalance))
@@ -940,25 +945,31 @@ class Results(object):
             colormap = plt.get_cmap('hot')
             bounds = np.linspace(0,1,numBranchCategories)
             norm = mpl.colors.BoundaryNorm(bounds,256)
-            colorbar_branch = mpl.colorbar.ColorbarBase(ax_cb_branch, cmap=colormap, \
-                                                        norm=norm, boundaries=bounds, \
-                                                        spacing='uniform', orientation='vertical')
+            colorbar_branch = mpl.colorbar.ColorbarBase(
+                ax_cb_branch, cmap=colormap, norm=norm, boundaries=bounds,
+                spacing='uniform', orientation='vertical')
             colorbar_branch.set_label('Branch utilisation')
         #Colorbar for branch flow
         elif branchtype == 'flow':
             ax_cb_branch = fig.add_axes((0.85, 0.125, 0.03, 0.75))
             colormap = plt.get_cmap('hot')
-            norm = mpl.colors.Normalize(minflow,maxflow)
-            colorbar_branch = mpl.colorbar.ColorbarBase(ax_cb_branch, cmap=colormap, \
-                                                        norm=norm, orientation='vertical')
+            #norm = mpl.colors.Normalize(minflow,maxflow)
+            bounds = np.linspace(minflow,maxflow,numBranchCategories)
+            norm = mpl.colors.BoundaryNorm(bounds,256)
+            colorbar_branch = mpl.colorbar.ColorbarBase(
+                ax_cb_branch, cmap=colormap, norm=norm, boundaries=bounds,
+                spacing='uniform', orientation='vertical')
             colorbar_branch.set_label('Branch flow')
         #Colorbar for branch sensitivity
         elif branchtype == 'sensitivity':
             ax_cb_branch = fig.add_axes((0.85, 0.125, 0.03, 0.75))
             colormap = plt.get_cmap('hot')
-            norm = mpl.colors.Normalize(minsense,maxsense)
-            colorbar_branch = mpl.colorbar.ColorbarBase(ax_cb_branch, cmap=colormap, \
-                                                        norm=norm, orientation='vertical')
+            #norm = mpl.colors.Normalize(0,abs(minsense))
+            bounds = np.linspace(0,abs(minsense),numBranchCategories)
+            norm = mpl.colors.BoundaryNorm(bounds,256)
+            colorbar_branch = mpl.colorbar.ColorbarBase(
+                ax_cb_branch, cmap=colormap, norm=norm, boundaries=bounds,
+                spacing='uniform', orientation='vertical')
             colorbar_branch.set_label('Branch sensitivity')
         
         return

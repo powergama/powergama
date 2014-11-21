@@ -361,9 +361,14 @@ class Database(object):
             rows = cur.fetchall()
         return rows
 
-    def getResultBranchFlowsMean(self,timeMaxMin):
+    def getResultBranchFlowsMean(self,timeMaxMin,ac=True):
         '''
         Get average branch flow on branches in both direction
+        
+        Parameters
+        ----------
+        timeMaxMin (list of two elements) - time interval
+        ac (bool) - ac (true) or dc (false) branches
         
         Returns
         =======
@@ -371,20 +376,25 @@ class Database(object):
         [average flow 1->2, average flow 2->1, average absolute flow]
         
         '''
+        if ac:
+            table = "Res_Branches"
+        else:
+            table = "Res_Dcbranches"
+        
         con = db.connect(self.filename)
         with con:        
             cur = con.cursor()
-            cur.execute("SELECT indx,TOTAL(flow) FROM Res_Branches"
+            cur.execute("SELECT indx,TOTAL(flow) FROM "+table
                 +" WHERE timestep>=? AND timestep<? AND flow>=0"
                 +" GROUP BY indx ORDER BY indx",
                 (timeMaxMin[0],timeMaxMin[-1]))
             rows1 = cur.fetchall()
-            cur.execute("SELECT indx,TOTAL(flow) FROM Res_Branches"
+            cur.execute("SELECT indx,TOTAL(flow) FROM "+table
                 +" WHERE timestep>=? AND timestep<? AND flow<0"
                 +" GROUP BY indx ORDER BY indx",
                 (timeMaxMin[0],timeMaxMin[-1]))
             rows2 = cur.fetchall()
-            cur.execute("SELECT MAX(indx) FROM Res_Branches")
+            cur.execute("SELECT MAX(indx) FROM "+table)
             numBranches = 1 + cur.fetchone()[0]
             #Calculate average flow for each direction
             numTimeSteps = timeMaxMin[-1] - timeMaxMin[0]
