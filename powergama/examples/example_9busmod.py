@@ -10,7 +10,7 @@ import powergama
 import time
 
 datapath= "data/9busmod_"
-timerange=range(0,5)
+timerange=range(24*100,24*101)
 
 data = powergama.GridData()
 
@@ -27,8 +27,10 @@ data.readProfileData(inflow=datapath+"profiles_inflow.csv",
             timedelta=1.0)
 
 lp = powergama.LpProblem(data)
+res = powergama.Results(data,'example_9busmod.sqlite')
+
 start_time = time.time()
-res = lp.solve()
+lp.solve(res)
 end_time = time.time()
 print end_time - start_time, "seconds"
 
