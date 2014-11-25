@@ -208,7 +208,7 @@ def newScenario(base_grid_data, scenario_file, newfile_prefix):
         inflow_new = base_grid_data.generator.inflow_factor[:]
         inflowprofiles_new = base_grid_data.generator.inflow_profile[:]
         gencap_new = base_grid_data.generator.prodMax[:]
-        gencost_new = base_grid_data.generator.marginalcost[:]
+        gencost_new = base_grid_data.generator.fuelcost[:]
         storagecap_new = base_grid_data.generator.storage[:]
         storagelevel_new = base_grid_data.generator.storagelevel_init[:]
         storval_basevalue_new = base_grid_data.generator.storagevalue_abs[:]
@@ -254,15 +254,15 @@ def newScenario(base_grid_data, scenario_file, newfile_prefix):
                     gencap_new = scaleGencap(
                         gencap_new,row,areas_update,generators,gentype)
 
-            elif parameter[:8] == "fuelcost_":
-                gentype = parameter[8:]
+            elif parameter[:9] == "fuelcost_":
+                gentype = parameter[9:]
                 row = {k:(parseNum(x) if x!='' else None) for k,x in row.iteritems()}
                 print "Generation fuel costs for ",gentype
                 gencost_new = updateGenCost(
                     gencost_new,row,areas_update,generators,gentype)
             
-            elif parameter[:8] == "storage_price_":
-                gentype = parameter[8:]
+            elif parameter[:14] == "storage_price_":
+                gentype = parameter[14:]
                 row = {k:(parseNum(x) if x!='' else None) for k,x in row.iteritems()}
                 print "Storage base price for ",gentype
                 storval_basevalue_new = updateGenCost(
@@ -305,7 +305,8 @@ def newScenario(base_grid_data, scenario_file, newfile_prefix):
                     storval_time_ref_new,row,areas_update,generators,gentype)
 
             else:
-                print "Unknown parameter: ",parameter
+                print "WARNING! Unknown parameter: ",parameter
+                raise Exception("Unknown parameter: %s"%parameter)
         
         gentypes_nodata = list(set(gentypes_grid).difference(gentypes_data))      
         print "These generator types have no scenario data (using base values):", gentypes_nodata

@@ -141,7 +141,6 @@ class _DcBranches(object):
             for row in datareader:
                 self.node_from.append(parseId(row["from"]))
                 self.node_to.append(parseId(row["to"]))
-                # Using float() to make sure it's not treated as an integer                
                 self.capacity.append(parseNum(row["capacity"]))
         return
     
@@ -249,8 +248,8 @@ class _Generators(object):
                     "pmax","pmin",
                     "fuelcost",
                     "inflow_fac","inflow_ref",
-                    "storage_price",
-                    "storage_cap","storage_ini",
+                    "storage_cap","storage_price",
+                    "storage_ini",
                     "storval_filling_ref",
                     "storval_time_ref",
                     "pump_cap","pump_efficiency","pump_deadband"]
@@ -263,16 +262,20 @@ class _Generators(object):
                     self.desc[i], self.gentype[i], self.node[i],
                     self.prodMax[i], self.prodMin[i], 
                     self.fuelcost[i],self.inflow_factor[i], 
-                    self.inflow_profile[i],
-                    self.storagevalue_abs[i],
-                    self.storage[i], 
-                    self.storagelevel_init[i],
-                    self.storagevalue_profile_filling[i],
-                    self.storagevalue_profile_time[i],
-                    self.pump_cap[i],
-                    self.pump_efficiency[i],
-                    self.pump_deadband[i]
-                    ]
+                    self.inflow_profile[i]]
+                if self.storage[i]>0:
+                    datarow = datarow +[
+                        self.storage[i], 
+                        self.storagevalue_abs[i],
+                        self.storagelevel_init[i],
+                        self.storagevalue_profile_filling[i],
+                        self.storagevalue_profile_time[i] ]
+                    if self.pump_cap[i]>0:
+                        datarow = datarow + [
+                            self.pump_cap[i],
+                            self.pump_efficiency[i],
+                            self.pump_deadband[i] ]
+                    
                 datawriter.writerow(datarow)
         return
         
@@ -333,13 +336,15 @@ class _Consumers(object):
                                 quotechar='"', quoting=_QUOTINGTYPE)
             datawriter.writerow(headers)
             for i in range(self.numConsumers()):
-                datarow = [self.node[i], self.load[i],self.load_profile[i],
+                datarow = [self.node[i], self.load[i],self.load_profile[i]]
+                if self.flex_fraction[i]>0:
+                    datarow = datarow + [
                            self.flex_fraction[i],
                            self.flex_on_off[i],
                            self.flex_basevalue[i],
                            self.flex_storage[i],
                            self.flex_storagevalue_profile_filling[i] 
-                           ]                    
+                           ] 
                 datawriter.writerow(datarow)
         return
         
@@ -482,11 +487,13 @@ class GridData(object):
         file_branches = prefix+"branches.csv"
         file_consumers = prefix+"consumers.csv"     
         file_generators = prefix+"generators.csv"       
+        file_hvdc = prefix+"hvdc.csv"       
 
         self.node.writeToFile(file_nodes)
         self.branch.writeToFile(file_branches)
         self.consumer.writeToFile(file_consumers)
         self.generator.writeToFile(file_generators)
+        self.dcbranch.writeToFile(file_hvdc)
         
         return
     
