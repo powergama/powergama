@@ -20,10 +20,6 @@ setup(name='powergama',
 	  ],
 	  keywords = 'power systems, grid integration, renewable energy',
 	  install_requires = [
-		#'numpy',
-		#'scipy',
-		#'matplotlib',
 		'PuLP>=1.5.6'
 		],
-	  #package_data = {'powergama' : ['licence.txt']},
 	 )
