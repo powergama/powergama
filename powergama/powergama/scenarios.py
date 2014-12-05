@@ -5,7 +5,7 @@ according to specified input.
 '''
 
 import csv
-import constants as const
+import powergama.constants as const
 
 _QUOTINGTYPE=csv.QUOTE_MINIMAL
 
@@ -32,7 +32,7 @@ def saveScenario(base_grid_data, scenario_file):
     data["demand_profile"]={}
 
     for co in areas_grid:
-        print "CO=",co
+        print("CO=",co)
         
         # Demand
         if consumers.has_key(co):
@@ -44,12 +44,13 @@ def saveScenario(base_grid_data, scenario_file):
             demandprofiles_set = set(load_profile)
             demand_ref = " ".join(str(x) for x in demandprofiles_set)
 
-            print "  demand_avg=",demand_sum_MW,"<> demand_ref=",demand_ref
+            print("  demand_avg=",demand_sum_MW,"<> demand_ref=",demand_ref)
             # avg demand is in MW, whereas input file is GWh
-            data["demand_annual"][co] = demand_sum_MW*const.hoursperyear/const.MWh_per_GWh 
+            data["demand_annual"][co] = (
+                demand_sum_MW*const.hoursperyear/const.MWh_per_GWh  )
             data["demand_profile"][co] = demand_ref
         else:
-            print"  -- no consumers -- "
+            print("  -- no consumers -- ")
             data["demand_annual"][co] = None
             data["demand_profile"][co] = None
             
@@ -195,9 +196,11 @@ def newScenario(base_grid_data, scenario_file, newfile_prefix):
         areas_nodata = list(set(areas_grid).difference(areas_data))
         areas_notingrid = list(set(areas_data).difference(areas_grid))
         areas_update = list(set(areas_grid).intersection(areas_data))
-        print "These areas have no scenario data (will use base values):\n",areas_nodata
-        print "These areas (with data) are not present in the model (will be ignored):\n", areas_notingrid
-        print "Data for these areas will be updated:\n", areas_update
+        print("These areas have no scenario data (will use base values):\n",
+              areas_nodata)
+        print("These areas (with data) are not present in the model"+
+                "(will be ignored):\n", areas_notingrid)
+        print("Data for these areas will be updated:\n", areas_update)
 
         consumers = base_grid_data.getConsumersPerArea()
         generators = base_grid_data.getGeneratorsPerAreaAndType()
@@ -220,35 +223,36 @@ def newScenario(base_grid_data, scenario_file, newfile_prefix):
             parameter = row.pop('PARAMETER',None)
             
             if parameter == "demand_annual":
-                print "Annual demand (GWh)"
+                print("Annual demand (GWh)")
                 row = {k:(parseNum(x) if x!='' else None) for k,x in row.iteritems()}
                 load_new = scaleDemand(load_new,row,areas_update,consumers)
                     
             elif parameter == "demand_profile":
                 row = {k:(parseId(x) if x!='' else None) for k,x in row.iteritems()}
-                print "Demand profile references"
+                print("Demand profile references")
                 loadprofiles_new = updateDemandProfileRef(loadprofiles_new,row,areas_update,consumers)
                 
             #elif parameter[:14] == "inflow_annual_":
             elif parameter[:14] == "inflow_factor_":
                 gentype = parameter[14:]
                 row = {k:(parseNum(x) if x!='' else None) for k,x in row.iteritems()}
-                print "Inflow factor for ",gentype
+                print("Inflow factor for ",gentype)
                 inflow_new = updateInflowFactor(inflow_new,row,areas_update,generators,gentype)
                 
             elif parameter[:15] == "inflow_profile_":
                 gentype = parameter[15:]
                 row = {k:(parseId(x) if x!='' else None) for k,x in row.iteritems()}
-                print "Inflow profile references for ",gentype
+                print("Inflow profile references for ",gentype)
                 inflowprofiles_new = updateGenProfileRef(
                     inflowprofiles_new,row,areas_update,generators,gentype)
 
             elif parameter[:7] == "gencap_":
                 gentype = parameter[7:]
                 row = {k:(parseNum(x) if x!='' else None) for k,x in row.iteritems()}
-                print "Generation capacities for ",gentype
+                print("Generation capacities for ",gentype)
                 if not gentype in gentypes_grid:
-                    print "OBS: Generation type is not present in grid model:",gentype
+                    print("OBS: Generation type is not present in grid model:",
+                          gentype)
                 else:
                     gentypes_data.append(gentype)
                     gencap_new = scaleGencap(
@@ -257,23 +261,24 @@ def newScenario(base_grid_data, scenario_file, newfile_prefix):
             elif parameter[:9] == "fuelcost_":
                 gentype = parameter[9:]
                 row = {k:(parseNum(x) if x!='' else None) for k,x in row.iteritems()}
-                print "Generation fuel costs for ",gentype
+                print("Generation fuel costs for ",gentype)
                 gencost_new = updateGenCost(
                     gencost_new,row,areas_update,generators,gentype)
             
             elif parameter[:14] == "storage_price_":
                 gentype = parameter[14:]
                 row = {k:(parseNum(x) if x!='' else None) for k,x in row.iteritems()}
-                print "Storage base price for ",gentype
+                print("Storage base price for ",gentype)
                 storval_basevalue_new = updateGenCost(
                     storval_basevalue_new,row,areas_update,generators,gentype)
 
             elif parameter[:11] == "storagecap_":
                 gentype = parameter[11:]
                 row = {k:(parseNum(x) if x!='' else None) for k,x in row.iteritems()}
-                print "Storage capacities for ",gentype
+                print("Storage capacities for ",gentype)
                 if not gentype in gentypes_grid:
-                    print "OBS: Generation type is not present in grid model:",gentype
+                    print("OBS: Generation type is not present in grid model:",
+                          gentype)
                 else:
                     gentypes_data.append(gentype)
                     storagecap_new = scaleStoragecap(
@@ -282,9 +287,10 @@ def newScenario(base_grid_data, scenario_file, newfile_prefix):
             elif parameter[:12] == "storage_ini_":
                 gentype = parameter[12:]
                 row = {k:(parseNum(x) if x!='' else None) for k,x in row.iteritems()}
-                print "Initial storage filling level for ",gentype
+                print("Initial storage filling level for ",gentype)
                 if not gentype in gentypes_grid:
-                    print "OBS: Generation type is not present in grid model:",gentype
+                    print("OBS: Generation type is not present in grid model:",
+                          gentype)
                 else:
                     gentypes_data.append(gentype)
                     storagelevel_new = updateStorageLevel(
@@ -293,23 +299,25 @@ def newScenario(base_grid_data, scenario_file, newfile_prefix):
             elif parameter[:20] == "storval_filling_ref_":
                 gentype = parameter[20:]
                 row = {k:(parseId(x) if x!='' else None) for k,x in row.iteritems()}
-                print "Storage value filling level profile reference for ",gentype
+                print("Storage value filling level profile reference for ",
+                      gentype)
                 storval_filling_ref_new = updateGenProfileRef(
                     storval_filling_ref_new,row,areas_update,generators,gentype)
 
             elif parameter[:17] == "storval_time_ref_":
                 gentype = parameter[17:]
                 row = {k:(parseId(x) if x!='' else None) for k,x in row.iteritems()}
-                print "Storage value time profile reference for ",gentype
+                print("Storage value time profile reference for ",gentype)
                 storval_time_ref_new =  updateGenProfileRef(
                     storval_time_ref_new,row,areas_update,generators,gentype)
 
             else:
-                print "WARNING! Unknown parameter: ",parameter
+                print("WARNING! Unknown parameter: ",parameter)
                 raise Exception("Unknown parameter: %s"%parameter)
         
         gentypes_nodata = list(set(gentypes_grid).difference(gentypes_data))      
-        print "These generator types have no scenario data (using base values):", gentypes_nodata
+        print("These generator types have no scenario data "+
+                "(using base values):", gentypes_nodata)
 
 
         # Updating variables
@@ -335,7 +343,7 @@ def newScenario(base_grid_data, scenario_file, newfile_prefix):
 def scaleDemand(demand,datarow,areas_update,consumers):
     # Find all loads in this area
 
-    print "  Total average demand before = ", sum(demand)
+    print("  Total average demand before = ", sum(demand))
     for co in areas_update:
         if not datarow[co] is None:
             demand_annual_GWh = datarow[co]
@@ -351,9 +359,9 @@ def scaleDemand(demand,datarow,areas_update,consumers):
                 scalefactor = 0
             elif len(loads_this_area)==0:
                 # There are no loads in this area
-                print "  WARNING There are no loads to scale in area ",co
+                print("  WARNING There are no loads to scale in area ",co)
             elif demand_avg_MW_before==0:
-                print "  WARNING Zero demand, cannot scale up in area ",co
+                print("  WARNING Zero demand, cannot scale up in area ",co)
                 scalefactor = 1
             else:
                 scalefactor = demand_avg_MW / float(demand_avg_MW_before)
@@ -362,7 +370,7 @@ def scaleDemand(demand,datarow,areas_update,consumers):
             for i in consumers[co]:
                 demand[i] = demand[i]*scalefactor
             
-    print "  Total average demand after = ", sum(demand)
+    print("  Total average demand after = ", sum(demand))
     return demand
 
 
@@ -393,9 +401,11 @@ def scaleGencap(gencap,datarow,areas_update,generators,gentype):
             if gencap_MW_new==0:
                 scalefactor = 0
             elif len(gencap_this_area)==0:
-                print "  WARNING No generators of type %s in area %s. Cannot scale." %(gentype,co)
+                print("  WARNING No generators of type %s in area %s."+
+                        " Cannot scale." %(gentype,co))
             elif gencap_MW_before==0:
-                print "  WARNING Zero capacity for generator type %s in area %s. Cannot scale." %(gentype,co)
+                print("  WARNING Zero capacity for generator type %s in "+
+                        "area %s. Cannot scale." %(gentype,co))
                 scalefactor = 1
             else:
                 scalefactor = gencap_MW_new / float(gencap_MW_before)
@@ -423,9 +433,11 @@ def scaleStoragecap(storagecap,datarow,areas_update,generators,gentype):
             if storagecap_MW_new==0:
                 scalefactor = 0
             elif len(storagecap_this_area)==0:
-                print "  WARNING No generators of type %s in area %s. Cannot scale." %(gentype,co)
+                print("  WARNING No generators of type %s in area %s."+
+                        " Cannot scale." %(gentype,co))
             elif storagecap_MW_before==0:
-                print "  WARNING Zero capacity for generator type %s in area %s. Cannot scale." %(gentype,co)
+                print("  WARNING Zero capacity for generator type %s "+
+                        "in area %s. Cannot scale." %(gentype,co))
                 scalefactor = 1
             else:
                 scalefactor = storagecap_MW_new / storagecap_MW_before

@@ -23,10 +23,16 @@ Module containing PowerGAMA LpProblem class
 import pulp
 from numpy import pi, asarray, vstack, zeros, random
 from datetime import datetime as datetime
-import constants as const
+from . import constants as const
 import scipy.sparse
-import itertools
 import sys
+#needed for code to work both for python 2.7 and 3:
+try:
+    from itertools import izip as zip
+except ImportError: # will be 3.x series
+    pass
+
+
 
 class LpProblem(object):
     '''
@@ -113,9 +119,9 @@ class LpProblem(object):
         self._idx_load = [[]]*self.num_nodes
         
         # Compute matrices used in power flow equaions        
-        print "Computing B and DA matrices..."        
+        print("Computing B and DA matrices...")        
         self._Bbus, self._DA = grid.computePowerFlowMatrices(const.baseZ)
-        print "Creating B.theta and DA.theta expressions"
+        print("Creating B.theta and DA.theta expressions")
 
          # Matrix * vector product -- Using coo_matrix
         # (http://stackoverflow.com/questions/4319014/
@@ -123,12 +129,12 @@ class LpProblem(object):
         
         cx = scipy.sparse.coo_matrix(self._DA)
         self._DAtheta = [0]*cx.shape[0]
-        for i,j,v in itertools.izip(cx.row, cx.col, cx.data):
+        for i,j,v in zip(cx.row, cx.col, cx.data):
             self._DAtheta[i] += v * self._var_angle[j]
 
         cx = scipy.sparse.coo_matrix(self._Bbus)
         _Btheta = [0]*cx.shape[0]
-        for i,j,v in itertools.izip(cx.row, cx.col, cx.data):
+        for i,j,v in zip(cx.row, cx.col, cx.data):
             _Btheta[i] += v * self._var_angle[j]
                 
         # Variables upper and lower bounds (voltage angle and )        
@@ -156,7 +162,7 @@ class LpProblem(object):
                 / grid.consumer.flex_on_off[idx_cons]
                 )
  
-        print "Defining constraints..."
+        print("Defining constraints...")
         idxBranchesConstr = self._grid.getIdxBranchesWithFlowConstraints()
         idxDcBranchesConstr = self._grid.getIdxDcBranchesWithFlowConstraints()
 
@@ -203,7 +209,7 @@ class LpProblem(object):
         
         # Equations giving the branch power flow from the nodal phase angles
         for idx_branch in range_branches:
-            Pbr = self._var_branchflow[idx_branch]/const.baseMVA
+            Pbr = self._var_branchflow[idx_branch]*(1/const.baseMVA)
             pfb_name = "powerflow_vs_angle_eqn_%d"%(idx_branch)
             self.prob.addConstraint(Pbr==self._DAtheta[idx_branch],name=pfb_name)
 
@@ -215,7 +221,7 @@ class LpProblem(object):
         self._setLpGeneratorMaxMin(timestep)
         
         # Power flow equations (constraints)
-        print "Power flow equations..."
+        print("Power flow equations...")
 
         self._pfPload = [[]]*self.num_nodes
         self._pfPgen = [[]]*self.num_nodes
@@ -246,20 +252,20 @@ class LpProblem(object):
                       
             # Constant part of power flow equations            
             self._pfPgen[idx_node] = [
-                self._var_generation[i]/const.baseMVA for i in idx_gen]
+                self._var_generation[i]*(1/const.baseMVA) for i in idx_gen]
             self._pfPpump[idx_node] = [
                 -self._var_pumping[
-                    self._idx_generatorsWithPumping.index(i)]/const.baseMVA 
+                    self._idx_generatorsWithPumping.index(i)]*(1/const.baseMVA) 
                 for i in idx_gen_pump]
             self._pfPflexload[idx_node] = [
                 -self._var_flexload[
-                    self._idx_consumersWithFlexLoad.index(i)]/const.baseMVA 
+                    self._idx_consumersWithFlexLoad.index(i)]*(1/const.baseMVA) 
                 for i in idx_flexload]
             self._pfPshed[idx_node] = ( 
-                self._var_loadshedding[idx_node]/const.baseMVA)
+                self._var_loadshedding[idx_node]*(1/const.baseMVA))
             self._pfPdc[idx_node] = (
-                 [  self._var_dc[i]/const.baseMVA for i in idx_dc_to]
-                +[ -self._var_dc[i]/const.baseMVA for i in idx_dc_from])
+                 [  self._var_dc[i]*(1/const.baseMVA) for i in idx_dc_to]
+                +[ -self._var_dc[i]*(1/const.baseMVA) for i in idx_dc_from])
             self._pfPflow[idx_node] = -_Btheta[idx_node]
             
             # this value will be updated later, so using zero for now:            
@@ -283,7 +289,7 @@ class LpProblem(object):
             
 
         
-        print "Objective function..."
+        print("Objective function...")
 
         print("  Using fixed load shedding cost of %f. One per node" 
             % const.loadshedcost)       
@@ -302,10 +308,10 @@ class LpProblem(object):
         '''
         solver = pulp.solvers.COIN_CMD(path=cbcpath)
         if solver.available():
-            print ":) Found solver here: ", solver.available()
+            print (":) Found solver here: ", solver.available())
             self.solver = solver
         else:
-            print ":( Could not find solver. Returning."            
+            print(":( Could not find solver. Returning.")     
             self.solver = None
             raise Exception("Could not find LP solver")
         return
@@ -440,14 +446,14 @@ class LpProblem(object):
             max(0,(self._marginalcosts[genpumpidx[i]]
             -self._grid.generator.pump_deadband[genpumpidx[i]])) 
             * (-self._var_pumping[i]) 
-            for i in xrange(len(genpumpidx))
+            for i in range(len(genpumpidx))
             ]  )
             
         flexloadidx = self._idx_consumersWithFlexLoad
         probObjective_flexload = pulp.lpSum([
             -self._marginalcosts_flexload[flexloadidx[i]]
             * self._var_flexload[i]
-            for i in xrange(len(flexloadidx))
+            for i in range(len(flexloadidx))
             ])
         
         self.prob.setObjective(probObjective_gen
@@ -575,10 +581,10 @@ class LpProblem(object):
         #if results == None:
         #    results = Results(self._grid)      
             
-        print "Solving..."
+        print("Solving...")
         #prob0 = pulp.LpProblem("Grid Market Power - base", pulp.LpMinimize)
         numTimesteps = len(self._grid.timerange)
-        for timestep in xrange(numTimesteps):
+        for timestep in range(numTimesteps):
             # update LP problem (inflow, storage, profiles)                     
             self._updateLpProblem(timestep)
           

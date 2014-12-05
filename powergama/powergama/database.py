@@ -27,12 +27,12 @@ class Database(object):
             data.node.area[i],
             data.node.lat[i],
             data.node.lon[i]
-            ) for i in xrange(len(data.node.name)))
+            ) for i in range(len(data.node.name)))
         generators = tuple((
             i,            
             data.generator.node[i],
             data.generator.gentype[i],
-            ) for i in xrange(len(data.generator.node)))
+            ) for i in range(len(data.generator.node)))
         br_from = data.branch.node_fromIdx(data.node)
         br_to = data.branch.node_toIdx(data.node)        
         branches = tuple((
@@ -41,7 +41,7 @@ class Database(object):
             br_to[i],
             data.branch.capacity[i],
             data.branch.reactance[i]
-            ) for i in xrange(len(data.branch.capacity)))
+            ) for i in range(len(data.branch.capacity)))
         
         if os.path.isfile(self.filename):
             #delete existing file
@@ -170,35 +170,35 @@ class Database(object):
             cur.executemany("INSERT INTO Res_Nodes VALUES(?,?,?,?,?)",
                     tuple((timestep,i,node_angle[i],
                           sensitivity_node_power[i],loadshed_power[i]) 
-                    for i in xrange(len(sensitivity_node_power))))
+                    for i in range(len(sensitivity_node_power))))
             cur.executemany("INSERT INTO Res_Branches VALUES(?,?,?)",
                     tuple((timestep,i,branch_flow[i]) 
-                    for i in xrange(len(branch_flow))))
+                    for i in range(len(branch_flow))))
             cur.executemany("INSERT INTO Res_BranchesSens VALUES(?,?,?)",
                     tuple((timestep,idx_branchsens[i],
                            sensitivity_branch_capacity[i]) 
-                    for i in xrange(len(sensitivity_branch_capacity))))
+                    for i in range(len(sensitivity_branch_capacity))))
             cur.executemany("INSERT INTO Res_Dcbranches VALUES(?,?,?,?)",
                     tuple((timestep,i,dcbranch_flow[i],
                           sensitivity_dcbranch_capacity[i]) 
-                    for i in xrange(len(dcbranch_flow))))
+                    for i in range(len(dcbranch_flow))))
             cur.executemany("INSERT INTO Res_Generators VALUES(?,?,?,?)",
                     tuple((timestep,i,generator_power[i],inflow_spilled[i]) 
-                    for i in xrange(len(generator_power))))
+                    for i in range(len(generator_power))))
             cur.executemany("INSERT INTO Res_Storage VALUES(?,?,?,?)",
                     tuple((timestep,idx_storagegen[i],
                            storage[i],marginalprice[i]) 
-                    for i in xrange(len(storage))))
+                    for i in range(len(storage))))
             cur.executemany("INSERT INTO Res_Pumping VALUES(?,?,?)",
                     tuple((timestep,idx_pumpgen[i],
                            generator_pumped[i],) 
-                    for i in xrange(len(generator_pumped))))
+                    for i in range(len(generator_pumped))))
             cur.executemany("INSERT INTO Res_FlexibleLoad VALUES(?,?,?,?,?)",
                     tuple((timestep,idx_flexload[i],
                            flexload_power[i],
                            flexload_storage[i],
                            flexload_storagevalue[i]) 
-                    for i in xrange(len(flexload_power))))
+                    for i in range(len(flexload_power))))
       
 
 ########## Get grid data
@@ -407,7 +407,7 @@ class Database(object):
         values_abs = [0]*numBranches
         i1=0
         i2=0
-        for i in xrange(numBranches):
+        for i in range(numBranches):
             if i1<len(rows1) and rows1[i1][0] == i:
                 values_pos[i] = rows1[i1][1]
                 i1 = i1+1
@@ -595,7 +595,7 @@ class Database(object):
             cur = con.cursor()
             cur.execute("SELECT timestep,SUM(output) FROM Res_Generators "
                 +"WHERE timestep>=? AND timestep<? AND indx IN ("
-                +"".join(["?," for i in xrange(len(generatorindx)-1)])+"?"                
+                +"".join(["?," for i in range(len(generatorindx)-1)])+"?"                
                 +")"
                 +" GROUP BY timestep ORDER BY timestep",
                 (timeMaxMin[0],timeMaxMin[-1])+tuple(generatorindx))

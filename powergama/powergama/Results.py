@@ -48,7 +48,7 @@ class Results(object):
             # check that the length of the specified timerange matches the 
             # database
             timerange_db = self.db.getTimerange()
-            if timerange_db != self.timerange:
+            if timerange_db != list(self.timerange):
                 print("Database time range = [%d,%d]\n" %
                       (timerange_db[0],timerange_db[-1]))
                 raise Exception('Database time range mismatch')
@@ -197,7 +197,7 @@ class Results(object):
         dcbr_from = self.grid.dcbranch.node_fromIdx(self.grid.node)
         dcbr_to = self.grid.dcbranch.node_toIdx(self.grid.node)
         energybalance = []
-        for n in xrange(len(self.grid.node.name)):
+        for n in range(len(self.grid.node.name)):
             idx_from = [ i for i,x in enumerate(br_from) if x==n]
             idx_to = [ i for i,x in enumerate(br_to) if x==n]
             dc_idx_from = [ i for i,x in enumerate(dcbr_from) if x==n]
@@ -252,7 +252,7 @@ class Results(object):
 
         cap =self.grid.branch.capacity
         avgflow = self.getAverageBranchFlows(timeMaxMin)[2]
-        utilisation = [avgflow[i] / cap[i] for i in xrange(len(cap))] 
+        utilisation = [avgflow[i] / cap[i] for i in range(len(cap))] 
         utilisation = np.asarray(utilisation)
         return utilisation
             
@@ -302,7 +302,7 @@ class Results(object):
         # TODO plot storage price for storage in the same node?
         if timeMaxMin is None:
             timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
-        timerange = xrange(timeMaxMin[0],timeMaxMin[-1]) 
+        timerange = range(timeMaxMin[0],timeMaxMin[-1]) 
 
         if nodeIndx  in self.db.getGridNodeIndices():
             nodalprice = self.db.getResultNodalPrice(
@@ -313,7 +313,7 @@ class Results(object):
                 %(nodeIndx))
             plt.show()
         else:
-            print "Node not found"
+            print("Node not found")
         return
         
         
@@ -330,7 +330,7 @@ class Results(object):
 
         if timeMaxMin is None:
             timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
-        timerange = xrange(timeMaxMin[0],timeMaxMin[-1]) 
+        timerange = range(timeMaxMin[0],timeMaxMin[-1]) 
 
         if generatorIndx  in self.storage_idx_generators:
             storagefilling = self.db.getResultStorageFilling(
@@ -341,8 +341,8 @@ class Results(object):
                 %(generatorIndx))
             plt.show()
         else:
-            print "These are the generators with storage:"
-            print self.storage_idx_generators
+            print("These are the generators with storage:")
+            print(self.storage_idx_generators)
         return
         
     
@@ -493,7 +493,7 @@ class Results(object):
             if len(idx_storage) > 0:
                 mystor = [sum([sum(
                     self.db.getResultStorageFilling(idx_storage[i][1],[t,t+1]))
-                    for i in xrange(len(idx_storage))])
+                    for i in range(len(idx_storage))])
                     for t in timerange]
                 mycap = sum( [ cap[idx_storage[i][1]]
                             for i in range(len(idx_storage))])
@@ -620,8 +620,8 @@ class Results(object):
                self.grid.generator.node[genindx]))
             plt.show()
         else:
-            print "These are the generators with storage:"
-            print self.storage_idx_generators
+            print("These are the generators with storage:")
+            print(self.storage_idx_generators)
         return
         
             
@@ -655,8 +655,8 @@ class Results(object):
                self.grid.consumer.node[consumerindx]))
             plt.show()
         else:
-            print "These are the consumers with flexible load:"
-            print self.flex_idx_consumers
+            print("These are the consumers with flexible load:")
+            print(self.flex_idx_consumers)
         return
 
 
@@ -866,7 +866,7 @@ class Results(object):
             
             # #TODO: Er dette nødvendig lenger, Harald?
             # #nodes with NAN nodal price plotted in gray:
-            # for i in xrange(len(avgprice)):
+            # for i in range(len(avgprice)):
                 # if np.isnan(avgprice[i]):
                     # m.scatter(x[i],y[i],c='dimgray',
                               # zorder=2,s=dotsize)
@@ -990,8 +990,8 @@ class Results(object):
         #Returns total production [MWh] in the timerange 'timeMaxMin' for
         #all generators of 'generatorType' in 'area'
         
-        print "Looking for generators of type " + str(generatorType) + ", in " + str(area)
-        print "Number of generator to run through: " + str(self.grid.generator.numGenerators())
+        print("Looking for generators of type " + str(generatorType) + ", in " + str(area))
+        print("Number of generator to run through: " + str(self.grid.generator.numGenerators()))
         totalProduction = 0
         
         
@@ -1003,7 +1003,8 @@ class Results(object):
             #print str(genNumber) + ", " + genName + ", " + genNode + ", " + genType + ", " + genArea
             if (genType == generatorType) and (genArea == area):
                 #print "\tGenerator is of right type and area. Adding production"                
-                genProd = sum(self.db.getResultGeneratorPower(genNumber, timeMaxMin))
+                genProd = sum(self.db.getResultGeneratorPower(genNumber, 
+                                                              timeMaxMin))
                 totalProduction += genProd
                 #print "\tGenerator production = " + str(genProd)
         return totalProduction
@@ -1014,13 +1015,16 @@ class Results(object):
         totGenNumbers = self.grid.generator.numGenerators()
         totalProduction = 0
         for genNumber in range(0, totGenNumbers):
-            genProd = sum(self.db.getResultGeneratorPower(genNumber, timeMaxMin))
-            print str(genProd)
+            genProd = sum(self.db.getResultGeneratorPower(genNumber, 
+                                                          timeMaxMin))
+            print(str(genProd))
             totalProduction += genProd
-            print "Progression: " + str(genNumber+1) + " of " + str(totGenNumbers)
+            print("Progression: " + str(genNumber+1) + " of " 
+                    + str(totGenNumbers))
         return totalProduction
     
-    def productionOverview(self, areas, types, timeMaxMin, TimeUnitCorrectionFactor):
+    def productionOverview(self, areas, types, timeMaxMin, 
+                           TimeUnitCorrectionFactor):
         #Return a matrix (numpy matrix, remember to include numpy) with productionOverview
         #This function is manly used as the calculation part of the writeProductionOverview
         #Contains just numbers (production[MWH] for each type(columns) and area(rows)), not headers
@@ -1031,12 +1035,14 @@ class Results(object):
         for areaIndex in range(0, numAreas):
             for typeIndex in range(0, numTypes):
                 prod = self.getAreaTypeProduction(areas[areaIndex], types[typeIndex], timeMaxMin)
-                print "Total produced " + types[typeIndex] + " energy for " + areas[areaIndex] + " equals: " + str(prod)
+                print("Total produced " + types[typeIndex] + " energy for " 
+                        + areas[areaIndex] + " equals: " + str(prod))
                 resultMatrix[areaIndex][typeIndex] = prod*TimeUnitCorrectionFactor
         return resultMatrix 
         
 
-    def writeProductionOverview(self, areas, types, filename=None, timeMaxMin=None, TimeUnitCorrectionFactor=1):
+    def writeProductionOverview(self, areas, types, filename=None, 
+                                timeMaxMin=None, TimeUnitCorrectionFactor=1):
         #Write an .csv overview of the production[MWh] in timespan 'timeMaxMin' with the different areas and types as headers.
         #The vectors 'areas' and 'types' becomes headers (column- and row headers), but the different elements
         #of 'types' and 'areas' are also the key words in the search function 'getAreaTypeProduction'.
@@ -1064,12 +1070,13 @@ class Results(object):
             title=""
             for j in types:
                 title = title + "\t" + j
-            print "Area" + title
+            print("Area" + title)
             for i in range(0,numAreas):
-                print areas[i] + '\t%s' % '\t'.join(map(str,prodMat[i]))
+                print(areas[i] + '\t%s' % '\t'.join(map(str,prodMat[i])))
                 
     def getAverageInterareaBranchFlow(self, filename=None, timeMaxMin=None):
-        ''' Calculate average flow in each direction and total flow for inter-area branches. Requires sqlite version newer than 3.6
+        ''' Calculate average flow in each direction and total flow for 
+        inter-area branches. Requires sqlite version newer than 3.6
        
         Parameters
         ----------
@@ -1091,8 +1098,8 @@ class Results(object):
         version = major + minor / 10.0
         # print version
         if version < 3.7 :
-            print 'current SQLite version: ', self.db.sqlite_version
-            print 'getAverageInterareaBranchFlow() requires 3.7.x or newer'
+            print('current SQLite version: ', self.db.sqlite_version)
+            print('getAverageInterareaBranchFlow() requires 3.7.x or newer')
             
         if timeMaxMin is None:
             timeMaxMin = [self.timerange[0],self.timerange[-1] + 1]
@@ -1100,7 +1107,8 @@ class Results(object):
         results = self.db.getAverageInterareaBranchFlow(timeMaxMin)
         
         if filename is not None:
-            headers = ('branch','fromArea','toArea','average negative flow','average positive flow','average flow')
+            headers = ('branch','fromArea','toArea','average negative flow',
+                       'average positive flow','average flow')
             with open(filename, "wb") as f:
                 writer = csv.writer(f)
                 writer.writerow(headers)
@@ -1108,7 +1116,7 @@ class Results(object):
                     writer.writerow(row) 
         else:
             for x in results:
-                print x
+                print(x)
             
         return results
         

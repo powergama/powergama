@@ -6,8 +6,17 @@ Grid data and time-dependent profiles
 '''
 
 import csv
+import sys
 import numpy
 from scipy.sparse import csr_matrix as sparse
+
+def openfile(file,rw=''):
+    '''open file in a manner compatible with both Python 2 and Python 3'''
+    if sys.version_info >= (3,0,0):
+        f = open(file, rw, newline='', encoding="utf-8")
+    else:
+        f = open(file, rw+'b')
+    return f
 
 
 def parseId(num):
@@ -44,7 +53,7 @@ class _Nodes(object):
         self.lon = []
     
     def readFromFile(self,filename):
-        with open(filename,'rb') as csvfile:
+        with openfile(filename,'r') as csvfile:
             datareader = csv.DictReader(csvfile,delimiter=',',quoting=_QUOTINGTYPE)         
             for row in datareader:
                 self.name.append(parseId(row["id"]))
@@ -54,10 +63,10 @@ class _Nodes(object):
         return
         
     def writeToFile(self,filename):
-        print "Saving node data to file",filename
+        print ("Saving node data to file",filename)
         
         headers = ["id","area","lat","lon"]
-        with open(filename,'wb') as csvfile:
+        with openfile(filename,'w') as csvfile:
             datawriter = csv.DictWriter(csvfile, delimiter=',',fieldnames=headers,\
                             quotechar='"', quoting=_QUOTINGTYPE)
                         
@@ -83,7 +92,7 @@ class _Branches(object):
         self._susceptance = []
     
     def readFromFile(self,filename):
-        with open(filename,'rb') as csvfile:
+        with openfile(filename,'r') as csvfile:
             datareader = csv.DictReader(csvfile,delimiter=',',quoting=_QUOTINGTYPE)           
             for row in datareader:
                 self.node_from.append(parseId(row["from"]))
@@ -98,10 +107,10 @@ class _Branches(object):
         return
     
     def writeToFile(self,filename):
-        print "Saving branch data to file",filename
+        print("Saving branch data to file",filename)
         
         headers = ["from","to","reactance","capacity"]
-        with open(filename,'wb') as csvfile:
+        with openfile(filename,'w') as csvfile:
             datawriter = csv.DictWriter(csvfile, delimiter=',',\
                                 quotechar='"', quoting=_QUOTINGTYPE,\
                                 fieldnames=headers)
@@ -136,7 +145,7 @@ class _DcBranches(object):
         self.capacity = []
     
     def readFromFile(self,filename):
-        with open(filename,'rb') as csvfile:
+        with openfile(filename,'r') as csvfile:
             datareader = csv.DictReader(csvfile,delimiter=',',quoting=_QUOTINGTYPE)           
             for row in datareader:
                 self.node_from.append(parseId(row["from"]))
@@ -145,10 +154,10 @@ class _DcBranches(object):
         return
     
     def writeToFile(self,filename):
-        print "Saving DC branch data to file",filename
+        print("Saving DC branch data to file",filename)
         
         headers = ["from","to","capacity"]
-        with open(filename,'wb') as csvfile:
+        with openfile(filename,'w') as csvfile:
             datawriter = csv.DictWriter(csvfile, delimiter=',',\
                                 quotechar='"', quoting=_QUOTINGTYPE,\
                                 fieldnames=headers)
@@ -200,7 +209,7 @@ class _Generators(object):
     #    return [nodes.name.index(self.node[k]) for k in range(self.numGenerators())]
 
     def readFromFile(self,filename):
-        with open(filename,'rb') as csvfile:
+        with openfile(filename,'r') as csvfile:
             datareader = csv.DictReader(csvfile,delimiter=',',
                                         quoting=_QUOTINGTYPE)
             for row in datareader:
@@ -242,7 +251,7 @@ class _Generators(object):
         return
         
     def writeToFile(self,filename):
-        print "Saving generator data to file",filename
+        print("Saving generator data to file",filename)
         
         headers = ["desc","type","node",
                     "pmax","pmin",
@@ -253,7 +262,7 @@ class _Generators(object):
                     "storval_filling_ref",
                     "storval_time_ref",
                     "pump_cap","pump_efficiency","pump_deadband"]
-        with open(filename,'wb') as csvfile:
+        with openfile(filename,'w') as csvfile:
             datawriter = csv.writer(csvfile, delimiter=',',\
                                 quotechar='"', quoting=_QUOTINGTYPE)
             datawriter.writerow(headers)
@@ -297,7 +306,7 @@ class _Consumers(object):
         self.flex_storagevalue_profile_filling = []
     
     def readFromFile(self,filename):
-        with open(filename,'rb') as csvfile:
+        with openfile(filename,'r') as csvfile:
            datareader = csv.DictReader(csvfile,delimiter=',',
                                        quoting=_QUOTINGTYPE)
            for row in datareader:
@@ -325,13 +334,13 @@ class _Consumers(object):
         return
 
     def writeToFile(self,filename):
-        print "Saving consumer data to file",filename
+        print("Saving consumer data to file",filename)
         
         headers = ["node","demand_avg","demand_ref",
                    "flex_fraction","flex_on_off",
                    "flex_basevalue","flex_storage",
                    "flex_storval_filling"]
-        with open(filename,'wb') as csvfile:
+        with openfile(filename,'w') as csvfile:
             datawriter = csv.writer(csvfile, delimiter=',',\
                                 quotechar='"', quoting=_QUOTINGTYPE)
             datawriter.writerow(headers)
@@ -423,7 +432,7 @@ class GridData(object):
 
     def _readProfileFromFile(self,filename,timerange):          
         profiles={}      
-        with open(filename,'rb') as csvfile:
+        with openfile(filename,'r') as csvfile:
             #values = numpy.loadtxt(csvfile,delimiter=",",skiprows=1)
             
             datareader = csv.DictReader(csvfile,delimiter=',',
@@ -443,7 +452,7 @@ class GridData(object):
 
 
     def _readStoragevaluesFromFile(self,filename):          
-        with open(filename,'rb') as csvfile:
+        with openfile(filename,'r') as csvfile:
             #values = numpy.loadtxt(csvfile,delimiter=",",skiprows=1)
             datareader = csv.DictReader(csvfile,delimiter=',',
                                         quoting=_QUOTINGTYPE)
