@@ -327,10 +327,18 @@ class LpProblem(object):
             P_inflow =  (capacity * inflow_factor 
                 * self._grid.inflowProfiles[inflow_profile][timestep])
             self._var_generation[i].lowBound = min(
-                P_inflow+P_storage[i],P_min[i])
-            self._var_generation[i].upBound = min(
-                P_inflow+P_storage[i],P_max[i])
-            #print " gen=%d: P_inflow=%g, P_storage=%g, Pmin=%g, Pmax=%g" %(i,P_inflow,P_storage[i],P_min[i],P_max[i])
+                P_inflow+P_storage[i],P_min[i])            
+            if P_storage[i]==0:
+                '''
+                Don't let P_max limit the output (e.g. solar PV)
+                This won't affect fuel based generators with zero storage,
+                since these should have inflow=p_max in any case
+                '''
+                self._var_generation[i].upBound = P_inflow
+            else:
+                self._var_generation[i].upBound = min(P_inflow+P_storage[i],
+                                                      P_max[i])
+
         return
 
 
