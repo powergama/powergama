@@ -63,7 +63,7 @@ class _Nodes(object):
         return
         
     def writeToFile(self,filename):
-        print ("Saving node data to file",filename)
+        print ("Saving node data to file "+str(filename))
         
         headers = ["id","area","lat","lon"]
         with openfile(filename,'w') as csvfile:
@@ -107,7 +107,7 @@ class _Branches(object):
         return
     
     def writeToFile(self,filename):
-        print("Saving branch data to file",filename)
+        print("Saving branch data to file "+str(filename))
         
         headers = ["from","to","reactance","capacity"]
         with openfile(filename,'w') as csvfile:
@@ -154,7 +154,7 @@ class _DcBranches(object):
         return
     
     def writeToFile(self,filename):
-        print("Saving DC branch data to file",filename)
+        print("Saving DC branch data to file "+str(filename))
         
         headers = ["from","to","capacity"]
         with openfile(filename,'w') as csvfile:
@@ -251,7 +251,7 @@ class _Generators(object):
         return
         
     def writeToFile(self,filename):
-        print("Saving generator data to file",filename)
+        print("Saving generator data to file "+str(filename))
         
         headers = ["desc","type","node",
                     "pmax","pmin",
@@ -334,7 +334,7 @@ class _Consumers(object):
         return
 
     def writeToFile(self,filename):
-        print("Saving consumer data to file",filename)
+        print("Saving consumer data to file "+str(filename))
         
         headers = ["node","demand_avg","demand_ref",
                    "flex_fraction","flex_on_off",
