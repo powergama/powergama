@@ -24,17 +24,20 @@ def parseId(num):
     
     # This method is used when reading input data in order to not interpret 
     # an integer node id o e.g. 100 as "100.0", but always as "100"
-    try:
-        d = int(num)
-    except ValueError:
-        d=num
-    return str(d)
+    if num is None:
+        return ''
+    else:
+        try:
+            d = int(num)
+        except ValueError:
+            d=num
+        return str(d)
 
 def parseNum(num,default=None):
     '''parse number and return a float'''
     if default is None:
         return float(num)
-    elif num=='':
+    elif num=='' or num is None:
         return default
     else:
         return float(num)
@@ -666,6 +669,16 @@ class GridData(object):
                 generators[area_name] = {gtype:[idx_gen]}
         return generators
 
+    def getGeneratorsPerType(self): 
+        '''Returns dictionary with indices of generators per type'''
+        generators = {}
+        for idx_gen in range(self.generator.numGenerators()):
+            gtype = self.generator.gentype[idx_gen]
+            if generators.has_key(gtype):
+                generators[gtype].append(idx_gen)
+            else:
+                generators[gtype] = [idx_gen]
+        return generators
   
 #data.writeGridDataToFiles("test")
   

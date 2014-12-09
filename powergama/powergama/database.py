@@ -658,5 +658,19 @@ class Database(object):
             rows = cur.fetchall()
             values = [row[0] for row in rows]        
         return values
+
         
-           
+    def getResultLoadheddingInArea(self,area,timeMaxMin):
+        '''Aggregated loadshedding timeseries for specified area'''
+        con = db.connect(self.filename)
+        with con:        
+            cur = con.cursor()
+            cur.execute("SELECT loadshed FROM Res_Nodes "
+                +"WHERE timestep>=? AND timestep<? AND indx IN "
+                +" (SELECT id FROM Grid_Nodes WHERE area IN (?))"
+                +" ORDER BY timestep",
+                (timeMaxMin[0],timeMaxMin[-1],area))
+            rows = cur.fetchall()
+            values = [row[0] for row in rows]        
+        return values
+        

@@ -176,6 +176,16 @@ class Results(object):
         avgprices = np.asarray(avgprices,dtype=float)
         return avgprices
        
+    def getLoadheddingInArea(self,area,timeMaxMin=None):
+        if timeMaxMin is None:
+            timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
+
+        loadshed = self.db.getResultLoadheddingInArea(area,timeMaxMin)
+        # use asarray to convert None to nan
+        loadshed = np.asarray(loadshed,dtype=float)
+        return loadshed
+
+
     def getAverageEnergyBalance(self,timeMaxMin=None):
         '''
         Average energy balance (generation minus demand) over a time period
@@ -511,8 +521,21 @@ class Results(object):
 
         return
         
+    
+    def gentypes_ordered_by_fuelcost(self,area):
+        generators = self.grid.getGeneratorsPerType()
+        gentypes = generators.keys()
+        fuelcosts = []
+        for k in gentypes:
+            gen_this_type = generators[k]
+            fuelcosts.append(np.mean([self.grid.generator.fuelcost[i] 
+                                     for i in gen_this_type]) )
+        sorted_list = [x for (y,x) in 
+                       sorted(zip(fuelcosts,gentypes))]    
+        return sorted_list
         
-    def plotGenerationPerArea(self,area,timeMaxMin=None):
+        
+    def plotGenerationPerArea(self,area,timeMaxMin=None,fill=False):
         '''Show generation per area 
         
         Parameters
@@ -520,24 +543,48 @@ class Results(object):
         area (str)
         timeMaxMin (list) (default = None)
             [min, max] - lower and upper time interval
+        fill (Boolean) - whether use filled plot
         '''
         
         if timeMaxMin is None:
             timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
         timerange = range(timeMaxMin[0],timeMaxMin[-1])
-        
+        fillfrom=[0]*len(timerange)
+        count = 0
         plt.figure()
+        ax = plt.subplot(111)
         generators = self.grid.getGeneratorsPerAreaAndType()
-        for gentype in generators[area].keys():
-            idxGen = generators[area][gentype]
-            sumGenAreaType = self.db.getResultGeneratorPower(
-                idxGen,timeMaxMin)
-            plt.plot(timerange,sumGenAreaType)
-            
-        plt.legend(generators[area].keys() , loc="upper right")
+        gentypes_ordered = self.gentypes_ordered_by_fuelcost(area)
+        numCurves = len(gentypes_ordered)+1
+        colours = cm.gist_rainbow(np.linspace(0, 1, numCurves))
+        for gentype in gentypes_ordered:
+            if generators[area].has_key(gentype):
+                idxGen = generators[area][gentype]
+                sumGenAreaType = self.db.getResultGeneratorPower(
+                    idxGen,timeMaxMin)
+                if fill:
+                    aggregated = [x+y for x,y in zip(sumGenAreaType,fillfrom)]
+                    ax.fill_between(timerange,y1=aggregated,
+                                     y2=fillfrom,
+                                     facecolor=colours[count])
+                    #add this plot to get the legend right
+                    ax.plot([],[],color=colours[count],linewidth=10,
+                            label=gentype)
+                    fillfrom = aggregated
+                else:
+                    ax.plot(timerange,sumGenAreaType,
+                             color=colours[count],label=gentype)
+            else:
+                # in order to get the legend right
+                ax.plot([],[],color=colours[count],label=gentype) 
+            count=count+1
+        #plt.legend()
+        handles, labels = ax.get_legend_handles_labels()
+        plt.legend(reversed(handles), reversed(labels), loc="upper right")
+                   #fancybox=True, framealpha=0.5)
         plt.title("Generation in %s"%(area))
         plt.show()
-        return
+        return colours
 
 
     def plotDemandPerArea(self,areas,timeMaxMin=None):

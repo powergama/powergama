@@ -423,11 +423,11 @@ def scaleGencap(gencap,datarow,areas_update,generators,gentype):
             if gencap_MW_new==0:
                 scalefactor = 0
             elif len(gencap_this_area)==0:
-                print("  WARNING No generators of type %s in area %s."+
-                        " Cannot scale." %(gentype,co))
+                print(("  WARNING No generators of type {0} in area {1}."+
+                        " Cannot scale.").format(gentype,co))
             elif gencap_MW_before==0:
-                print("  WARNING Zero capacity for generator type %s in "+
-                        "area %s. Cannot scale." %(gentype,co))
+                print(("  WARNING Zero capacity for generator type {0:1s} in "+
+                        "area {1:1s}. Cannot scale.").format(gentype,co))
                 scalefactor = 1
             else:
                 scalefactor = gencap_MW_new / float(gencap_MW_before)
