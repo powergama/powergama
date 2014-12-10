@@ -561,7 +561,7 @@ class Results(object):
         numCurves = len(gentypes_ordered)+1
         colours = cm.gist_rainbow(np.linspace(0, 1, numCurves))
         for gentype in gentypes_ordered:
-            if generators[area].has_key(gentype):
+            if gentype in generators[area]:
                 idxGen = generators[area][gentype]
                 sumGenAreaType = self.db.getResultGeneratorPower(
                     idxGen,timeMaxMin)
@@ -589,7 +589,7 @@ class Results(object):
                    #fancybox=True, framealpha=0.5)
         plt.title("Generation in %s"%(area))
         plt.show()
-        return colours
+        return
 
 
     def plotDemandPerArea(self,areas,timeMaxMin=None):

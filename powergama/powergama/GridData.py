@@ -646,7 +646,7 @@ class GridData(object):
             node_name = self.consumer.node[idx_load]
             node_idx = self.node.name.index(node_name)
             area_name = self.node.area[node_idx]
-            if consumers.has_key(area_name):
+            if area_name in consumers:
                 consumers[area_name].append(idx_load)
             else:
                 consumers[area_name] =  [idx_load]   
@@ -660,8 +660,8 @@ class GridData(object):
             node_name = self.generator.node[idx_gen]
             node_idx = self.node.name.index(node_name)
             area_name = self.node.area[node_idx]
-            if generators.has_key(area_name):
-                if generators[area_name].has_key(gtype):
+            if area_name in generators:
+                if gtype in generators[area_name]:
                     generators[area_name][gtype].append(idx_gen)
                 else:
                     generators[area_name][gtype] = [idx_gen]
@@ -674,7 +674,7 @@ class GridData(object):
         generators = {}
         for idx_gen in range(self.generator.numGenerators()):
             gtype = self.generator.gentype[idx_gen]
-            if generators.has_key(gtype):
+            if gtype in generators:
                 generators[gtype].append(idx_gen)
             else:
                 generators[gtype] = [idx_gen]
