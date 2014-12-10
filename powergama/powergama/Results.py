@@ -535,7 +535,8 @@ class Results(object):
         return sorted_list
         
         
-    def plotGenerationPerArea(self,area,timeMaxMin=None,fill=False):
+    def plotGenerationPerArea(self,area,timeMaxMin=None,fill=False,
+                              reversed_order=False):
         '''Show generation per area 
         
         Parameters
@@ -555,6 +556,8 @@ class Results(object):
         ax = plt.subplot(111)
         generators = self.grid.getGeneratorsPerAreaAndType()
         gentypes_ordered = self.gentypes_ordered_by_fuelcost(area)
+        if reversed_order:
+            gentypes_ordered.reverse()
         numCurves = len(gentypes_ordered)+1
         colours = cm.gist_rainbow(np.linspace(0, 1, numCurves))
         for gentype in gentypes_ordered:
@@ -580,7 +583,9 @@ class Results(object):
             count=count+1
         #plt.legend()
         handles, labels = ax.get_legend_handles_labels()
-        plt.legend(reversed(handles), reversed(labels), loc="upper right")
+        handles.reverse()
+        labels.reverse()
+        plt.legend(handles, labels, loc="upper right")
                    #fancybox=True, framealpha=0.5)
         plt.title("Generation in %s"%(area))
         plt.show()
