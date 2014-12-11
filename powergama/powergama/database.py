@@ -447,7 +447,8 @@ class Database(object):
         con = db.connect(self.filename)
         with con:        
             cur = con.cursor()
-            cur.execute("SELECT indx,AVG(cap_sensitivity) FROM Res_BranchesSens"
+            cur.execute("SELECT indx,AVG(cap_sensitivity)"
+                +" FROM Res_BranchesSens"
                 +" WHERE timestep>=? AND timestep<?"
                 +" GROUP BY indx ORDER BY indx",
                 (timeMaxMin[0],timeMaxMin[-1]))
@@ -457,12 +458,14 @@ class Database(object):
        
     def getAverageInterareaBranchFlow(self, timeMaxMin):
         '''
-        Get average negative flow, positive flow and total flow of branches between different areas
+        Get average negative flow, positive flow and total flow of branches 
+        between different areas
         
         Returns
         =======
         List of tuples for inter-area branches with following values:
-        (indices, fromArea, toArea, average negative flow, average positive flow, average flow)
+        (indices, fromArea, toArea, average negative flow, average positive 
+        flow, average flow)
         '''
         
         con = db.connect(self.filename)
@@ -483,7 +486,9 @@ class Database(object):
                 +" FROM Res_Branches res, Grid_Branches b"
                 +" INNER JOIN Grid_Nodes fromNode ON b.fromIndx = fromNode.indx"
                 +" INNER JOIN Grid_Nodes toNode ON b.toIndx = toNode.indx"
-                +" WHERE fromNode.area != toNode.area AND res.indx = b.indx AND timestep>=? AND timestep<? AND res.flow<=0"
+                +" WHERE fromNode.area != toNode.area"
+                +" AND res.indx = b.indx AND timestep>=?"
+                +" AND timestep<? AND res.flow<=0"
                 +" GROUP BY res.indx",
                 (timeMaxMin[0],timeMaxMin[-1]))
             flow_negative = cur.fetchall()
@@ -492,7 +497,9 @@ class Database(object):
                 +" FROM Res_Branches res, Grid_Branches b"
                 +" INNER JOIN Grid_Nodes fromNode ON b.fromIndx = fromNode.indx"
                 +" INNER JOIN Grid_Nodes toNode ON b.toIndx = toNode.indx"
-                +" WHERE fromNode.area != toNode.area AND res.indx = b.indx AND timestep>=? AND timestep<? AND res.flow>=0"
+                +" WHERE fromNode.area != toNode.area"
+                +" AND res.indx = b.indx AND timestep>=? AND timestep<?"
+                +" AND res.flow>=0"
                 +" GROUP BY res.indx",
                 (timeMaxMin[0],timeMaxMin[-1]))
             flow_positive = cur.fetchall()
@@ -501,7 +508,8 @@ class Database(object):
                 +" FROM Res_Branches res, Grid_Branches b"
                 +" INNER JOIN Grid_Nodes fromNode ON b.fromIndx = fromNode.indx"
                 +" INNER JOIN Grid_Nodes toNode ON b.toIndx = toNode.indx"
-                +" WHERE fromNode.area != toNode.area AND res.indx = b.indx AND timestep>=? AND timestep<?"
+                +" WHERE fromNode.area != toNode.area"
+                +" AND res.indx = b.indx AND timestep>=? AND timestep<?"
                 +" GROUP BY res.indx",
                 (timeMaxMin[0],timeMaxMin[-1]))
             flow_total = cur.fetchall()
@@ -509,9 +517,12 @@ class Database(object):
             #calculate average flow
             
             numTimeSteps = timeMaxMin[-1] - timeMaxMin[0]
-            flow_negative = [(index, flow/numTimeSteps) for (index, flow) in flow_negative]
-            flow_positive = [(index, flow/numTimeSteps) for (index, flow) in flow_positive]
-            flow_total = [(index, flow/numTimeSteps) for (index, flow) in flow_total]
+            flow_negative = [(index, flow/numTimeSteps) 
+                                for (index, flow) in flow_negative]
+            flow_positive = [(index, flow/numTimeSteps) 
+                                for (index, flow) in flow_positive]
+            flow_total = [(index, flow/numTimeSteps) 
+                                for (index, flow) in flow_total]
             
             #Sort results
             # The length of flow lists may be less than the number
@@ -538,6 +549,51 @@ class Database(object):
                 values.append(branches[index] + neg + pos + tot)
         return values
         
+
+    def getBranchesSumFlow(self,branches_pos,branches_neg,timeMaxMin,acdc):
+        '''
+        Return time series for aggregated flow along specified branches
+        
+        branches_pos = indices of branches with positive flow direction
+        branches_neg = indices of branches with negative flow direction 
+        timeMaxMin = [start, end]
+        acdc = 'ac' or 'dc'
+        '''
+        values_pos=[]
+        values_neg=[]
+        if acdc=='ac':
+            branch_table = 'Res_Branches'
+        elif acdc=='dc':
+            branch_table = 'Res_Dcbranches'
+        else:
+            raise Exception('branch type must be "ac" or "dc"')
+                
+        con = db.connect(self.filename)
+        with con:
+            if branches_pos:
+                cur = con.cursor()
+                cur.execute("SELECT SUM(flow) FROM "+branch_table+" "
+                    +"WHERE timestep>=? AND timestep<? AND indx IN ("
+                    +"".join(["?," for i in range(len(branches_pos)-1)])+"?"                
+                    +")"
+                    +" GROUP BY timestep ORDER BY timestep",
+                    (timeMaxMin[0],timeMaxMin[-1])+tuple(branches_pos))
+                rows = cur.fetchall()
+                values_pos = [row[0] for row in rows]
+            if branches_neg:    
+                cur = con.cursor()
+                cur.execute("SELECT SUM(flow) FROM "+branch_table+" "
+                    +"WHERE timestep>=? AND timestep<? AND indx IN ("
+                    +"".join(["?," for i in range(len(branches_neg)-1)])+"?"                
+                    +")"
+                    +" GROUP BY timestep ORDER BY timestep",
+                    (timeMaxMin[0],timeMaxMin[-1])+tuple(branches_neg))
+                rows = cur.fetchall()
+                values_neg = [row[0] for row in rows]
+            values = dict(pos=values_pos,neg=values_neg)
+
+        return values
+
         
 ### Generator results
         

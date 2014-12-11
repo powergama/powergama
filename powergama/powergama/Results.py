@@ -536,7 +536,7 @@ class Results(object):
         
         
     def plotGenerationPerArea(self,area,timeMaxMin=None,fill=False,
-                              reversed_order=False):
+                              reversed_order=False,net_import=True):
         '''Show generation per area 
         
         Parameters
@@ -545,6 +545,8 @@ class Results(object):
         timeMaxMin (list) (default = None)
             [min, max] - lower and upper time interval
         fill (Boolean) - whether use filled plot
+        reversed_order - whether to reverse order of generator types
+        net_import - whether to include net import in graph
         '''
         
         if timeMaxMin is None:
@@ -581,6 +583,13 @@ class Results(object):
                 # in order to get the legend right
                 ax.plot([],[],color=colours[count],label=gentype) 
             count=count+1
+        if net_import:
+            netimport = self.getNetImport(area,timeMaxMin)
+            agg = [x+y for x,y in zip(netimport,fillfrom)]
+            ax.plot(timerange,agg,
+                    linestyle=':',linewidth=2,color='black',
+                    label='net import')
+            
         #plt.legend()
         handles, labels = ax.get_legend_handles_labels()
         handles.reverse()
@@ -589,7 +598,7 @@ class Results(object):
                    #fancybox=True, framealpha=0.5)
         plt.title("Generation in %s"%(area))
         plt.show()
-        return colours
+        return
 
 
     def plotDemandPerArea(self,areas,timeMaxMin=None):
@@ -1152,6 +1161,7 @@ class Results(object):
         if version < 3.7 :
             print('current SQLite version: ', self.db.sqlite_version)
             print('getAverageInterareaBranchFlow() requires 3.7.x or newer')
+            return
             
         if timeMaxMin is None:
             timeMaxMin = [self.timerange[0],self.timerange[-1] + 1]
@@ -1171,6 +1181,67 @@ class Results(object):
                 print(x)
             
         return results
+
+    def getAverageImportExport(self,area,timeMaxMin=None):
+        '''Return average import and export for a specified area'''
+        
+        if timeMaxMin is None:
+            timeMaxMin = [self.timerange[0],self.timerange[-1] + 1]
+        ia =  self.getAverageInterareaBranchFlow(timeMaxMin=timeMaxMin)
+        
+        # export: A->B pos flow + A<-B neg flow
+        sum_export = (sum([b[4] for b in ia if b[1]==area])
+                        -sum([b[3] for b in ia if b[2]==area]) )
+        # import: A->B neg flow + A<-B pos flow
+        sum_import = (-sum([b[3] for b in ia if b[2]==area])
+                        +sum([b[4] for b in ia if b[2]==area ]) )
+        return dict(exp=sum_export,imp=sum_import)
+        
+
+    def getNetImport(self,area,timeMaxMin=None):        
+        '''Return time series for net import for a specified area'''
+        if timeMaxMin is None:
+            timeMaxMin = [self.timerange[0],self.timerange[-1] + 1]
+            
+        # find the associated branches
+        br = self.grid.getInterAreaBranches(area_to=area,acdc='ac')
+        br_p = br['branches_pos']
+        br_n = br['branches_neg']
+        dcbr = self.grid.getInterAreaBranches(area_to=area,acdc='dc')
+        dcbr_p = dcbr['branches_pos']
+        dcbr_n = dcbr['branches_neg']
+        
+        # AC branches
+        ie =  self.db.getBranchesSumFlow(branches_pos=br_p,branches_neg=br_n,
+                                         timeMaxMin=timeMaxMin,
+                                         acdc='ac')
+        # DC branches
+        dcie =  self.db.getBranchesSumFlow(branches_pos=dcbr_p,
+                                             branches_neg=dcbr_n,
+                                             timeMaxMin=timeMaxMin,
+                                             acdc='dc')
+                                         
+        if ie['pos'] and ie['neg']:
+            res_ac = [a-b for a,b in zip(ie['pos'],ie['neg'])]
+        elif ie['pos']:
+            res_ac = ie['pos']
+        elif ie['neg']:
+            res_ac = [-a for a in ie['neg']]
+        else:
+            res_ac = [0]*(timeMaxMin[-1]-timeMaxMin[0]+1)   
+
+        if dcie['pos'] and dcie['neg']:
+            res_dc = [a-b for a,b in zip(dcie['pos'],dcie['neg'])]
+        elif dcie['pos']:
+            res_dc = dcie['pos']
+        elif dcie['neg']:
+            res_dc = [-a for a in dcie['neg']]
+        else:
+            res_dc = [0]*(timeMaxMin[-1]-timeMaxMin[0]+1)   
+            
+        res = [a+b for a,b in zip(res_ac,res_dc)]
+        return res
+        
         
 def _myround(x, base=1,method='round'):
     '''Round to nearest multiple of base'''

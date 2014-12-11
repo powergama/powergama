@@ -646,7 +646,7 @@ class GridData(object):
             node_name = self.consumer.node[idx_load]
             node_idx = self.node.name.index(node_name)
             area_name = self.node.area[node_idx]
-            if consumers.has_key(area_name):
+            if area_name in consumers:
                 consumers[area_name].append(idx_load)
             else:
                 consumers[area_name] =  [idx_load]   
@@ -660,8 +660,8 @@ class GridData(object):
             node_name = self.generator.node[idx_gen]
             node_idx = self.node.name.index(node_name)
             area_name = self.node.area[node_idx]
-            if generators.has_key(area_name):
-                if generators[area_name].has_key(gtype):
+            if area_name in generators:
+                if gtype in generators[area_name]:
                     generators[area_name][gtype].append(idx_gen)
                 else:
                     generators[area_name][gtype] = [idx_gen]
@@ -674,11 +674,71 @@ class GridData(object):
         generators = {}
         for idx_gen in range(self.generator.numGenerators()):
             gtype = self.generator.gentype[idx_gen]
-            if generators.has_key(gtype):
+            if gtype in generators:
                 generators[gtype].append(idx_gen)
             else:
                 generators[gtype] = [idx_gen]
         return generators
-  
+
+    def getInterAreaBranches(self,area_from=None,area_to=None,acdc='ac'):
+        '''
+        Get indices of branches from and/or to specified area(s)
+        
+        area_from = area from. Use None (default) to leave unspecifie
+        area_to= area to. Use None (default) to leave unspecified
+        acdc = 'ac' (default) for ac branches, 'dc' for dc branches        
+        '''
+        
+        if area_from is None and area_to is None:
+            raise Exception("Either from area or to area (or both) has"
+                            +"to be specified)")
+                            
+        # indices of from and to nodes of all branches:
+        if acdc=='ac':
+            br_from_nodes = self.branch.node_fromIdx(self.node)
+            br_to_nodes = self.branch.node_toIdx(self.node)
+        elif acdc=='dc':
+            br_from_nodes = self.dcbranch.node_fromIdx(self.node)
+            br_to_nodes = self.dcbranch.node_toIdx(self.node)
+        else:
+            raise Exception('Branch type must be "ac" or "dc"')
+        
+        
+        br_from_area = [self.node.area[i] for i in br_from_nodes]
+        br_to_area = [self.node.area[i] for i in br_to_nodes]
+        
+        # indices of all inter-area branches (from area != to area)        
+        br_is_interarea = [i for i in range(len(br_from_area)) 
+                                if br_from_area[i] != br_to_area[i]]
+        
+        # branches connected to area_from
+        fromArea_branches_pos = [i for i in br_is_interarea
+                                 if br_from_area[i]==area_from]
+        fromArea_branches_neg = [i for i in br_is_interarea
+                                 if br_to_area[i]==area_from]
+
+        # branches connected to area_to
+        toArea_branches_pos = [i for i in br_is_interarea
+                                 if br_to_area[i]==area_to]
+        toArea_branches_neg = [i for i in br_is_interarea
+                                 if br_from_area[i]==area_to]
+
+        if area_from is None:
+            # Only to node has been specified
+            branches_pos = toArea_branches_pos
+            branches_neg = toArea_branches_neg
+        elif area_to is None:
+            # Only from node has been specified
+            branches_pos = fromArea_branches_pos
+            branches_neg = fromArea_branches_neg
+        else:
+            # Both to and from area has been specified
+            branches_pos = [b for b in fromArea_branches_pos 
+                                    if b in toArea_branches_neg ]
+            branches_neg = [b for b in fromArea_branches_neg 
+                                    if b in toArea_branches_pos ]
+        return dict(branches_pos=branches_pos,
+                    branches_neg=branches_neg)   
+    
 #data.writeGridDataToFiles("test")
   
