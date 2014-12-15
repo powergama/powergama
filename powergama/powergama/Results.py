@@ -186,6 +186,22 @@ class Results(object):
         return loadshed
 
 
+    def getLoadheddingSums(self,timeMaxMin=None):
+        if timeMaxMin is None:
+            timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
+
+        loadshed_per_node = self.db.getResultLoadheddingSum(timeMaxMin)
+        areas = self.grid.node.area
+        allareas = self.grid.getAllAreas()
+        loadshed_sum = dict()
+        for a in allareas:
+            loadshed_sum[a] = sum([loadshed_per_node[i] 
+                for i in range(len(areas)) if areas[i]==a])
+            
+        #loadshed_sum = np.asarray(loadshed_sum,dtype=float)
+        return loadshed_sum
+
+
     def getAverageEnergyBalance(self,timeMaxMin=None):
         '''
         Average energy balance (generation minus demand) over a time period
@@ -296,6 +312,38 @@ class Results(object):
                         areacost +=  power * self.grid.generator.fuelcost[gen[0]]
             systemcost.append(tuple([area, areacost]))
         return systemcost
+        
+        
+    def getSystemCostFast(self,timeMaxMin=None):
+        '''
+        Description
+        Calculates system cost for energy produced by using generator fuel cost. 
+        
+        Parameters
+        ----------
+        timeMaxMin (list) (default = None)
+            [min, max] - lower and upper time interval
+        
+        Returns
+        =======
+        array of dictionary of cost of generation sorted per area
+        '''
+        if timeMaxMin is None:
+            timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
+
+        generation_per_gen = self.db.getResultGeneratorPowerSum(timeMaxMin)
+        fuelcost_per_gen = self.grid.generator.fuelcost
+        areas_per_gen = [self.grid.node.area[self.grid.node.name.index(n)] 
+                    for n in self.grid.generator.node]
+                
+        allareas = self.grid.getAllAreas()
+        generationcost = dict()
+        for a in allareas:
+            generationcost[a] = sum([generation_per_gen[i]*fuelcost_per_gen[i] 
+                for i in range(len(areas_per_gen)) if areas_per_gen[i]==a])
+
+        return generationcost
+
               
     def plotNodalPrice(self,nodeIndx,timeMaxMin=None):
         '''Show nodal price in single node
@@ -636,6 +684,7 @@ class Results(object):
                     flexdemand = [sum(x) for x in zip(flexdemand,flexdemand_i)]
             sumdemand = [sum(x) for x in zip(dem,flexdemand)]
             p, = plt.plot(timerange,sumdemand,label=co)
+            # Fixed demand in dotted lines
             plt.plot(timerange,dem,'--',color=p.get_color())
             
         plt.legend(loc="upper right")

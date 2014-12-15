@@ -652,6 +652,20 @@ class Database(object):
             output = [row[1] for row in rows]        
         return output
  
+    def getResultGeneratorPowerSum(self,timeMaxMin):
+        '''Sum of generator power output per generator'''
+        con = db.connect(self.filename)
+        with con:        
+            cur = con.cursor()
+            cur.execute("SELECT indx,SUM(output) FROM Res_Generators "
+                +"WHERE timestep>=? AND timestep<?"
+                +" GROUP BY indx"
+                +" ORDER BY indx",
+                (timeMaxMin[0],timeMaxMin[-1]))
+            rows = cur.fetchall()
+            values = [row[1] for row in rows]        
+        return values
+
     def getResultGeneratorPowerInArea(self,area,timeMaxMin):
         '''Get accumulated generation per type in given area'''
         con = db.connect(self.filename)
@@ -729,12 +743,12 @@ class Database(object):
         con = db.connect(self.filename)
         with con:        
             cur = con.cursor()
-            cur.execute("SELECT SUM(loadshed) FROM Res_Nodes "
+            cur.execute("SELECT indx,SUM(loadshed) FROM Res_Nodes "
                 +"WHERE timestep>=? AND timestep<?"
                 +" GROUP BY indx"
-                +" ORDER BY timestep",
+                +" ORDER BY indx",
                 (timeMaxMin[0],timeMaxMin[-1]))
             rows = cur.fetchall()
-            values = [row[0] for row in rows]        
+            values = [row[1] for row in rows]        
         return values
                 

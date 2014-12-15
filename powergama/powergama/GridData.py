@@ -537,8 +537,15 @@ class GridData(object):
         """Indices of all flexible nodes attached to a particular node"""
         indices = [i for i, x in enumerate(self.consumer.node) 
                     if x == self.node.name[nodeIdx]
-                    and self.consumer.flex_fraction[i]>0]
+                    and self.consumer.flex_fraction[i]>0
+                    and self.consumer.load[i]>0]
         return indices
+        
+    def getIdxConsumersWithFlexibleLoad(self):
+        """Indices of all consumers with flexible load"""
+        idx = [i for i,v in enumerate(self.consumer.flex_fraction) 
+            if v>0 and v<numpy.inf and self.consumer.load[i]>0]
+        return idx
         
 
     def getDcBranchesAtNode(self,nodeIdx,direction):
@@ -574,12 +581,6 @@ class GridData(object):
     def getIdxGeneratorsWithPumping(self):
         """Indices of all generators with pumping capacity"""
         idx = [i for i,v in enumerate(self.generator.pump_cap) 
-            if v>0 and v<numpy.inf]
-        return idx
-        
-    def getIdxConsumersWithFlexibleLoad(self):
-        """Indices of all consumers with flexible load"""
-        idx = [i for i,v in enumerate(self.consumer.flex_fraction) 
             if v>0 and v<numpy.inf]
         return idx
         
