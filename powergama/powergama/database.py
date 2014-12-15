@@ -201,7 +201,6 @@ class Database(object):
                     for i in range(len(flexload_power))))
       
 
-########## Get grid data
     
     def getGridNodeIndices(self):
         '''Get node indices as a list'''
@@ -275,9 +274,6 @@ class Database(object):
         
         
 
-########## Get result data
-          
-### Node results
 
     def getResultNodalPrice(self,nodeindx,timeMaxMin):
         '''Get nodal price at specified node'''
@@ -326,7 +322,6 @@ class Database(object):
         return values
         
 
-### Branch results
 
     def getResultBranchFlow(self,branchindx,timeMaxMin):
         '''Get branch flow at specified branch'''
@@ -595,8 +590,6 @@ class Database(object):
         return values
 
         
-### Generator results
-        
 
     def getResultPumpPower(self,genindx,timeMaxMin):
         '''Get pumping for generators with pumping'''
@@ -640,7 +633,7 @@ class Database(object):
         return values
 
     def getResultGeneratorPower(self,generatorindx,timeMaxMin):
-        '''Get generator output'''
+        '''Get power output time series for specified generator'''
         
         if not isinstance(generatorindx,list): 
             generatorindx = [generatorindx]
@@ -723,10 +716,25 @@ class Database(object):
             cur = con.cursor()
             cur.execute("SELECT loadshed FROM Res_Nodes "
                 +"WHERE timestep>=? AND timestep<? AND indx IN "
-                +" (SELECT id FROM Grid_Nodes WHERE area IN (?))"
+                +" (SELECT indx FROM Grid_Nodes WHERE area IN (?))"
                 +" ORDER BY timestep",
                 (timeMaxMin[0],timeMaxMin[-1],area))
             rows = cur.fetchall()
             values = [row[0] for row in rows]        
         return values
-        
+
+
+    def getResultLoadheddingSum(self,timeMaxMin):
+        '''Sum of loadshedding timeseries per node'''
+        con = db.connect(self.filename)
+        with con:        
+            cur = con.cursor()
+            cur.execute("SELECT SUM(loadshed) FROM Res_Nodes "
+                +"WHERE timestep>=? AND timestep<?"
+                +" GROUP BY indx"
+                +" ORDER BY timestep",
+                (timeMaxMin[0],timeMaxMin[-1]))
+            rows = cur.fetchall()
+            values = [row[0] for row in rows]        
+        return values
+                

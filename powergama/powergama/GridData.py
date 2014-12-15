@@ -307,6 +307,7 @@ class _Consumers(object):
         self.flex_basevalue = []
         self.flex_storage = []
         self.flex_storagevalue_profile_filling = []
+        self.flex_storagelevel_init = []
     
     def readFromFile(self,filename):
         with openfile(filename,'r') as csvfile:
@@ -334,6 +335,10 @@ class _Consumers(object):
                    self.flex_basevalue.append(0)
                    self.flex_storage.append(0)
                    self.flex_storagevalue_profile_filling.append(0)
+                   
+           #Hard-coded initial filling level of storage equal to 50%
+           print("OBS: Initial flexible storage filling set to 0.5")        
+           self.flex_storagelevel_init = [0.5]*len(self.flex_fraction)
         return
 
     def writeToFile(self,filename):

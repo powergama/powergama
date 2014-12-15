@@ -21,7 +21,7 @@ Module containing PowerGAMA LpProblem class
 '''
 
 import pulp
-from numpy import pi, asarray, vstack, zeros, random
+from numpy import pi, asarray, vstack, zeros
 from datetime import datetime as datetime
 from . import constants as const
 import scipy.sparse
@@ -72,10 +72,8 @@ class LpProblem(object):
             *asarray(grid.generator.storage) )
         self._marginalcosts = asarray(grid.generator.fuelcost)        
         
-        # Flexible load storage (initial filling level 0.5)  
-        print("TODO: Use initial flexible storage filling different from 0.5")        
         self._storage_flexload = (
-                random.rand(len(grid.consumer.flex_fraction))
+                asarray(grid.consumer.flex_storagelevel_init)
                 * asarray(grid.consumer.flex_storage) 
                 * asarray(grid.consumer.flex_fraction)
                 * asarray(grid.consumer.load)
