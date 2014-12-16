@@ -175,6 +175,31 @@ class Results(object):
         # use asarray to convert None to nan
         avgprices = np.asarray(avgprices,dtype=float)
         return avgprices
+
+    def getAreaPrices(self,area,timeMaxMin=None):
+        '''
+        Weighted average nodal price timeseries for given area
+        '''
+        if timeMaxMin is None:
+            timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
+
+        #area_nodes = [n._i for n in self.grid.node if n.area==area]
+        loads = self.grid.getConsumersPerArea()[area]
+        node_weight = [0]*len(self.grid.node.name)
+        for ld in loads:
+            the_node = self.grid.consumer.node[ld]
+            the_load = self.grid.consumer.load[ld]
+            node_indx = self.grid.node.name.index(the_node)
+            node_weight[node_indx] += the_load
+            
+        sumWght = sum(node_weight)
+        node_weight = [a/sumWght for a in node_weight]
+
+        #print("Weights:")        
+        #print(node_weight)
+        prices = self.db.getResultAreaPrices(node_weight,timeMaxMin)
+
+        return prices
        
     def getLoadheddingInArea(self,area,timeMaxMin=None):
         if timeMaxMin is None:
@@ -374,6 +399,30 @@ class Results(object):
             print("Node not found")
         return
         
+    def plotAreaPrice(self,areas,timeMaxMin=None):
+        '''Show area price(s)
+        
+        Parameters
+        ----------
+        areas (list)
+            list of areas to show
+        timeMaxMin (list) (default = None)
+            [min, max] - lower and upper time interval
+        '''
+
+        if timeMaxMin is None:
+            timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
+        timerange = range(timeMaxMin[0],timeMaxMin[-1]) 
+
+        plt.figure()
+        for a in areas:
+            areaprice = self.getAreaPrices(a,timeMaxMin)
+            plt.plot(timerange,areaprice,label=a)
+            plt.title("Area price")
+        
+        plt.legend()
+        plt.show()
+        return
         
     def plotStorageFilling(self,generatorIndx,timeMaxMin=None):
         '''Show storage filling level (MWh) for generators with storage

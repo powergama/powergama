@@ -321,7 +321,33 @@ class Database(object):
         values = [row[1] for row in rows]        
         return values
         
+    def getResultAreaPrices(self,node_weight,timeMaxMin):
+        '''Get area price timeseries
 
+        node_weight = list of weights for each node
+        '''
+        
+        #print("weight sum = "+str(sum(node_weight)))
+        con = db.connect(self.filename)
+        with con:        
+            cur = con.cursor()
+            
+            # Temporary table to store weights            
+            cur.execute("CREATE TABLE IF NOT EXISTS weights"
+                +" (node INT, weight DOUBLE)")
+            val = tuple((i,w) for i,w in enumerate(node_weight))
+            cur.executemany("INSERT INTO weights VALUES(?,?)", val)
+
+            cur.execute("SELECT n.timestep,SUM(n.nodalprice * w.weight)"
+                +" FROM Res_Nodes n INNER JOIN weights w ON n.indx==w.node"
+                +" WHERE n.timestep>=? AND n.timestep<?"
+                +" GROUP BY n.timestep ORDER BY n.timestep",
+                (timeMaxMin[0],timeMaxMin[-1]))
+            rows = cur.fetchall()
+            cur.execute("DROP TABLE weights")            
+        values = [row[1] for row in rows]        
+        return values
+                                                 
 
     def getResultBranchFlow(self,branchindx,timeMaxMin):
         '''Get branch flow at specified branch'''
