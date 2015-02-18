@@ -242,7 +242,9 @@ class Results(object):
             timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
 
         branchflows = self.db.getResultBranchFlowsMean(timeMaxMin)
-        branchflowsDc = self.db.getResultBranchFlowsMean(timeMaxMin,ac=False)
+        if self.grid.dcbranch.numBranches() > 0:
+            branchflowsDc = self.db.getResultBranchFlowsMean(timeMaxMin,
+                                                             ac=False)
         br_from = self.grid.branch.node_fromIdx(self.grid.node)
         br_to = self.grid.branch.node_toIdx(self.grid.node)
         dcbr_from = self.grid.dcbranch.node_fromIdx(self.grid.node)
@@ -822,7 +824,8 @@ class Results(object):
         
     def plotMapGrid(self,nodetype='',branchtype='',dcbranchtype='',
                     show_node_labels=False,latlon=None,timeMaxMin=None,
-                    dotsize=40, filter_price=None, draw_par_mer=True):
+                    dotsize=40, filter_node=None, filter_branch=None,
+                    draw_par_mer=True):
         '''
         Plot results to map
         
@@ -831,7 +834,7 @@ class Results(object):
         nodetype (str) (default = "")
             "", "area", "nodalprice", "energybalance"
         branchtype (str) (default = "")
-            "", "area", "utilisation", "flow", "sensitivity"
+            "", "capacity", "area", "utilisation", "flow", "sensitivity"
         dcbranchtype (str) (default = "")
             ""
         show_node_labels (bool) (default=False)
@@ -840,8 +843,10 @@ class Results(object):
             set dot size for each plotted node
         latlon (list) (default=None)
             map area [lat_min, lon_min, lat_max, lon_max]
-        filter_price (list) (default=None)
-            [min,max] - lower and upper cutof for price range
+        filter_node (list) (default=None)
+            [min,max] - lower and upper cutof for node value
+        filter_branch (list) (default=None)
+            [min,max] - lower and upper cutof for branch value
         draw_par_mer (bool) (default=True)
             draw parallels and meridians on map    
         '''
@@ -888,171 +893,258 @@ class Results(object):
                 _myround(lon_max,10,'ceil'),10),
                 labels=[0,0,0,1])
         
-        
+        num_branches = self.grid.branch.numBranches()
+        num_dcbranches = self.grid.dcbranch.numBranches()
+        num_nodes = self.grid.node.numNodes()
 
+
+        # AC Branches
+        
+        lwidths = [2]*num_branches
+        branch_plot_colorbar = True
         if branchtype=='area':
             areas = data.node.area
             allareas = data.getAllAreas()
-            colours_b = cm.prism(np.linspace(0, 1, len(allareas)))
-        elif branchtype=='utilisation' or branchtype=='flow':
-            numBranchCategories = 11
-            colours_b = cm.hot(np.linspace(0, 1, numBranchCategories))
-            avgflow = self.getAverageBranchFlows(timeMaxMin)[2]
+            branch_value = [-1]*num_branches
+            for i in range(num_branches):
+                node_indx_from = data.node.name.index(data.branch.node_from[i])
+                node_indx_to = data.node.name.index(data.branch.node_to[i])
+                area_from = areas[node_indx_from]
+                area_to = areas[node_indx_to]
+                if area_from == area_to:
+                    branch_value[i] = allareas.index(area_from)
+                branch_value = np.asarray(branch_value)
+            branch_colormap = plt.get_cmap('hsv')
+            branch_colormap.set_under('k')
+            filter_branch = [0,len(allareas)]
+            branch_label = 'Branch area'
+            branch_plot_colorbar = False
+        elif branchtype=='utilisation':
             utilisation = self.getAverageUtilisation(timeMaxMin)
+            branch_value = utilisation
+            branch_colormap = plt.get_cmap('hot')
+            branch_label = 'Branch utilisation, average'
+        elif branchtype=='capacity':
+            cap = self.grid.branch.capacity
+            branch_value = np.asarray(cap)
+            branch_colormap = plt.get_cmap('hot')
+            branch_label = 'Branch capacity (MW)'
+            if filter_branch is None:
+                # need an upper limit to avoid crash due to inf capacity
+                filter_branch = [0,5000]
+        elif branchtype=='flow':
+            avgflow = self.getAverageBranchFlows(timeMaxMin)[2]
+            branch_value = np.asarray(avgflow)
+            branch_colormap = plt.get_cmap('hot')
+            branch_label = 'Branch flow, average (MW)'
         elif branchtype=='sensitivity':
-            numBranchCategories = 11
-            colours_b = cm.hot(np.linspace(0, 1, numBranchCategories))
             avgsense = self.getAverageBranchSensitivity(timeMaxMin)
+            branch_value = avgsense
+            branch_colormap = plt.get_cmap('hot')
+            branch_label = 'Branch capacity sensitivity, average (EUR/MW)'
             # These sensitivities are mostly negative 
             # (reduced cost by increasing branch capacity)
-            minsense = np.nanmin(avgsense)
-            maxsense = np.nanmax(avgsense)
+            #minsense = np.nanmin(avgsense)
+            #maxsense = np.nanmax(avgsense)
+        else:
+            branch_value = np.asarray([0.5]*num_branches)
+            branch_colormap = cm.gray
+            branch_plot_colorbar = False
         
-        
-        # Plot AC branches (as great circles)
         idx_from = data.branch.node_fromIdx(data.node)
         idx_to = data.branch.node_toIdx(data.node)
         branch_lat1 = [data.node.lat[i] for i in idx_from]        
         branch_lon1 = [data.node.lon[i] for i in idx_from]        
         branch_lat2 = [data.node.lat[i] for i in idx_to]        
         branch_lon2 = [data.node.lon[i] for i in idx_to]
-        for j in range(len(branch_lat1)):
-            if branchtype=='area':
-                if areas[idx_from[j]] == areas[idx_to[j]]:
-                    col = colours_b[allareas.index(areas[idx_from[j]])]
-                    lwidth = 1
-                else:
-                    col = 'black'
-                    lwidth = 4
-            elif branchtype=='utilisation':
-                cap = res.grid.branch.capacity[j]
-                #print "utilisation cat=",category
-                if cap == np.inf:
-                    col = 'grey'
-                    lwidth = 1
-                else:
-                    category = math.floor(utilisation[j]*(numBranchCategories-1))
-                    col = colours_b[category]
-                    lwidth = 2
-            elif branchtype=='flow':
-                maxflow = max(avgflow)
-                minflow = min(avgflow)
-                category = math.floor(
-                    avgflow[j]/maxflow*(numBranchCategories-1))
-                col = colours_b[category]
-                lwidth = 1
-                if category*2 > numBranchCategories:
-                    lwidth = 2
-            elif branchtype=='sensitivity':
-                if j in res.idxConstrainedBranchCapacity:
-                    idx = res.idxConstrainedBranchCapacity.index(j)
-                    #idx = j
-                    if not  np.isnan(avgsense[idx]) and minsense!=0:
-                        category = math.floor(
-                            avgsense[idx]/minsense*(numBranchCategories-1))
-                        #print "sense cat=",category
-                        col = colours_b[category]
-                        lwidth = 2
-                    else:
-                        #NAN sensitivity (not returned by solver)
-                        #Or all sensitivities are zero
-                        col='grey'
-                        lwidth = 2
-                else:
-                    col = 'grey'
-                    lwidth = 1
-            else:
-                lwidth = 1
-                col = 'black'
-                 
-            m.drawgreatcircle(branch_lon1[j],branch_lat1[j],\
-                              branch_lon2[j],branch_lat2[j],\
-                              linewidth=lwidth,color=col,zorder=1)
 
-        # Plot DC branches
+        x1, y1 = m(branch_lon1,branch_lat1)
+        x2, y2 = m(branch_lon2,branch_lat2)
+
+        ls = [[(x1[i],y1[i]),(x2[i],y2[i])] for i in range(len(x1))]
+        line_segments_ac = mpl.collections.LineCollection(
+                ls, linewidths=lwidths,cmap=branch_colormap)
+    
+        if filter_branch is not None:
+            line_segments_ac.set_clim(filter_branch)
+        line_segments_ac.set_array(branch_value)
+        ax=plt.axes()    
+        ax.add_collection(line_segments_ac)
+
+#        for j in range(len(branch_lat1)):
+#            if branchtype=='area':
+#                if areas[idx_from[j]] == areas[idx_to[j]]:
+#                    col = colours_b[allareas.index(areas[idx_from[j]])]
+#                    lwidth = 1
+#                else:
+#                    col = 'black'
+#                    lwidth = 4
+#            elif branchtype=='utilisation':
+#                cap = res.grid.branch.capacity[j]
+#                #print "utilisation cat=",category
+#                if cap == np.inf:
+#                    col = 'grey'
+#                    lwidth = 1
+#                else:
+#                    category = math.floor(utilisation[j]*(numBranchCategories-1))
+#                    col = colours_b[category]
+#                    lwidth = 2
+#            elif branchtype=='flow':
+#                maxflow = max(avgflow)
+#                minflow = min(avgflow)
+#                category = math.floor(
+#                    avgflow[j]/maxflow*(numBranchCategories-1))
+#                col = colours_b[category]
+#                lwidth = 1
+#                if category*2 > numBranchCategories:
+#                    lwidth = 2
+#            elif branchtype=='sensitivity':
+#                if j in res.idxConstrainedBranchCapacity:
+#                    idx = res.idxConstrainedBranchCapacity.index(j)
+#                    #idx = j
+#                    if not  np.isnan(avgsense[idx]) and minsense!=0:
+#                        category = math.floor(
+#                            avgsense[idx]/minsense*(numBranchCategories-1))
+#                        #print "sense cat=",category
+#                        col = colours_b[category]
+#                        lwidth = 2
+#                    else:
+#                        #NAN sensitivity (not returned by solver)
+#                        #Or all sensitivities are zero
+#                        col='grey'
+#                        lwidth = 2
+#                else:
+#                    col = 'grey'
+#                    lwidth = 1
+#            else:
+#                lwidth = 1
+#                col = 'black'
+                 
+            #m.drawgreatcircle(branch_lon1[j],branch_lat1[j],\
+            #                  branch_lon2[j],branch_lat2[j],\
+            #                  linewidth=lwidth,color=col,zorder=1)
+
+        
+
+        # DC Branches
         idx_from = data.dcbranch.node_fromIdx(data.node)
         idx_to = data.dcbranch.node_toIdx(data.node)
         branch_lat1 = [data.node.lat[i] for i in idx_from]        
         branch_lon1 = [data.node.lon[i] for i in idx_from]        
         branch_lat2 = [data.node.lat[i] for i in idx_to]        
         branch_lon2 = [data.node.lon[i] for i in idx_to]
-        for j in range(len(branch_lat1)):
-            if dcbranchtype=='area':
-                if areas[idx_from[j]] == areas[idx_to[j]]:
-                    col = colours_b[allareas.index(areas[idx_from[j]])]
-                    lwidth = 1
-                else:
-                    col = 'blue'
-                    lwidth = 2
-            else:
-                col = 'blue'
-                lwidth = 2
-            m.drawgreatcircle(branch_lon1[j],branch_lat1[j],\
-                              branch_lon2[j],branch_lat2[j],\
-                              linewidth=lwidth,color=col,zorder=1)
-            
-        # Plot nodes
 
+        x1, y1 = m(branch_lon1,branch_lat1)
+        x2, y2 = m(branch_lon2,branch_lat2)
+        ls = [[(x1[i],y1[i]),(x2[i],y2[i])] for i in range(len(x1))]
+        line_segments_dc = mpl.collections.LineCollection(
+                ls, linewidths=2,colors='blue')
+    
+        ax.add_collection(line_segments_dc)
+        
+
+                              
+                
+        # Nodes
+                
+        node_plot_colorbar = True
         if nodetype=='area':
             areas = data.node.area
             allareas = data.getAllAreas()
-            colours_co = cm.prism(np.linspace(0, 1, len(allareas)))
+            #colours_co = cm.prism(np.linspace(0, 1, len(allareas)))
+            node_label = 'Node area'
+            node_value = [allareas.index(c) for c in areas]
+            node_colormap = cm.prism
+            node_plot_colorbar = False
         elif nodetype=='nodalprice':
             avgprice = self.getAverageNodalPrices(timeMaxMin)
+            node_label = 'Nodal price (EUR/MWh)'
+            node_value = avgprice
+            node_colormap = cm.jet
         elif nodetype=='energybalance':
             avg_energybalance = self.getAverageEnergyBalance(timeMaxMin)
+            node_label = 'Nodal energy balance (MW)'
+            node_value = avg_energybalance
+            node_colormap = cm.hot
+        else:
+            node_value = 'dimgray'
+            node_colormap = cm.jet
+            node_label = ''
+            node_plot_colorbar  = False
         
 
+        #if filter_node is not None:
+        #    node_value = [min(max(v,filter_node[0]),filter_node[1]) 
+        #                    for v in node_value]
         x, y = m(data.node.lon,data.node.lat)
-        if nodetype == 'area':
-            for co in range(len(allareas)):
-                co_nodes = [i for i, v in enumerate(data.node.area) 
-                            if v==allareas[co]]
-                co_x = [x[i] for i in co_nodes]
-                co_y = [y[i] for i in co_nodes]
-                col = colours_co[co]
-                m.scatter(co_x,co_y,marker='o',color=col, 
-                          zorder=2,s=dotsize)
-        elif nodetype == 'nodalprice':
-            if filter_price != None:
-                for index, price in enumerate(avgprice):
-                    if (price > filter_price[1]):
-                        avgprice[index] = filter_price[1]
-                    elif (price < filter_price[0]):
-                        avgprice[index] = filter_price[0]
-            s=m.scatter(x,y,marker='o',c=avgprice, cmap=cm.jet, 
-                        zorder=2,s=dotsize)
+        sc=m.scatter(x,y,marker='o',c=node_value, cmap=node_colormap,
+                     zorder=2,s=dotsize)           
+        #sc.cmap.set_under('dimgray')
+        #sc.cmap.set_over('dimgray')
+        if filter_node is not None:
+            sc.set_clim(filter_node[0], filter_node[1])
             
+#        if nodetype == 'area':
+#            for co in range(len(allareas)):
+#                co_nodes = [i for i, v in enumerate(data.node.area) 
+#                            if v==allareas[co]]
+#                co_x = [x[i] for i in co_nodes]
+#                co_y = [y[i] for i in co_nodes]
+#                col = colours_co[co]
+#                sc=m.scatter(co_x,co_y,marker='o',color=col, 
+#                          zorder=2,s=dotsize)
+#        elif nodetype == 'nodalprice':
+#            if filter_price != None:
+#                for index, price in enumerate(avgprice):
+#                    if (price > filter_price[1]):
+#                        avgprice[index] = filter_price[1]
+#                    elif (price < filter_price[0]):
+#                        avgprice[index] = filter_price[0]
+#            sc=m.scatter(x,y,marker='o',c=avgprice, cmap=cm.jet, 
+#                        zorder=2,s=dotsize)            
             # #TODO: Er dette nødvendig lenger, Harald?
             # #nodes with NAN nodal price plotted in gray:
             # for i in range(len(avgprice)):
                 # if np.isnan(avgprice[i]):
                     # m.scatter(x[i],y[i],c='dimgray',
                               # zorder=2,s=dotsize)
-        elif nodetype == 'energybalance':
-            if filter_price != None:
-                for index, price in enumerate(avg_energybalance):
-                    if (price > filter_price[1]):
-                        avg_energybalance[index] = filter_price[1]
-                    elif (price < filter_price[0]):
-                        avg_energybalance[index] = filter_price[0]
-            m.scatter(x,y,marker='o',c=avg_energybalance, cmap=cm.hot, 
-                        zorder=2,s=dotsize)
-            
-        else:
-            col='dimgray'
-            m.scatter(x,y,marker='o',color=col, 
-                      zorder=2,s=dotsize)
-            #cb=m.colorbar()
+#        elif nodetype == 'energybalance':
+#            if filter_node != None:
+#                for index, price in enumerate(avg_energybalance):
+#                    if (price > filter_node[1]):
+#                        avg_energybalance[index] = filter_node[1]
+#                    elif (price < filter_node[0]):
+#                        avg_energybalance[index] = filter_node[0]
+#            sc=m.scatter(x,y,marker='o',c=avg_energybalance, cmap=cm.hot, 
+#                        zorder=2,s=dotsize)
+#            
+#        else:
+#            col='dimgray'
+#            sc=m.scatter(x,y,marker='o',color=col, 
+#                      zorder=2,s=dotsize)
+#            #cb=m.colorbar()
         
         
+        #NEW Colorbar for nodes
+        # m. or plt.?
+        if node_plot_colorbar:
+            axcb2 = plt.colorbar(sc)
+            axcb2.set_label(node_label)
+
+        #NEW Colorbar for branch capacity
+        if branch_plot_colorbar:
+            axcb = plt.colorbar(line_segments_ac)
+            axcb.set_label(branch_label)
+
+
         # Show names of nodes
         if show_node_labels:
             labels = data.node.name
             x1,x2,y1,y2 = plt.axis()
+            offset_x = (x2-x1)/50
             for label, xpt, ypt in zip(labels, x, y):
                 if xpt > x1 and xpt < x2 and ypt > y1 and ypt < y2:
-                    plt.text(xpt, ypt, label)
+                    plt.text(xpt+offset_x, ypt, label)
         
         plt.title('Nodes (%s) and branches (%s)' %(nodetype,branchtype))
         plt.show()
@@ -1062,74 +1154,77 @@ class Results(object):
             ax_cb_node_offset = 0.15
         else:
             ax_cb_node_offset = 0
-        #Colorbar for nodal price
-        if nodetype == 'nodalprice':
-            ax_cb_node = fig.add_axes((0.70+ax_cb_node_offset, 0.125,0.03,0.75))
-            colormap = plt.get_cmap('jet')
-            norm = mpl.colors.Normalize(min(avgprice), max(avgprice))
-            colorbar_node = mpl.colorbar.ColorbarBase(ax_cb_node, cmap=colormap, norm=norm, orientation='vertical')
-            colorbar_node.set_label('Nodal price')
-        if nodetype == 'energybalance':
-            ax_cb_node = fig.add_axes((0.70+ax_cb_node_offset, 0.125,0.03,0.75))
-            colormap = plt.get_cmap('hot')
-            norm = mpl.colors.Normalize(
-                #-1*np.std(avg_energybalance), 1*np.std(avg_energybalance))
-                min(avg_energybalance), max(avg_energybalance))
-            colorbar_node = mpl.colorbar.ColorbarBase(
-                ax_cb_node, cmap=colormap, norm=norm, orientation='vertical')
-            colorbar_node.set_label('Energy balance')
-        #Legend for nodal areas
-        elif nodetype == 'area':
-            patches = []
-            p_labels = []
-            for country in range(len(allareas)):
-                patches.append(mpl.patches.Patch(color=colours_co[country]))
-                p_labels.append(allareas[country])
-            fig.legend(patches, p_labels, bbox_to_anchor=(0.75+ax_cb_node_offset,0.15,0.03,0.75), \
-                        title='AREA', handlelength=0.7,handletextpad=0.4, frameon=False)
-        #Legend for branch area
-        if branchtype == 'area':
-            patches = []
-            p_labels = []
-            for country in range(len(allareas)):
-                patches.append(mpl.patches.Patch(color=colours_b[country]))
-                p_labels.append(allareas[country])
-            patches.append(mpl.patches.Patch(color='black'))
-            p_labels.append('INT')
-            fig.legend(patches, p_labels, bbox_to_anchor=(0.9,0.15,0.03,0.75), \
-                        title='BRANCH', handlelength=0.7,handletextpad=0.4, frameon=False)
-        #Colorbar for branch utilisation    
-        elif branchtype == 'utilisation':
-            ax_cb_branch = fig.add_axes((0.85, 0.125, 0.03, 0.75))
-            colormap = plt.get_cmap('hot')
-            bounds = np.linspace(0,1,numBranchCategories)
-            norm = mpl.colors.BoundaryNorm(bounds,256)
-            colorbar_branch = mpl.colorbar.ColorbarBase(
-                ax_cb_branch, cmap=colormap, norm=norm, boundaries=bounds,
-                spacing='uniform', orientation='vertical')
-            colorbar_branch.set_label('Branch utilisation')
-        #Colorbar for branch flow
-        elif branchtype == 'flow':
-            ax_cb_branch = fig.add_axes((0.85, 0.125, 0.03, 0.75))
-            colormap = plt.get_cmap('hot')
-            #norm = mpl.colors.Normalize(minflow,maxflow)
-            bounds = np.linspace(minflow,maxflow,numBranchCategories)
-            norm = mpl.colors.BoundaryNorm(bounds,256)
-            colorbar_branch = mpl.colorbar.ColorbarBase(
-                ax_cb_branch, cmap=colormap, norm=norm, boundaries=bounds,
-                spacing='uniform', orientation='vertical')
-            colorbar_branch.set_label('Branch flow')
-        #Colorbar for branch sensitivity
-        elif branchtype == 'sensitivity':
-            ax_cb_branch = fig.add_axes((0.85, 0.125, 0.03, 0.75))
-            colormap = plt.get_cmap('hot')
-            #norm = mpl.colors.Normalize(0,abs(minsense))
-            bounds = np.linspace(0,abs(minsense),numBranchCategories)
-            norm = mpl.colors.BoundaryNorm(bounds,256)
-            colorbar_branch = mpl.colorbar.ColorbarBase(
-                ax_cb_branch, cmap=colormap, norm=norm, boundaries=bounds,
-                spacing='uniform', orientation='vertical')
-            colorbar_branch.set_label('Branch sensitivity')
+            
+#        #Colorbar for nodal price
+#        if nodetype == 'nodalprice':
+#            ax_cb_node = fig.add_axes((0.70+ax_cb_node_offset, 0.125,0.03,0.75))
+#            colormap = plt.get_cmap('jet')
+#            #norm = mpl.colors.Normalize(min(avgprice), max(avgprice))
+#            #colorbar_node = mpl.colorbar.ColorbarBase(ax_cb_node, cmap=colormap, norm=norm, orientation='vertical')
+#            #colorbar_node.set_label('Nodal price')
+#        elif nodetype == 'energybalance':
+#            ax_cb_node = fig.add_axes((0.70+ax_cb_node_offset, 0.125,0.03,0.75))
+#            colormap = plt.get_cmap('hot')
+#            #norm = mpl.colors.Normalize(
+#            #    #-1*np.std(avg_energybalance), 1*np.std(avg_energybalance))
+#            #    min(avg_energybalance), max(avg_energybalance))
+#            #colorbar_node = mpl.colorbar.ColorbarBase(
+#            #    ax_cb_node, cmap=colormap, norm=norm, orientation='vertical')
+#            #colorbar_node.set_label('Energy balance')            
+#        elif nodetype == 'area':
+#            #Legend for nodal areas
+#            patches = []
+#            p_labels = []
+#            for country in range(len(allareas)):
+#                patches.append(mpl.patches.Patch(color=colours_co[country]))
+#                p_labels.append(allareas[country])
+#            fig.legend(patches, p_labels, bbox_to_anchor=(0.75+ax_cb_node_offset,0.15,0.03,0.75), \
+#                        title='AREA', handlelength=0.7,handletextpad=0.4, frameon=False)
+#        #Legend for branch area
+#        if branchtype == 'area':
+#            patches = []
+#            p_labels = []
+#            for country in range(len(allareas)):
+#                patches.append(mpl.patches.Patch(color=colours_b[country]))
+#                p_labels.append(allareas[country])
+#            patches.append(mpl.patches.Patch(color='black'))
+#            p_labels.append('INT')
+#            fig.legend(patches, p_labels, bbox_to_anchor=(0.9,0.15,0.03,0.75), \
+#                        title='BRANCH', handlelength=0.7,handletextpad=0.4, frameon=False)
+
+#        #Colorbar for branch utilisation    
+#        elif branchtype == 'utilisation':
+#            ax_cb_branch = fig.add_axes((0.85, 0.125, 0.03, 0.75))
+#            colormap = plt.get_cmap('hot')
+#            bounds = np.linspace(0,1,numBranchCategories)
+#            norm = mpl.colors.BoundaryNorm(bounds,256)
+#            colorbar_branch = mpl.colorbar.ColorbarBase(
+#                ax_cb_branch, cmap=colormap, norm=norm, boundaries=bounds,
+#                spacing='uniform', orientation='vertical')
+#            colorbar_branch.set_label('Branch utilisation')
+#        #Colorbar for branch flow
+#        elif branchtype == 'flow':
+#            ax_cb_branch = fig.add_axes((0.85, 0.125, 0.03, 0.75))
+#            colormap = plt.get_cmap('hot')
+#            #norm = mpl.colors.Normalize(minflow,maxflow)
+#            bounds = np.linspace(minflow,maxflow,numBranchCategories)
+#            norm = mpl.colors.BoundaryNorm(bounds,256)
+#            colorbar_branch = mpl.colorbar.ColorbarBase(
+#                ax_cb_branch, cmap=colormap, norm=norm, boundaries=bounds,
+#                spacing='uniform', orientation='vertical')
+#            colorbar_branch.set_label('Branch flow')
+#        #Colorbar for branch sensitivity
+#        elif branchtype == 'sensitivity':
+#            ax_cb_branch = fig.add_axes((0.85, 0.125, 0.03, 0.75))
+#            colormap = plt.get_cmap('hot')
+#            #norm = mpl.colors.Normalize(0,abs(minsense))
+#            bounds = np.linspace(0,abs(minsense),numBranchCategories)
+#            norm = mpl.colors.BoundaryNorm(bounds,256)
+#            colorbar_branch = mpl.colorbar.ColorbarBase(
+#                ax_cb_branch, cmap=colormap, norm=norm, boundaries=bounds,
+#                spacing='uniform', orientation='vertical')
+#            colorbar_branch.set_label('Branch sensitivity')
+        
         
         return
         # End plotGridMap
@@ -1168,9 +1263,11 @@ class Results(object):
                 #print "\tGenerator production = " + str(genProd)
         return totalProduction
         
-    def getAllGeneratorProduction(self, timeMaxMin):
+    def getAllGeneratorProduction(self, timeMaxMin=None):
         #Returns all production [MWh] for all generators in the timerange 'timeMaxMin'
-        
+        if timeMaxMin is None:
+            timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
+
         totGenNumbers = self.grid.generator.numGenerators()
         totalProduction = 0
         for genNumber in range(0, totGenNumbers):
