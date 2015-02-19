@@ -480,6 +480,7 @@ class Results(object):
         #powerinflow = db.getInflow(timeMaxMin,storageindx)
 
         ax1.plot(timerange,generatoroutput,'-r',label="output")
+        ax1.set_ylim(ymin=0)
 
 
         # Power inflow (if generator has nonzero inflow factor)
@@ -497,6 +498,7 @@ class Results(object):
             ax1.plot(timerange,pump_output,'-c', label="pumping")
         
         # Storage filling level (if generator has storage)
+        ax2=None        
         if generator_index in self.storage_idx_generators:
             storagefilling = self.db.getResultStorageFilling(
                 generator_index,timeMaxMin)
@@ -506,8 +508,12 @@ class Results(object):
             ax2 = plt.twinx() #separate y axis
             ax2.plot(timerange,storagefilling,'-g', label='storage')
             ax2.legend(loc="upper right")
+            ax2.set_ylim(ymin=0)
                      
-        ax1.legend(loc="upper left")
+        lgd=ax1.legend(loc="upper left")
+        if ax2 is not None:
+            ax2.add_artist(lgd)
+            ax1.legend=None
         nodeidx = self.grid.node.name.index(
             self.grid.generator.node[generator_index])
         plt.title("Generator %d (%s) at node %d (%s)" 
@@ -634,8 +640,9 @@ class Results(object):
         return sorted_list
         
         
-    def plotGenerationPerArea(self,area,timeMaxMin=None,fill=False,
-                              reversed_order=False,net_import=True):
+    def plotGenerationPerArea(self,area,timeMaxMin=None,fill=True,
+                              reversed_order=False,net_import=True,
+                              loadshed=True):
         '''Show generation per area 
         
         Parameters
@@ -646,6 +653,7 @@ class Results(object):
         fill (Boolean) - whether use filled plot
         reversed_order - whether to reverse order of generator types
         net_import - whether to include net import in graph
+        loadshed - whether to include unmet demand
         '''
         
         if timeMaxMin is None:
@@ -688,13 +696,34 @@ class Results(object):
             ax.plot(timerange,agg,
                     linestyle=':',linewidth=2,color='black',
                     label='net import')
+        if loadshed:
+            loadshed = self.getLoadheddingInArea(area,timeMaxMin)
+            label = 'Load shed'
+            col = 'dimgray'
+            if fill:
+                aggregated = [x+y for x,y in zip(loadshed,fillfrom)]
+                #ax.fill_between(timerange,y1=aggregated,y2=fillfrom,
+                #                facecolor=col)
+                #ax.plot([],[],color=col,linewidth=10,
+                #        label=label)
+                ax.plot(timerange,aggregated,linestyle='--',
+                        color=col,label=label)
+                fillfrom = aggregated
+            else:
+                ax.plot(timerange,loadshed,linestyle='--',
+                        color=col,label=label)
+                                
             
         #plt.legend()
         handles, labels = ax.get_legend_handles_labels()
         handles.reverse()
         labels.reverse()
-        plt.legend(handles, labels, loc="upper right")
-                   #fancybox=True, framealpha=0.5)
+        plt.legend(handles, labels, loc=2,
+                   bbox_to_anchor=(1.05,1), borderaxespad=0.0)
+
+        if fill:
+            plt.ylim(ymin=0)
+            
         plt.title("Generation in %s"%(area))
         plt.show()
         return
@@ -923,25 +952,26 @@ class Results(object):
             utilisation = self.getAverageUtilisation(timeMaxMin)
             branch_value = utilisation
             branch_colormap = plt.get_cmap('hot')
-            branch_label = 'Branch utilisation, average'
+            branch_label = 'Branch utilisation'
         elif branchtype=='capacity':
             cap = self.grid.branch.capacity
             branch_value = np.asarray(cap)
+            maxcap = np.nanmax(branch_value)
             branch_colormap = plt.get_cmap('hot')
-            branch_label = 'Branch capacity (MW)'
+            branch_label = 'Branch capacity'
             if filter_branch is None:
                 # need an upper limit to avoid crash due to inf capacity
-                filter_branch = [0,5000]
+                filter_branch = [0,np.round(maxcap,-2)+100]
         elif branchtype=='flow':
             avgflow = self.getAverageBranchFlows(timeMaxMin)[2]
             branch_value = np.asarray(avgflow)
             branch_colormap = plt.get_cmap('hot')
-            branch_label = 'Branch flow, average (MW)'
+            branch_label = 'Branch flow'
         elif branchtype=='sensitivity':
             avgsense = self.getAverageBranchSensitivity(timeMaxMin)
-            branch_value = avgsense
+            branch_value = -avgsense
             branch_colormap = plt.get_cmap('hot')
-            branch_label = 'Branch capacity sensitivity, average (EUR/MW)'
+            branch_label = 'Branch sensitivity'
             # These sensitivities are mostly negative 
             # (reduced cost by increasing branch capacity)
             #minsense = np.nanmin(avgsense)
@@ -1058,12 +1088,12 @@ class Results(object):
             node_plot_colorbar = False
         elif nodetype=='nodalprice':
             avgprice = self.getAverageNodalPrices(timeMaxMin)
-            node_label = 'Nodal price (EUR/MWh)'
+            node_label = 'Nodal price'
             node_value = avgprice
             node_colormap = cm.jet
         elif nodetype=='energybalance':
             avg_energybalance = self.getAverageEnergyBalance(timeMaxMin)
-            node_label = 'Nodal energy balance (MW)'
+            node_label = 'Nodal energy balance'
             node_value = avg_energybalance
             node_colormap = cm.hot
         else:

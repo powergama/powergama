@@ -754,9 +754,10 @@ class Database(object):
         con = db.connect(self.filename)
         with con:        
             cur = con.cursor()
-            cur.execute("SELECT loadshed FROM Res_Nodes "
+            cur.execute("SELECT SUM(loadshed) FROM Res_Nodes "
                 +"WHERE timestep>=? AND timestep<? AND indx IN "
                 +" (SELECT indx FROM Grid_Nodes WHERE area IN (?))"
+                +" GROUP BY timestep"
                 +" ORDER BY timestep",
                 (timeMaxMin[0],timeMaxMin[-1],area))
             rows = cur.fetchall()
