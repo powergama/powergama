@@ -371,6 +371,21 @@ class Results(object):
 
         return generationcost
 
+    def getResultGeneratorSpilled(self,generatorindx,timeMaxMin=None):
+        '''Get spilled inflow time series for given generator
+        
+        Parameters
+        ----------
+        generatorindx (int)
+            index ofgenerator
+        timeMaxMin (list) (default = None)
+            [min, max] - lower and upper time interval
+        '''
+        if timeMaxMin is None:
+            timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
+        v = self.db.getResultGeneratorSpilled(generatorindx,timeMaxMin)
+        return v
+        
               
     def plotNodalPrice(self,nodeIndx,timeMaxMin=None):
         '''Show nodal price in single node
@@ -551,6 +566,7 @@ class Results(object):
             for t in timerange],'-b', label="fixed load")
 
         # Flexible load  (if consumer has nonzero flexible load)
+        ax2=None
         if self.grid.consumer.flex_fraction[consumer_index] > 0:
             flexload_power = self.db.getResultFlexloadPower(
                 consumer_index,timeMaxMin)
@@ -567,7 +583,10 @@ class Results(object):
             ax2.plot(timerange,storagefilling,'-g', label='storage')
             ax2.legend(loc="upper right")
             
-        ax1.legend(loc="upper left")
+        lgd=ax1.legend(loc="upper left")
+        if ax2 is not None:
+            ax2.add_artist(lgd)
+            ax1.legend=None
         nodeidx = self.grid.node.name.index(
             self.grid.generator.node[consumer_index])
         plt.title("Consumer %d at node %d (%s)" 

@@ -658,6 +658,27 @@ class Database(object):
             values = [row[0] for row in rows]        
         return values
 
+    def getResultGeneratorSpilled(self,generatorindx,timeMaxMin):
+        '''Get spilled power time series for specified generator'''
+        
+        if not isinstance(generatorindx,list): 
+            generatorindx = [generatorindx]
+        if len(generatorindx)==0:
+            return None
+        con = db.connect(self.filename)
+        with con:        
+            cur = con.cursor()
+            cur.execute("SELECT timestep,SUM(inflow_spilled) "
+                +"FROM Res_Generators "
+                +"WHERE timestep>=? AND timestep<? AND indx IN ("
+                +"".join(["?," for i in range(len(generatorindx)-1)])+"?"                
+                +")"
+                +" GROUP BY timestep ORDER BY timestep",
+                (timeMaxMin[0],timeMaxMin[-1])+tuple(generatorindx))
+            rows = cur.fetchall()
+            output = [row[1] for row in rows]        
+        return output
+ 
     def getResultGeneratorPower(self,generatorindx,timeMaxMin):
         '''Get power output time series for specified generator'''
         
