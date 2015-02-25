@@ -210,8 +210,15 @@ class Results(object):
         loadshed = np.asarray(loadshed,dtype=float)
         return loadshed
 
+    def getLoadsheddingPerNode(self,timeMaxMin=None):
+        '''get loadshedding sum per node'''
+        timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
 
+        loadshed_per_node = self.db.getResultLoadheddingSum(timeMaxMin)
+        return loadshed_per_node
+        
     def getLoadheddingSums(self,timeMaxMin=None):
+        '''get loadshedding sum per area'''
         if timeMaxMin is None:
             timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
 
@@ -880,7 +887,7 @@ class Results(object):
         Parameters
         ----------
         nodetype (str) (default = "")
-            "", "area", "nodalprice", "energybalance"
+            "", "area", "nodalprice", "energybalance", "loadshedding"
         branchtype (str) (default = "")
             "", "capacity", "area", "utilisation", "flow", "sensitivity"
         dcbranchtype (str) (default = "")
@@ -904,7 +911,7 @@ class Results(object):
 
         fig = plt.figure()
         data = self.grid
-        res = self
+        #res = self
         
         if latlon is None:
             lat_max =  max(data.node.lat)+1
@@ -1019,61 +1026,7 @@ class Results(object):
         line_segments_ac.set_array(branch_value)
         ax=plt.axes()    
         ax.add_collection(line_segments_ac)
-
-#        for j in range(len(branch_lat1)):
-#            if branchtype=='area':
-#                if areas[idx_from[j]] == areas[idx_to[j]]:
-#                    col = colours_b[allareas.index(areas[idx_from[j]])]
-#                    lwidth = 1
-#                else:
-#                    col = 'black'
-#                    lwidth = 4
-#            elif branchtype=='utilisation':
-#                cap = res.grid.branch.capacity[j]
-#                #print "utilisation cat=",category
-#                if cap == np.inf:
-#                    col = 'grey'
-#                    lwidth = 1
-#                else:
-#                    category = math.floor(utilisation[j]*(numBranchCategories-1))
-#                    col = colours_b[category]
-#                    lwidth = 2
-#            elif branchtype=='flow':
-#                maxflow = max(avgflow)
-#                minflow = min(avgflow)
-#                category = math.floor(
-#                    avgflow[j]/maxflow*(numBranchCategories-1))
-#                col = colours_b[category]
-#                lwidth = 1
-#                if category*2 > numBranchCategories:
-#                    lwidth = 2
-#            elif branchtype=='sensitivity':
-#                if j in res.idxConstrainedBranchCapacity:
-#                    idx = res.idxConstrainedBranchCapacity.index(j)
-#                    #idx = j
-#                    if not  np.isnan(avgsense[idx]) and minsense!=0:
-#                        category = math.floor(
-#                            avgsense[idx]/minsense*(numBranchCategories-1))
-#                        #print "sense cat=",category
-#                        col = colours_b[category]
-#                        lwidth = 2
-#                    else:
-#                        #NAN sensitivity (not returned by solver)
-#                        #Or all sensitivities are zero
-#                        col='grey'
-#                        lwidth = 2
-#                else:
-#                    col = 'grey'
-#                    lwidth = 1
-#            else:
-#                lwidth = 1
-#                col = 'black'
-                 
-            #m.drawgreatcircle(branch_lon1[j],branch_lat1[j],\
-            #                  branch_lon2[j],branch_lat2[j],\
-            #                  linewidth=lwidth,color=col,zorder=1)
-
-        
+      
 
         # DC Branches
         idx_from = data.dcbranch.node_fromIdx(data.node)
@@ -1091,11 +1044,7 @@ class Results(object):
     
         ax.add_collection(line_segments_dc)
         
-
-                              
-                
         # Nodes
-                
         node_plot_colorbar = True
         if nodetype=='area':
             areas = data.node.area
@@ -1115,6 +1064,10 @@ class Results(object):
             node_label = 'Nodal energy balance'
             node_value = avg_energybalance
             node_colormap = cm.hot
+        elif nodetype=='loadshedding':
+            node_value = self.getLoadsheddingPerNode(timeMaxMin)
+            node_label = 'Loadshedding'
+            node_colormap = cm.hot
         else:
             node_value = 'dimgray'
             node_colormap = cm.jet
@@ -1122,9 +1075,6 @@ class Results(object):
             node_plot_colorbar  = False
         
 
-        #if filter_node is not None:
-        #    node_value = [min(max(v,filter_node[0]),filter_node[1]) 
-        #                    for v in node_value]
         x, y = m(data.node.lon,data.node.lat)
         sc=m.scatter(x,y,marker='o',c=node_value, cmap=node_colormap,
                      zorder=2,s=dotsize)           
@@ -1133,45 +1083,12 @@ class Results(object):
         if filter_node is not None:
             sc.set_clim(filter_node[0], filter_node[1])
             
-#        if nodetype == 'area':
-#            for co in range(len(allareas)):
-#                co_nodes = [i for i, v in enumerate(data.node.area) 
-#                            if v==allareas[co]]
-#                co_x = [x[i] for i in co_nodes]
-#                co_y = [y[i] for i in co_nodes]
-#                col = colours_co[co]
-#                sc=m.scatter(co_x,co_y,marker='o',color=col, 
-#                          zorder=2,s=dotsize)
-#        elif nodetype == 'nodalprice':
-#            if filter_price != None:
-#                for index, price in enumerate(avgprice):
-#                    if (price > filter_price[1]):
-#                        avgprice[index] = filter_price[1]
-#                    elif (price < filter_price[0]):
-#                        avgprice[index] = filter_price[0]
-#            sc=m.scatter(x,y,marker='o',c=avgprice, cmap=cm.jet, 
-#                        zorder=2,s=dotsize)            
             # #TODO: Er dette nødvendig lenger, Harald?
             # #nodes with NAN nodal price plotted in gray:
             # for i in range(len(avgprice)):
                 # if np.isnan(avgprice[i]):
                     # m.scatter(x[i],y[i],c='dimgray',
                               # zorder=2,s=dotsize)
-#        elif nodetype == 'energybalance':
-#            if filter_node != None:
-#                for index, price in enumerate(avg_energybalance):
-#                    if (price > filter_node[1]):
-#                        avg_energybalance[index] = filter_node[1]
-#                    elif (price < filter_node[0]):
-#                        avg_energybalance[index] = filter_node[0]
-#            sc=m.scatter(x,y,marker='o',c=avg_energybalance, cmap=cm.hot, 
-#                        zorder=2,s=dotsize)
-#            
-#        else:
-#            col='dimgray'
-#            sc=m.scatter(x,y,marker='o',color=col, 
-#                      zorder=2,s=dotsize)
-#            #cb=m.colorbar()
         
         
         #NEW Colorbar for nodes
@@ -1197,84 +1114,7 @@ class Results(object):
         
         plt.title('Nodes (%s) and branches (%s)' %(nodetype,branchtype))
         plt.show()
-        
-        #Adding legends and colorbars
-        if branchtype == '':
-            ax_cb_node_offset = 0.15
-        else:
-            ax_cb_node_offset = 0
-            
-#        #Colorbar for nodal price
-#        if nodetype == 'nodalprice':
-#            ax_cb_node = fig.add_axes((0.70+ax_cb_node_offset, 0.125,0.03,0.75))
-#            colormap = plt.get_cmap('jet')
-#            #norm = mpl.colors.Normalize(min(avgprice), max(avgprice))
-#            #colorbar_node = mpl.colorbar.ColorbarBase(ax_cb_node, cmap=colormap, norm=norm, orientation='vertical')
-#            #colorbar_node.set_label('Nodal price')
-#        elif nodetype == 'energybalance':
-#            ax_cb_node = fig.add_axes((0.70+ax_cb_node_offset, 0.125,0.03,0.75))
-#            colormap = plt.get_cmap('hot')
-#            #norm = mpl.colors.Normalize(
-#            #    #-1*np.std(avg_energybalance), 1*np.std(avg_energybalance))
-#            #    min(avg_energybalance), max(avg_energybalance))
-#            #colorbar_node = mpl.colorbar.ColorbarBase(
-#            #    ax_cb_node, cmap=colormap, norm=norm, orientation='vertical')
-#            #colorbar_node.set_label('Energy balance')            
-#        elif nodetype == 'area':
-#            #Legend for nodal areas
-#            patches = []
-#            p_labels = []
-#            for country in range(len(allareas)):
-#                patches.append(mpl.patches.Patch(color=colours_co[country]))
-#                p_labels.append(allareas[country])
-#            fig.legend(patches, p_labels, bbox_to_anchor=(0.75+ax_cb_node_offset,0.15,0.03,0.75), \
-#                        title='AREA', handlelength=0.7,handletextpad=0.4, frameon=False)
-#        #Legend for branch area
-#        if branchtype == 'area':
-#            patches = []
-#            p_labels = []
-#            for country in range(len(allareas)):
-#                patches.append(mpl.patches.Patch(color=colours_b[country]))
-#                p_labels.append(allareas[country])
-#            patches.append(mpl.patches.Patch(color='black'))
-#            p_labels.append('INT')
-#            fig.legend(patches, p_labels, bbox_to_anchor=(0.9,0.15,0.03,0.75), \
-#                        title='BRANCH', handlelength=0.7,handletextpad=0.4, frameon=False)
-
-#        #Colorbar for branch utilisation    
-#        elif branchtype == 'utilisation':
-#            ax_cb_branch = fig.add_axes((0.85, 0.125, 0.03, 0.75))
-#            colormap = plt.get_cmap('hot')
-#            bounds = np.linspace(0,1,numBranchCategories)
-#            norm = mpl.colors.BoundaryNorm(bounds,256)
-#            colorbar_branch = mpl.colorbar.ColorbarBase(
-#                ax_cb_branch, cmap=colormap, norm=norm, boundaries=bounds,
-#                spacing='uniform', orientation='vertical')
-#            colorbar_branch.set_label('Branch utilisation')
-#        #Colorbar for branch flow
-#        elif branchtype == 'flow':
-#            ax_cb_branch = fig.add_axes((0.85, 0.125, 0.03, 0.75))
-#            colormap = plt.get_cmap('hot')
-#            #norm = mpl.colors.Normalize(minflow,maxflow)
-#            bounds = np.linspace(minflow,maxflow,numBranchCategories)
-#            norm = mpl.colors.BoundaryNorm(bounds,256)
-#            colorbar_branch = mpl.colorbar.ColorbarBase(
-#                ax_cb_branch, cmap=colormap, norm=norm, boundaries=bounds,
-#                spacing='uniform', orientation='vertical')
-#            colorbar_branch.set_label('Branch flow')
-#        #Colorbar for branch sensitivity
-#        elif branchtype == 'sensitivity':
-#            ax_cb_branch = fig.add_axes((0.85, 0.125, 0.03, 0.75))
-#            colormap = plt.get_cmap('hot')
-#            #norm = mpl.colors.Normalize(0,abs(minsense))
-#            bounds = np.linspace(0,abs(minsense),numBranchCategories)
-#            norm = mpl.colors.BoundaryNorm(bounds,256)
-#            colorbar_branch = mpl.colorbar.ColorbarBase(
-#                ax_cb_branch, cmap=colormap, norm=norm, boundaries=bounds,
-#                spacing='uniform', orientation='vertical')
-#            colorbar_branch.set_label('Branch sensitivity')
-        
-        
+                
         return
         # End plotGridMap
  
@@ -1348,10 +1188,12 @@ class Results(object):
 
     def writeProductionOverview(self, areas, types, filename=None, 
                                 timeMaxMin=None, TimeUnitCorrectionFactor=1):
-        #Write an .csv overview of the production[MWh] in timespan 'timeMaxMin' with the different areas and types as headers.
-        #The vectors 'areas' and 'types' becomes headers (column- and row headers), but the different elements
-        #of 'types' and 'areas' are also the key words in the search function 'getAreaTypeProduction'.
-        #The vectors 'areas' and 'types' can be of any length. 
+        '''
+		Write a .csv overview of the production[MWh] in timespan 'timeMaxMin' with the different areas and types as headers.
+        The vectors 'areas' and 'types' becomes headers (column- and row headers), but the different elements
+        of 'types' and 'areas' are also the key words in the search function 'getAreaTypeProduction'.
+        The vectors 'areas' and 'types' can be of any length. 
+		'''
 
         if timeMaxMin is None:
             timeMaxMin = [self.timerange[0],self.timerange[-1] + 1]
