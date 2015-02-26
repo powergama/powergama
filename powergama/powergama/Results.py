@@ -653,7 +653,7 @@ class Results(object):
         return
         
     
-    def gentypes_ordered_by_fuelcost(self,area):
+    def gentypes_ordered_by_fuelcost(self):
         generators = self.grid.getGeneratorsPerType()
         gentypes = generators.keys()
         fuelcosts = []
@@ -690,7 +690,7 @@ class Results(object):
         plt.figure()
         ax = plt.subplot(111)
         generators = self.grid.getGeneratorsPerAreaAndType()
-        gentypes_ordered = self.gentypes_ordered_by_fuelcost(area)
+        gentypes_ordered = self.gentypes_ordered_by_fuelcost()
         if reversed_order:
             gentypes_ordered.reverse()
         numCurves = len(gentypes_ordered)+1
@@ -1118,6 +1118,71 @@ class Results(object):
         return
         # End plotGridMap
  
+    def plotEnergyMix(self,areas=None,timeMaxMin=None,relative=False):
+        '''
+        generation mix for specified areas, as stacked bars
+        
+        Parameters
+        ==========
+        areas = list of areas to include, default=None means include all
+        timeMaxMin = [min,max] timerange
+        relative = plot absolute (false) or relative (true) values
+        '''        
+        if timeMaxMin is None:
+            timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
+        #timerange = range(timeMaxMin[0],timeMaxMin[-1])
+        #fillfrom=[0]*len(timerange)
+        #count = 0
+        print("Getting energy output from all generators...")
+        gen_output=self.db.getResultGeneratorPowerSum(timeMaxMin)
+        print("Sorting and plotting...")
+        all_generators = self.grid.getGeneratorsPerAreaAndType()
+        if areas is None:
+            areas = all_generators.keys()
+        #gentypes_ordered = self.gentypes_ordered_by_fuelcost(area)
+        #gentypes = self.grid.getAllGeneratorTypes()
+        gentypes = self.gentypes_ordered_by_fuelcost()
+        if relative:
+            prodsum={}
+            for ar in areas:
+                flatlist = [v for sublist in all_generators[ar].values() 
+                            for v in sublist]
+                prodsum[ar] = sum([gen_output[i] for i in flatlist])
+                                
+        plt.figure()
+        ax = plt.subplot(111)
+        width = 0.8
+        previous = [0]*len(areas)
+        numCurves = len(gentypes)+1
+        colours = cm.hsv(np.linspace(0, 1, numCurves))
+        count=0
+        ind = range(len(areas))
+        for typ in gentypes:
+            A=[]
+            for ar in areas:
+                if typ in all_generators[ar]:
+                    prod = sum([gen_output[i] 
+                                    for i in all_generators[ar][typ]])
+                    if relative:
+                        prod = prod/prodsum[ar]
+                    A.append(prod)
+                else:
+                    A.append(0)
+                
+            plt.bar(ind,A, width,label=typ,
+                    bottom=previous,color=colours[count])
+            previous = [previous[i]+A[i] for i in range(len(A))]
+            count = count+1
+        plt.legend()
+        handles, labels = ax.get_legend_handles_labels()
+        handles.reverse()
+        labels.reverse()
+        plt.legend(handles, labels, loc=2,
+                   bbox_to_anchor=(1.05,1), borderaxespad=0.0)
+        plt.xticks(np.arange(len(areas))+width/2., tuple(areas) )
+        plt.title("Energy mix")
+        plt.show()
+        
 
     def node2area(self, nodeName):
         '''name of a single node as input and return the index of the node.''' 
