@@ -407,8 +407,226 @@ class Results(object):
         v = self.db.getResultGeneratorSpilled(generatorindx,timeMaxMin)
         return v
         
+    def _node2area(self, nodeName):
+        '''Returns the area of a spacified node''' 
+        #Is handy when you need to access more information about the node, 
+        #but only the node name is avaiable. (which is the case in the generator file)
+        try:
+            nodeIndex = self.grid.node.name.index(nodeName)
+            return self.grid.node.area[nodeIndex]
+        except:
+            return
+            
+    def _getAreaTypeProduction(self, area, generatorType, timeMaxMin):
+        '''
+        Returns total production for specified area nd generator type
+        '''
+        
+        print("Looking for generators of type " + str(generatorType) + ", in " + str(area))
+        print("Number of generator to run through: " + str(self.grid.generator.numGenerators()))
+        totalProduction = 0
+        
+        
+        for genNumber in range(0, self.grid.generator.numGenerators()):
+            genNode = self.grid.generator.node[genNumber]
+            genType = self.grid.generator.gentype[genNumber]
+            genArea = self._node2area(genNode)
+            #print str(genNumber) + ", " + genName + ", " + genNode + ", " + genType + ", " + genArea
+            if (genType == generatorType) and (genArea == area):
+                #print "\tGenerator is of right type and area. Adding production"                
+                genProd = sum(self.db.getResultGeneratorPower(genNumber, 
+                                                              timeMaxMin))
+                totalProduction += genProd
+                #print "\tGenerator production = " + str(genProd)
+        return totalProduction
+        
+    def getAllGeneratorProductionOBSOLETE(self, timeMaxMin=None):
+        '''Returns all production [MWh] for all generators'''
+        if timeMaxMin is None:
+            timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
+
+        totGenNumbers = self.grid.generator.numGenerators()
+        totalProduction = 0
+        for genNumber in range(0, totGenNumbers):
+            genProd = sum(self.db.getResultGeneratorPower(genNumber, 
+                                                          timeMaxMin))
+            print(str(genProd))
+            totalProduction += genProd
+            print("Progression: " + str(genNumber+1) + " of " 
+                    + str(totGenNumbers))
+        return totalProduction
+    
+    def _productionOverview(self, areas, types, timeMaxMin, 
+                           TimeUnitCorrectionFactor):
+        '''
+        Returns a matrix with sum of generator production per area and type
+        
+        This function is manly used as the calculation part of the 
+        writeProductionOverview Contains just numbers (production[MWH] for 
+        each type(columns) and area(rows)), not headers
+        '''
+        
+        numAreas = len(areas)
+        numTypes = len(types)
+        resultMatrix = np.zeros((numAreas, numTypes))
+        for areaIndex in range(0, numAreas):
+            for typeIndex in range(0, numTypes):
+                prod = self._getAreaTypeProduction(areas[areaIndex], types[typeIndex], timeMaxMin)
+                print("Total produced " + types[typeIndex] + " energy for " 
+                        + areas[areaIndex] + " equals: " + str(prod))
+                resultMatrix[areaIndex][typeIndex] = prod*TimeUnitCorrectionFactor
+        return resultMatrix 
+        
+
+    def writeProductionOverview(self, areas, types, filename=None, 
+                                timeMaxMin=None, TimeUnitCorrectionFactor=1):
+        '''
+        Export production overview to CSV file
+        
+        Write a .csv overview of the production[MWh] in timespan 'timeMaxMin' 
+        with the different areas and types as headers.
+        The vectors 'areas' and 'types' becomes headers (column- and row 
+        headers), but the different elements
+        of 'types' and 'areas' are also the key words in the search function
+        'getAreaTypeProduction'.
+        The vectors 'areas' and 'types' can be of any length. 
+		'''
+
+        if timeMaxMin is None:
+            timeMaxMin = [self.timerange[0],self.timerange[-1] + 1]
+
+            
+        corner = "Countries"
+        numAreas = len(areas)
+        numTypes = len(types)        
+        prodMat = self._productionOverview(areas, types, timeMaxMin, TimeUnitCorrectionFactor)
+        if filename is not None:
+            with open(filename, "wb") as f:
+                writer = csv.writer(f)
+                types.insert(0, corner)
+                writer.writerow(types)
+                for i in range(0,numAreas):
+                    row = [areas[i]]
+                    for j in range(0, numTypes):
+                        row.append(str(prodMat[i][j]))
+                    writer.writerow(row)        
+        else:
+            title=""
+            for j in types:
+                title = title + "\t" + j
+            print("Area" + title)
+            for i in range(0,numAreas):
+                print(areas[i] + '\t%s' % '\t'.join(map(str,prodMat[i])))
+                
+    def getAverageInterareaBranchFlow(self, filename=None, timeMaxMin=None):
+        ''' Calculate average flow in each direction and total flow for 
+        inter-area branches. Requires sqlite version newer than 3.6
+       
+        Parameters
+        ----------
+        filename : string, optional
+            if a filename is given then the information is stored to file.
+            else the information is printed to console
+        timeMaxMin : list with two integer values, or None, optional
+            time interval for the calculation [start,end]
+            
+        Returns
+        -------
+        List with values for each inter-area branch:
+        [flow from 1 to 2, flow from 2 to 1, average absolute flow]
+        '''
+        
+        # Version control of database module. Must be 3.7.x or newer
+        major = int(list(self.db.sqlite_version)[0])
+        minor = int(list(self.db.sqlite_version)[2])
+        version = major + minor / 10.0
+        # print version
+        if version < 3.7 :
+            print('current SQLite version: ', self.db.sqlite_version)
+            print('getAverageInterareaBranchFlow() requires 3.7.x or newer')
+            return
+            
+        if timeMaxMin is None:
+            timeMaxMin = [self.timerange[0],self.timerange[-1] + 1]
+    
+        results = self.db.getAverageInterareaBranchFlow(timeMaxMin)
+        
+        if filename is not None:
+            headers = ('branch','fromArea','toArea','average negative flow',
+                       'average positive flow','average flow')
+            with open(filename, "wb") as f:
+                writer = csv.writer(f)
+                writer.writerow(headers)
+                for row in results:
+                    writer.writerow(row) 
+        else:
+            for x in results:
+                print(x)
+            
+        return results
+
+    def getAverageImportExport(self,area,timeMaxMin=None):
+        '''Return average import and export for a specified area'''
+        
+        if timeMaxMin is None:
+            timeMaxMin = [self.timerange[0],self.timerange[-1] + 1]
+        ia =  self.getAverageInterareaBranchFlow(timeMaxMin=timeMaxMin)
+        
+        # export: A->B pos flow + A<-B neg flow
+        sum_export = (sum([b[4] for b in ia if b[1]==area])
+                        -sum([b[3] for b in ia if b[2]==area]) )
+        # import: A->B neg flow + A<-B pos flow
+        sum_import = (-sum([b[3] for b in ia if b[2]==area])
+                        +sum([b[4] for b in ia if b[2]==area ]) )
+        return dict(exp=sum_export,imp=sum_import)
+        
+
+    def getNetImport(self,area,timeMaxMin=None):        
+        '''Return time series for net import for a specified area'''
+        if timeMaxMin is None:
+            timeMaxMin = [self.timerange[0],self.timerange[-1] + 1]
+            
+        # find the associated branches
+        br = self.grid.getInterAreaBranches(area_to=area,acdc='ac')
+        br_p = br['branches_pos']
+        br_n = br['branches_neg']
+        dcbr = self.grid.getInterAreaBranches(area_to=area,acdc='dc')
+        dcbr_p = dcbr['branches_pos']
+        dcbr_n = dcbr['branches_neg']
+        
+        # AC branches
+        ie =  self.db.getBranchesSumFlow(branches_pos=br_p,branches_neg=br_n,
+                                         timeMaxMin=timeMaxMin,
+                                         acdc='ac')
+        # DC branches
+        dcie =  self.db.getBranchesSumFlow(branches_pos=dcbr_p,
+                                             branches_neg=dcbr_n,
+                                             timeMaxMin=timeMaxMin,
+                                             acdc='dc')
+                                         
+        if ie['pos'] and ie['neg']:
+            res_ac = [a-b for a,b in zip(ie['pos'],ie['neg'])]
+        elif ie['pos']:
+            res_ac = ie['pos']
+        elif ie['neg']:
+            res_ac = [-a for a in ie['neg']]
+        else:
+            res_ac = [0]*(timeMaxMin[-1]-timeMaxMin[0]+1)   
+
+        if dcie['pos'] and dcie['neg']:
+            res_dc = [a-b for a,b in zip(dcie['pos'],dcie['neg'])]
+        elif dcie['pos']:
+            res_dc = dcie['pos']
+        elif dcie['neg']:
+            res_dc = [-a for a in dcie['neg']]
+        else:
+            res_dc = [0]*(timeMaxMin[-1]-timeMaxMin[0]+1)   
+            
+        res = [a+b for a,b in zip(res_ac,res_dc)]
+        return res
+        
               
-    def plotNodalPrice(self,nodeIndx,timeMaxMin=None):
+    def plotNodalPrice(self,nodeIndx,timeMaxMin=None,showTitle=True):
         '''Show nodal price in single node
         
         Parameters
@@ -430,14 +648,15 @@ class Results(object):
                 nodeIndx,timeMaxMin)
             plt.figure()
             plt.plot(timerange,nodalprice)
-            plt.title("Nodal price for node %d"
-                %(nodeIndx))
+            if showTitle:            
+                plt.title("Nodal price for node %d"
+                    %(nodeIndx))
             plt.show()
         else:
             print("Node not found")
         return
         
-    def plotAreaPrice(self,areas,timeMaxMin=None):
+    def plotAreaPrice(self,areas,timeMaxMin=None,showTitle=True):
         '''Show area price(s)
         
         Parameters
@@ -456,13 +675,14 @@ class Results(object):
         for a in areas:
             areaprice = self.getAreaPrices(a,timeMaxMin)
             plt.plot(timerange,areaprice,label=a)
-            plt.title("Area price")
+            if showTitle:
+                plt.title("Area price")
         
         plt.legend()
         plt.show()
         return
         
-    def plotStorageFilling(self,generatorIndx,timeMaxMin=None):
+    def plotStorageFilling(self,generatorIndx,timeMaxMin=None,showTitle=True):
         '''Show storage filling level (MWh) for generators with storage
         
         Parameters
@@ -482,8 +702,9 @@ class Results(object):
                 generatorIndx,timeMaxMin)
             plt.figure()
             plt.plot(timerange,storagefilling)
-            plt.title("Storage filling level for generator %d"
-                %(generatorIndx))
+            if showTitle:
+                plt.title("Storage filling level for generator %d"
+                    %(generatorIndx))
             plt.show()
         else:
             print("These are the generators with storage:")
@@ -492,7 +713,7 @@ class Results(object):
         
     
     def plotGeneratorOutput(self,generator_index,timeMaxMin=None,
-                            relativestorage=True):
+                            relativestorage=True,showTitle=True):
         '''Show output of a generator
         
         Parameters
@@ -552,17 +773,18 @@ class Results(object):
             ax1.legend=None
         nodeidx = self.grid.node.name.index(
             self.grid.generator.node[generator_index])
-        plt.title("Generator %d (%s) at node %d (%s)" 
-            % (generator_index,
-               self.grid.generator.gentype[generator_index],
-               nodeidx, 
-               self.grid.generator.node[generator_index]))
+        if showTitle:
+            plt.title("Generator %d (%s) at node %d (%s)" 
+                % (generator_index,
+                   self.grid.generator.gentype[generator_index],
+                   nodeidx, 
+                   self.grid.generator.node[generator_index]))
         plt.show()
         return
 
     def plotDemandAtLoad(self,consumer_index,timeMaxMin=None,
-                            relativestorage=True):
-        '''Show demand by a load
+                            relativestorage=True,showTitle=True):
+        '''Make a time-series plot of consumption of a specified load
         
         Parameters
         ----------
@@ -609,15 +831,17 @@ class Results(object):
             ax2.add_artist(lgd)
             ax1.legend=None
         nodeidx = self.grid.node.name.index(
-            self.grid.generator.node[consumer_index])
-        plt.title("Consumer %d at node %d (%s)" 
-            % (consumer_index, nodeidx, 
-               self.grid.consumer.node[consumer_index]))
+            self.grid.consumer.node[consumer_index])
+        if showTitle:
+            plt.title("Consumer %d at node %d (%s)" 
+                % (consumer_index, nodeidx, 
+                   self.grid.consumer.node[consumer_index]))
         plt.show()
         return
 
 
-    def plotStoragePerArea(self,area,absolute=False,timeMaxMin=None):
+    def plotStoragePerArea(self,area,absolute=False,timeMaxMin=None,
+                           showTitle=True):
         '''Show generation storage accumulated per area 
         
         Parameters
@@ -661,28 +885,16 @@ class Results(object):
             
         # plt.legend(generators[area].keys() , loc="upper right")
         plt.legend(loc="upper right")
-        plt.title("Total storage level in %s"%(area))
+        if showTitle:
+            plt.title("Total storage level in %s"%(area))
         plt.show()
 
         return
         
-    
-    def gentypes_ordered_by_fuelcost(self):
-        generators = self.grid.getGeneratorsPerType()
-        gentypes = generators.keys()
-        fuelcosts = []
-        for k in gentypes:
-            gen_this_type = generators[k]
-            fuelcosts.append(np.mean([self.grid.generator.fuelcost[i] 
-                                     for i in gen_this_type]) )
-        sorted_list = [x for (y,x) in 
-                       sorted(zip(fuelcosts,gentypes))]    
-        return sorted_list
-        
         
     def plotGenerationPerArea(self,area,timeMaxMin=None,fill=True,
                               reversed_order=False,net_import=True,
-                              loadshed=True):
+                              loadshed=True,showTitle=True):
         '''Show generation per area 
         
         Parameters
@@ -704,7 +916,7 @@ class Results(object):
         plt.figure()
         ax = plt.subplot(111)
         generators = self.grid.getGeneratorsPerAreaAndType()
-        gentypes_ordered = self.gentypes_ordered_by_fuelcost()
+        gentypes_ordered = self._gentypes_ordered_by_fuelcost()
         if reversed_order:
             gentypes_ordered.reverse()
         numCurves = len(gentypes_ordered)+1
@@ -764,12 +976,13 @@ class Results(object):
         if fill:
             plt.ylim(ymin=0)
             
-        plt.title("Generation in %s"%(area))
+        if showTitle:
+            plt.title("Generation in %s"%(area))
         plt.show()
         return
 
 
-    def plotDemandPerArea(self,areas,timeMaxMin=None):
+    def plotDemandPerArea(self,areas,timeMaxMin=None,showTitle=True):
         '''Show demand in area(s) 
         
         Parameters
@@ -808,12 +1021,13 @@ class Results(object):
             plt.plot(timerange,dem,'--',color=p.get_color())
             
         plt.legend(loc="upper right")
-        plt.title("Power demand")
+        if showTitle:
+            plt.title("Power demand")
         plt.show()
         return
 
     
-    def plotStorageValues(self,genindx, timeMaxMin=None):
+    def plotStorageValues(self,genindx, timeMaxMin=None,showTitle=True):
         '''Plot storage values (marginal prices) for generators with storage
         
         Parameters
@@ -844,10 +1058,11 @@ class Results(object):
                          label='pump threshold')
             plt.plot(timerange,nodalprice,label='nodal price')
             plt.legend()
-            plt.title("Storage value  for generator %d (%s) in %s"
-                % (genindx,
-               self.grid.generator.gentype[genindx],
-               self.grid.generator.node[genindx]))
+            if showTitle:
+                plt.title("Storage value  for generator %d (%s) in %s"
+                    % (genindx,
+                       self.grid.generator.gentype[genindx],
+                   self.grid.generator.node[genindx]))
             plt.show()
         else:
             print("These are the generators with storage:")
@@ -855,15 +1070,16 @@ class Results(object):
         return
         
             
-    def plotFlexibleLoadStorageValues(self,consumerindx, timeMaxMin=None):
+    def plotFlexibleLoadStorageValues(self,consumerindx, timeMaxMin=None,
+                                      showTitle=True):
         '''Plot storage valuesfor flexible loads
         
         Parameters
         ----------
-        consumerindx (int)
+        consumerindx : int
             index of consumer for which to make the plot
-        timeMaxMin [int,int] (default=None)
-            time interval for the plot [start,end]
+        timeMaxMin : list, [int,int]
+            time interval for the plot [start,end], or None for entire range
         '''
 
         if timeMaxMin is None:
@@ -880,9 +1096,10 @@ class Results(object):
             plt.plot(timerange,storagevalue)
             plt.plot(timerange,nodalprice)
             plt.legend(['storage value','nodal price'])
-            plt.title("Storage value  for consumer %d at %s"
-                % (consumerindx,
-               self.grid.consumer.node[consumerindx]))
+            if showTitle:
+                plt.title("Storage value  for consumer %d at %s"
+                    % (consumerindx,
+                       self.grid.consumer.node[consumerindx]))
             plt.show()
         else:
             print("These are the consumers with flexible load:")
@@ -894,30 +1111,30 @@ class Results(object):
     def plotMapGrid(self,nodetype='',branchtype='',dcbranchtype='',
                     show_node_labels=False,latlon=None,timeMaxMin=None,
                     dotsize=40, filter_node=None, filter_branch=None,
-                    draw_par_mer=True):
+                    draw_par_mer=False,showTitle=True):
         '''
         Plot results to map
         
         Parameters
         ----------
-        nodetype (str) (default = "")
+        nodetype : string
             "", "area", "nodalprice", "energybalance", "loadshedding"
-        branchtype (str) (default = "")
+        branchtype : string
             "", "capacity", "area", "utilisation", "flow", "sensitivity"
-        dcbranchtype (str) (default = "")
+        dcbranchtype : string
             ""
-        show_node_labels (bool) (default=False)
-            show node names (true/false)
-        dotsize (int) (default=40)
+        show_node_labels : boolean
+            whether to show node names (true/false)
+        dotsize : integer
             set dot size for each plotted node
-        latlon (list) (default=None)
+        latlon: list of four floats
             map area [lat_min, lon_min, lat_max, lon_max]
-        filter_node (list) (default=None)
-            [min,max] - lower and upper cutof for node value
-        filter_branch (list) (default=None)
-            [min,max] - lower and upper cutof for branch value
-        draw_par_mer (bool) (default=True)
-            draw parallels and meridians on map    
+        filter_node : list of two floats
+            [min,max] - lower and upper cutoff for node value
+        filter_branch : list of two floats
+            [min,max] - lower and upper cutoff for branch value
+        draw_par_mer : boolean
+            whether to draw parallels and meridians on map    
         '''
         
         if timeMaxMin is None:
@@ -1126,21 +1343,26 @@ class Results(object):
                 if xpt > x1 and xpt < x2 and ypt > y1 and ypt < y2:
                     plt.text(xpt+offset_x, ypt, label)
         
-        plt.title('Nodes (%s) and branches (%s)' %(nodetype,branchtype))
+        if showTitle:
+            plt.title('Nodes (%s) and branches (%s)' %(nodetype,branchtype))
         plt.show()
                 
         return
         # End plotGridMap
  
-    def plotEnergyMix(self,areas=None,timeMaxMin=None,relative=False):
+    def plotEnergyMix(self,areas=None,timeMaxMin=None,relative=False,
+                      showTitle=True):
         '''
-        generation mix for specified areas, as stacked bars
+        Plot generation mix for specified areas as stacked bars
         
         Parameters
-        ==========
-        areas = list of areas to include, default=None means include all
-        timeMaxMin = [min,max] timerange
-        relative = plot absolute (false) or relative (true) values
+        ----------
+        areas : list of sting
+            Which areas to include, default=None means include all
+        timeMaxMin : list of two integers
+            Time range, [min,max]
+        relative : boolean
+            Whether to plot absolute (false) or relative (true) values
         '''        
         if timeMaxMin is None:
             timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
@@ -1153,9 +1375,9 @@ class Results(object):
         all_generators = self.grid.getGeneratorsPerAreaAndType()
         if areas is None:
             areas = all_generators.keys()
-        #gentypes_ordered = self.gentypes_ordered_by_fuelcost(area)
+        #gentypes_ordered = self._gentypes_ordered_by_fuelcost(area)
         #gentypes = self.grid.getAllGeneratorTypes()
-        gentypes = self.gentypes_ordered_by_fuelcost()
+        gentypes = self._gentypes_ordered_by_fuelcost()
         if relative:
             prodsum={}
             for ar in areas:
@@ -1194,22 +1416,26 @@ class Results(object):
         plt.legend(handles, labels, loc=2,
                    bbox_to_anchor=(1.05,1), borderaxespad=0.0)
         plt.xticks(np.arange(len(areas))+width/2., tuple(areas) )
-        plt.title("Energy mix")
+        if showTitle:
+            plt.title("Energy mix")
         plt.show()
         
 
     def plotEnergySpilled(self,areas=None,gentypes=None,
-                          timeMaxMin=None,relative=False):
+                          timeMaxMin=None,relative=False,showTitle=True):
         '''
         spilled energy for specified areas, as stacked bars
         
         Parameters
-        ==========
-        areas = list of areas to include, default=None means include all
-        gentypes = list of generator types to include, default=None 
-                   means include all
-        timeMaxMin = [min,max] timerange
-        relative = plot absolute (false) or relative (true) values
+        ----------
+        areas : list of strings
+            which areas to include, default=None means include all
+        gentypes : list of strings
+            which generator types to include, default=None means include all
+        timeMaxMin : list of integers
+            time range [min,max] 
+        relative : boolean
+            whether to plot absolute (false) or relative (true) values
         '''        
         if timeMaxMin is None:
             timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
@@ -1220,7 +1446,7 @@ class Results(object):
         if areas is None:
             areas = all_generators.keys()
         if gentypes is None:
-            gentypes = self.gentypes_ordered_by_fuelcost()
+            gentypes = self._gentypes_ordered_by_fuelcost()
         if relative:
             prodsum={}
             for ar in areas:
@@ -1259,218 +1485,24 @@ class Results(object):
         plt.legend(handles, labels, loc=2,
                    bbox_to_anchor=(1.05,1), borderaxespad=0.0)
         plt.xticks(np.arange(len(areas))+width/2., tuple(areas) )
-        plt.title("Energy spilled")
+        if showTitle:
+            plt.title("Energy spilled")
         plt.show()
         
-        
-    def node2area(self, nodeName):
-        '''name of a single node as input and return the index of the node.''' 
-        #Is handy when you need to access more information about the node, 
-        #but only the node name is avaiable. (which is the case in the generator file)
-        try:
-            nodeIndex = self.grid.node.name.index(nodeName)
-            return self.grid.node.area[nodeIndex]
-        except:
-            return
-            
-    def getAreaTypeProduction(self, area, generatorType, timeMaxMin):
-        #Returns total production [MWh] in the timerange 'timeMaxMin' for
-        #all generators of 'generatorType' in 'area'
-        
-        print("Looking for generators of type " + str(generatorType) + ", in " + str(area))
-        print("Number of generator to run through: " + str(self.grid.generator.numGenerators()))
-        totalProduction = 0
-        
-        
-        for genNumber in range(0, self.grid.generator.numGenerators()):
-            genName = self.grid.generator.desc[genNumber]
-            genNode = self.grid.generator.node[genNumber]
-            genType = self.grid.generator.gentype[genNumber]
-            genArea = self.node2area(genNode)
-            #print str(genNumber) + ", " + genName + ", " + genNode + ", " + genType + ", " + genArea
-            if (genType == generatorType) and (genArea == area):
-                #print "\tGenerator is of right type and area. Adding production"                
-                genProd = sum(self.db.getResultGeneratorPower(genNumber, 
-                                                              timeMaxMin))
-                totalProduction += genProd
-                #print "\tGenerator production = " + str(genProd)
-        return totalProduction
-        
-    def getAllGeneratorProduction(self, timeMaxMin=None):
-        #Returns all production [MWh] for all generators in the timerange 'timeMaxMin'
-        if timeMaxMin is None:
-            timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
-
-        totGenNumbers = self.grid.generator.numGenerators()
-        totalProduction = 0
-        for genNumber in range(0, totGenNumbers):
-            genProd = sum(self.db.getResultGeneratorPower(genNumber, 
-                                                          timeMaxMin))
-            print(str(genProd))
-            totalProduction += genProd
-            print("Progression: " + str(genNumber+1) + " of " 
-                    + str(totGenNumbers))
-        return totalProduction
     
-    def productionOverview(self, areas, types, timeMaxMin, 
-                           TimeUnitCorrectionFactor):
-        #Return a matrix (numpy matrix, remember to include numpy) with productionOverview
-        #This function is manly used as the calculation part of the writeProductionOverview
-        #Contains just numbers (production[MWH] for each type(columns) and area(rows)), not headers
+    def _gentypes_ordered_by_fuelcost(self):
+        '''Return a list of generator types ordered by their mean fuel cost'''
+        generators = self.grid.getGeneratorsPerType()
+        gentypes = generators.keys()
+        fuelcosts = []
+        for k in gentypes:
+            gen_this_type = generators[k]
+            fuelcosts.append(np.mean([self.grid.generator.fuelcost[i] 
+                                     for i in gen_this_type]) )
+        sorted_list = [x for (y,x) in 
+                       sorted(zip(fuelcosts,gentypes))]    
+        return sorted_list
         
-        numAreas = len(areas)
-        numTypes = len(types)
-        resultMatrix = np.zeros((numAreas, numTypes))
-        for areaIndex in range(0, numAreas):
-            for typeIndex in range(0, numTypes):
-                prod = self.getAreaTypeProduction(areas[areaIndex], types[typeIndex], timeMaxMin)
-                print("Total produced " + types[typeIndex] + " energy for " 
-                        + areas[areaIndex] + " equals: " + str(prod))
-                resultMatrix[areaIndex][typeIndex] = prod*TimeUnitCorrectionFactor
-        return resultMatrix 
-        
-
-    def writeProductionOverview(self, areas, types, filename=None, 
-                                timeMaxMin=None, TimeUnitCorrectionFactor=1):
-        '''
-		Write a .csv overview of the production[MWh] in timespan 'timeMaxMin' with the different areas and types as headers.
-        The vectors 'areas' and 'types' becomes headers (column- and row headers), but the different elements
-        of 'types' and 'areas' are also the key words in the search function 'getAreaTypeProduction'.
-        The vectors 'areas' and 'types' can be of any length. 
-		'''
-
-        if timeMaxMin is None:
-            timeMaxMin = [self.timerange[0],self.timerange[-1] + 1]
-
-            
-        corner = "Countries"
-        numAreas = len(areas)
-        numTypes = len(types)        
-        prodMat = self.productionOverview(areas, types, timeMaxMin, TimeUnitCorrectionFactor)
-        if filename is not None:
-            with open(filename, "wb") as f:
-                writer = csv.writer(f)
-                types.insert(0, corner)
-                writer.writerow(types)
-                for i in range(0,numAreas):
-                    row = [areas[i]]
-                    for j in range(0, numTypes):
-                        row.append(str(prodMat[i][j]))
-                    writer.writerow(row)        
-        else:
-            title=""
-            for j in types:
-                title = title + "\t" + j
-            print("Area" + title)
-            for i in range(0,numAreas):
-                print(areas[i] + '\t%s' % '\t'.join(map(str,prodMat[i])))
-                
-    def getAverageInterareaBranchFlow(self, filename=None, timeMaxMin=None):
-        ''' Calculate average flow in each direction and total flow for 
-        inter-area branches. Requires sqlite version newer than 3.6
-       
-        Parameters
-        ----------
-        filename (str) (default=None)
-            if a filename is given then the information is stored to file.
-            else the information is printed to console
-        timeMaxMin [int,int] (default=None)
-            time interval for the calculation [start,end]
-            
-        Returns
-        =======
-        List with values for each inter-area branch:
-        [flow from 1 to 2, flow from 2 to 1, average absolute flow]
-        '''
-        
-        # Version control of database module. Must be 3.7.x or newer
-        major = int(list(self.db.sqlite_version)[0])
-        minor = int(list(self.db.sqlite_version)[2])
-        version = major + minor / 10.0
-        # print version
-        if version < 3.7 :
-            print('current SQLite version: ', self.db.sqlite_version)
-            print('getAverageInterareaBranchFlow() requires 3.7.x or newer')
-            return
-            
-        if timeMaxMin is None:
-            timeMaxMin = [self.timerange[0],self.timerange[-1] + 1]
-    
-        results = self.db.getAverageInterareaBranchFlow(timeMaxMin)
-        
-        if filename is not None:
-            headers = ('branch','fromArea','toArea','average negative flow',
-                       'average positive flow','average flow')
-            with open(filename, "wb") as f:
-                writer = csv.writer(f)
-                writer.writerow(headers)
-                for row in results:
-                    writer.writerow(row) 
-        else:
-            for x in results:
-                print(x)
-            
-        return results
-
-    def getAverageImportExport(self,area,timeMaxMin=None):
-        '''Return average import and export for a specified area'''
-        
-        if timeMaxMin is None:
-            timeMaxMin = [self.timerange[0],self.timerange[-1] + 1]
-        ia =  self.getAverageInterareaBranchFlow(timeMaxMin=timeMaxMin)
-        
-        # export: A->B pos flow + A<-B neg flow
-        sum_export = (sum([b[4] for b in ia if b[1]==area])
-                        -sum([b[3] for b in ia if b[2]==area]) )
-        # import: A->B neg flow + A<-B pos flow
-        sum_import = (-sum([b[3] for b in ia if b[2]==area])
-                        +sum([b[4] for b in ia if b[2]==area ]) )
-        return dict(exp=sum_export,imp=sum_import)
-        
-
-    def getNetImport(self,area,timeMaxMin=None):        
-        '''Return time series for net import for a specified area'''
-        if timeMaxMin is None:
-            timeMaxMin = [self.timerange[0],self.timerange[-1] + 1]
-            
-        # find the associated branches
-        br = self.grid.getInterAreaBranches(area_to=area,acdc='ac')
-        br_p = br['branches_pos']
-        br_n = br['branches_neg']
-        dcbr = self.grid.getInterAreaBranches(area_to=area,acdc='dc')
-        dcbr_p = dcbr['branches_pos']
-        dcbr_n = dcbr['branches_neg']
-        
-        # AC branches
-        ie =  self.db.getBranchesSumFlow(branches_pos=br_p,branches_neg=br_n,
-                                         timeMaxMin=timeMaxMin,
-                                         acdc='ac')
-        # DC branches
-        dcie =  self.db.getBranchesSumFlow(branches_pos=dcbr_p,
-                                             branches_neg=dcbr_n,
-                                             timeMaxMin=timeMaxMin,
-                                             acdc='dc')
-                                         
-        if ie['pos'] and ie['neg']:
-            res_ac = [a-b for a,b in zip(ie['pos'],ie['neg'])]
-        elif ie['pos']:
-            res_ac = ie['pos']
-        elif ie['neg']:
-            res_ac = [-a for a in ie['neg']]
-        else:
-            res_ac = [0]*(timeMaxMin[-1]-timeMaxMin[0]+1)   
-
-        if dcie['pos'] and dcie['neg']:
-            res_dc = [a-b for a,b in zip(dcie['pos'],dcie['neg'])]
-        elif dcie['pos']:
-            res_dc = dcie['pos']
-        elif dcie['neg']:
-            res_dc = [-a for a in dcie['neg']]
-        else:
-            res_dc = [0]*(timeMaxMin[-1]-timeMaxMin[0]+1)   
-            
-        res = [a+b for a,b in zip(res_ac,res_dc)]
-        return res
         
         
 def _myround(x, base=1,method='round'):
