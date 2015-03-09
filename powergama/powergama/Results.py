@@ -201,6 +201,43 @@ class Results(object):
 
         return prices
        
+    def getAreaPricesAverage(self,areas=None,timeMaxMin=None):
+        '''
+        Time average of weighted average nodal price per area 
+        '''
+        if timeMaxMin is None:
+            timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
+        if areas is None:
+            areas = self.grid.getAllAreas()
+
+        avg_nodalprices = self.getAverageNodalPrices(timeMaxMin)
+        all_loads = self.grid.getConsumersPerArea()
+        avg_areaprice = {}
+        
+        for area in areas:
+            nodes_in_area = [i for i,n in enumerate(self.grid.node.area) 
+                                if n==area]
+            node_weight = [0]*len(self.grid.node.name)
+            if area in all_loads:
+                loads = all_loads[area]
+                for ld in loads:
+                    the_node = self.grid.consumer.node[ld]
+                    the_load = self.grid.consumer.load[ld]
+                    node_indx = self.grid.node.name.index(the_node)
+                    node_weight[node_indx] += the_load                
+                sumWght = sum(node_weight)
+                node_weight = [a/sumWght for a in node_weight]                
+    
+                prices = [node_weight[i]*avg_nodalprices[i] 
+                            for i in nodes_in_area]
+            else:
+                #flat weight if there are no loads in area
+                prices = [avg_nodalprices[i]  for i in nodes_in_area]
+            avg_areaprice[area] = sum(prices)
+
+        return avg_areaprice
+
+
     def getLoadheddingInArea(self,area,timeMaxMin=None):
         if timeMaxMin is None:
             timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
@@ -405,6 +442,20 @@ class Results(object):
         if timeMaxMin is None:
             timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
         v = self.db.getResultGeneratorSpilled(generatorindx,timeMaxMin)
+        return v
+
+    def getGeneratorStorageAll(self,timeMaxMin=None):
+        '''Get stored energy for all storage generators
+        
+        Parameters
+        ----------
+        timeMaxMin (list) (default = None)
+            [min, max] - lower and upper time interval
+        '''
+        if timeMaxMin is None:
+            timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
+        v = self.db.getResultStorageFillingAll(timeMaxMin)
+        
         return v
         
     def _node2area(self, nodeName):
