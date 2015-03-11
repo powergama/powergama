@@ -645,17 +645,18 @@ class Database(object):
             values = [row[0] for row in rows]        
         return values
 
-    def getResultStorageFillingAll(self,timeMaxMin):
+    def getResultStorageFillingAll(self,timestep):
         '''Get storage filling level for all storage generators'''
         con = db.connect(self.filename)
         with con:        
             cur = con.cursor()
             cur.execute("SELECT indx,storage FROM Res_Storage "
-                +"WHERE timestep>=? AND timestep<?"
-                +" GROUP BY indx, ORDER BY indx,timestep",
-                (timeMaxMin[0],timeMaxMin[-1]))
+                +"WHERE timestep=? "
+                +" ORDER BY indx",
+                (timestep,))
             rows = cur.fetchall()     
-        return rows
+            values = [row[1] for row in rows]  
+        return values
 
     def getResultStorageValue(self,storageindx,timeMaxMin):
         '''Get storage value for storage generators'''

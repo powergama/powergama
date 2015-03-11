@@ -444,19 +444,41 @@ class Results(object):
         v = self.db.getResultGeneratorSpilled(generatorindx,timeMaxMin)
         return v
 
-    def getGeneratorStorageAll(self,timeMaxMin=None):
-        '''Get stored energy for all storage generators
+    def getGeneratorStorageAll(self,timestep):
+        '''Get stored energy for all storage generators at given time
         
         Parameters
         ----------
-        timeMaxMin (list) (default = None)
-            [min, max] - lower and upper time interval
+        timestep : int
+            timestep when storage is requested
         '''
-        if timeMaxMin is None:
-            timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
-        v = self.db.getResultStorageFillingAll(timeMaxMin)
+        v = self.db.getResultStorageFillingAll(timestep)
         
         return v
+        
+    def getGeneratorStorageValues(self,timestep):
+        '''Get value of stored energy for given time
+        
+        Parameters
+        ----------
+        timestep : int
+            when to compute value
+            
+        Returns
+        -------
+        list of int
+            Value of stored energy for all storage generators
+        
+        The method uses the storage value absolute level (basecost) per 
+        generator to compute total storage value
+        '''
+        storage_energy = self.getGeneratorStorageAll(timestep)
+        storage_values = self.grid.generator.storagevalue_abs
+        indx_storage_generators = self.grid.getIdxGeneratorsWithStorage()
+        storval = [storage_energy[i]*storage_values[v]
+                    for i,v in enumerate(indx_storage_generators)]
+        return storval 
+        
         
     def _node2area(self, nodeName):
         '''Returns the area of a spacified node''' 
