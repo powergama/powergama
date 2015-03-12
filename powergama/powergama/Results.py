@@ -415,6 +415,35 @@ class Results(object):
 
         return generationcost
 
+    def getGeneratorOutputSumPerArea(self,timeMaxMin=None):
+        '''
+        Description
+        Sums up generation per area. 
+        
+        Parameters
+        ----------
+        timeMaxMin (list) (default = None)
+            [min, max] - lower and upper time interval
+        
+        Returns
+        =======
+        array of dictionary of generation sorted per area
+        '''
+        if timeMaxMin is None:
+            timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
+
+        generation_per_gen = self.db.getResultGeneratorPowerSum(timeMaxMin)
+        areas_per_gen = [self.grid.node.area[self.grid.node.name.index(n)] 
+                    for n in self.grid.generator.node]
+                
+        allareas = self.grid.getAllAreas()
+        generation = dict()
+        for a in allareas:
+            generation[a] = sum([generation_per_gen[i] 
+                for i in range(len(areas_per_gen)) if areas_per_gen[i]==a])
+
+        return generation
+
     def getGeneratorSpilledSums(self,timeMaxMin=None):
         '''Get sum of spilled inflow for all generators
         
