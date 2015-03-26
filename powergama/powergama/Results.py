@@ -1327,8 +1327,9 @@ class Results(object):
             branch_colormap = plt.get_cmap('hot')
             branch_label = 'Branch flow'
         elif branchtype=='sensitivity':
+            branch_value = np.zeros(num_branches)
             avgsense = self.getAverageBranchSensitivity(timeMaxMin)
-            branch_value = -avgsense
+            branch_value[self.idxConstrainedBranchCapacity] = -avgsense
             branch_colormap = plt.get_cmap('hot')
             branch_label = 'Branch sensitivity'
             # These sensitivities are mostly negative 
