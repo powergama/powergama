@@ -16,7 +16,10 @@ setup(name='powergama',
 		'Development Status :: 3 - Alpha',
 		'Intended Audience :: Science/Research',
 		'License :: OSI Approved :: MIT License',
-		'Programming Language :: Python :: 2.7'
+		'Programming Language :: Python :: 2.7',
+		'Programming Language :: Python :: 3',
+		'Programming Language :: Python :: 3.3',
+		'Programming Language :: Python :: 3.4'
 	  ],
 	  keywords = 'power systems, grid integration, renewable energy',
 	  install_requires = [
