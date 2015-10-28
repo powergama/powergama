@@ -7,10 +7,10 @@ import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import matplotlib as mpl
 import numpy as np
-from mpl_toolkits.basemap import Basemap
 import math
 import powergama.database as db
 import csv
+#from mpl_toolkits.basemap import Basemap #made local to function using it
 
 class Results(object):
     '''
@@ -1238,6 +1238,9 @@ class Results(object):
         draw_par_mer : boolean
             whether to draw parallels and meridians on map    
         '''
+        
+        # make this import local to function because it is only needed here.        
+        from mpl_toolkits.basemap import Basemap
         
         if timeMaxMin is None:
             timeMaxMin = [self.timerange[0],self.timerange[-1]+1]

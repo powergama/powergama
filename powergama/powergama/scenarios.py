@@ -4,10 +4,11 @@ Module for creating different PowerGAMA scenarios by scaling grid model paramete
 according to specified input.
 '''
 
-import csv
+#import csv
+import pandas as pd
 import powergama.constants as const
 
-_QUOTINGTYPE=csv.QUOTE_MINIMAL
+#_QUOTINGTYPE=csv.QUOTE_MINIMAL
 
 def saveScenario(base_grid_data, scenario_file):
     '''
@@ -35,7 +36,7 @@ def saveScenario(base_grid_data, scenario_file):
         print("CO="+co)
         
         # Demand
-        if consumers.has_key(co):
+        if co in consumers:
             loads_this_area = [base_grid_data.consumer.load[i] 
                 for i in consumers[co]]
             load_profile = [base_grid_data.consumer.load_profile[i] 
@@ -52,12 +53,12 @@ def saveScenario(base_grid_data, scenario_file):
             data["demand_profile"][co] = demand_ref
         else:
             print("  -- no consumers -- ")
-            data["demand_annual"][co] = None
-            data["demand_profile"][co] = None
+            data["demand_annual"][co] = {}
+            data["demand_profile"][co] = {}
             
         # Generation inflow, capacity and costs
         for gentype in gentypes_grid:            
-            if generators.has_key(co) and generators[co].has_key(gentype):
+            if co in generators and gentype in generators[co]:
                         
                 inflow_this_area = [base_grid_data.generator.inflow_factor[i] 
                     for i in generators[co][gentype]]
@@ -68,13 +69,13 @@ def saveScenario(base_grid_data, scenario_file):
                 if len(inflow_this_area)>0:
                     inflow_avg = float(sum(inflow_this_area))/len(inflow_this_area)
                 else:
-                    inflow_avg = None
+                    inflow_avg = {}
 
                 storagelevel_this_area = [base_grid_data.generator.storagelevel_init[i] for i in generators[co][gentype]]
                 if len(storagelevel_this_area)>0:
                     storagelevel_avg = float(sum(storagelevel_this_area))/len(storagelevel_this_area)
                 else:
-                    storagelevel_avg = None
+                    storagelevel_avg = {}
 					
                 storval_filling_refs = [base_grid_data.generator.storagevalue_profile_filling[i] 
                     for i in generators[co][gentype]]
@@ -101,7 +102,7 @@ def saveScenario(base_grid_data, scenario_file):
                     for i in generators[co][gentype]
                     if base_grid_data.generator.storagevalue_abs[i] != 0]
                 if not storval_this_area:
-                    storval_avg = None
+                    storval_avg = {}
                 else:
                     storval_avg = float(sum(storval_this_area))/len(storval_this_area)
                 
@@ -116,23 +117,23 @@ def saveScenario(base_grid_data, scenario_file):
                         )
                     
                 # Create (empty) elements if they haven't already been created.
-                if not data.has_key("gencap_%s"%gentype):
+                if not ("gencap_%s"%gentype) in data:
                     data["gencap_%s"%gentype]={}
-                if not data.has_key("fuelcost_%s"%gentype):
+                if not ("fuelcost_%s"%gentype) in data:
                     data["fuelcost_%s"%gentype]={}
-                if not data.has_key("storage_price_%s"%gentype):
+                if not ("storage_price_%s"%gentype) in data:
                     data["storage_price_%s"%gentype]={}
-                if not data.has_key("inflow_profile_%s"%gentype):
+                if not ("inflow_profile_%s"%gentype) in data:
                     data["inflow_profile_%s"%gentype]={}
-                if not data.has_key("inflow_factor_%s"%gentype):
+                if not ("inflow_factor_%s"%gentype) in data:
                     data["inflow_factor_%s"%gentype]={}
-                if not data.has_key("storagecap_%s"%gentype):
+                if not ("storagecap_%s"%gentype) in data:
                     data["storagecap_%s"%gentype]={}
-                if not data.has_key("storage_ini_%s"%gentype):
+                if not ("storage_ini_%s"%gentype) in data:
                     data["storage_ini_%s"%gentype]={}
-                if not data.has_key("storval_filling_ref_%s"%gentype):
+                if not ("storval_filling_ref_%s"%gentype) in data:
                     data["storval_filling_ref_%s"%gentype]={}
-                if not data.has_key("storval_time_ref_%s"%gentype):
+                if not ("storval_time_ref_%s"%gentype) in data:
                     data["storval_time_ref_%s"%gentype]={}
                     
                 data["gencap_%s"%gentype][co] = gencap_MW
@@ -150,11 +151,17 @@ def saveScenario(base_grid_data, scenario_file):
         # end collecting data
                 
     # print to file
-    fieldnames = data.keys()
-    fieldnames.sort()
+    
+    df = pd.DataFrame.from_dict(data,orient='index')
+    df.to_csv(scenario_file,sep=',')
+    
+    '''    
+    #old:
     headers = areas_grid
     headers.sort()
     headers.insert(0,"PARAMETER")
+    fieldnames = list(data.keys())
+    fieldnames.sort()
     with open(scenario_file,'wb') as csvfile:
         datawriter = csv.DictWriter(csvfile, delimiter=',',fieldnames=headers,\
                             quotechar='"', quoting=_QUOTINGTYPE)
@@ -164,6 +171,7 @@ def saveScenario(base_grid_data, scenario_file):
             datarow["PARAMETER"]=fn
             datawriter.writerow(datarow)
 
+    '''
     return
 
 
@@ -192,11 +200,16 @@ def newScenario(base_grid_data, scenario_file, newfile_prefix):
     gentypes_grid = base_grid_data.getAllGeneratorTypes()
     gentypes_data = []
     
-    with open(scenario_file,'rb') as csvfile:
-        datareader = csv.DictReader(csvfile,delimiter=',',quoting=_QUOTINGTYPE)           
+    df = pd.read_csv(scenario_file,index_col=0)
+    areas_data = list(df.columns.values)
+    datadict = df.transpose().to_dict()
+    
+    #with open(scenario_file,'rb') as csvfile:
+    if True:
+        #datareader = csv.DictReader(csvfile,delimiter=',',quoting=_QUOTINGTYPE)           
  
-        areas_data = datareader.fieldnames[:]
-        del areas_data[areas_data.index("PARAMETER")]
+        #areas_data = datareader.fieldnames[:]
+        #del areas_data[areas_data.index("PARAMETER")]
         areas_nodata = list(set(areas_grid).difference(areas_data))
         areas_notingrid = list(set(areas_data).difference(areas_grid))
         areas_update = list(set(areas_grid).intersection(areas_data))
@@ -223,8 +236,10 @@ def newScenario(base_grid_data, scenario_file, newfile_prefix):
         storval_time_ref_new =  base_grid_data.generator.storagevalue_profile_time[:]
         
         
-        for row in datareader:
-            parameter = row.pop('PARAMETER',None)
+        #for row in datareader:
+        for parameter in datadict:
+            #parameter = row.pop('PARAMETER',None)
+            row = datadict[parameter]
             
             if parameter == "demand_annual":
                 print("Annual demand (GWh)")
@@ -369,7 +384,7 @@ def scaleDemand(demand,datarow,areas_update,consumers):
             demand_annual_GWh = datarow[co]
             demand_avg_MW = demand_annual_GWh*const.MWh_per_GWh/const.hoursperyear
             
-            if not consumers.has_key(co):
+            if not co in consumers:
                 consumers[co] = []
     
             loads_this_area = [demand[i] for i in consumers[co]]
@@ -413,9 +428,9 @@ def scaleGencap(gencap,datarow,areas_update,generators,gentype):
         if not datarow[co] is None:
             gencap_MW_new = datarow[co]
             
-            if not generators.has_key(co):
+            if not co in generators:
                 generators[co] = {}
-            if not generators[co].has_key(gentype):
+            if not gentype in generators[co]:
                 generators[co][gentype]=[]
             gencap_this_area = [gencap[i] for i in generators[co][gentype]]
             gencap_MW_before = float(sum(gencap_this_area))
@@ -445,9 +460,9 @@ def scaleStoragecap(storagecap,datarow,areas_update,generators,gentype):
         if not datarow[co] is None:
             storagecap_MW_new = datarow[co]
             
-            if not generators.has_key(co):
+            if not co in generators:
                 generators[co] = {}
-            if not generators[co].has_key(gentype):
+            if not gentype in generators[co]:
                 generators[co][gentype]=[]
             storagecap_this_area = [storagecap[i] for i in generators[co][gentype]]
             storagecap_MW_before = float(sum(storagecap_this_area))
@@ -475,7 +490,7 @@ def updateInflowFactor(inflowfactor,datarow,areas_update,generators,gentype):
     
     for co in areas_update:        
         if not datarow[co] is None:
-            if generators.has_key(co) and generators[co].has_key(gentype):
+            if co in generators and gentype in generators[co]:
                 for i in generators[co][gentype]:
                     # all generators of this type and area are given 
                     # same inflow factor
@@ -489,7 +504,7 @@ def updateStorageLevel(storagelevel,datarow,areas_update,generators,gentype):
     
     for co in areas_update:        
         if not datarow[co] is None:
-            if generators.has_key(co) and generators[co].has_key(gentype):
+            if co in generators and gentype in generators[co]:
                 for i in generators[co][gentype]:
                     # all generators of this type and area are given same 
                     # inflow factor
@@ -502,7 +517,7 @@ def updateGenCost(gencost,datarow,areas_update,generators,gentype):
     for co in areas_update:
         if not datarow[co] is None:
             gencost_new = datarow[co]           
-            if generators.has_key(co) and generators[co].has_key(gentype):
+            if co in generators and gentype in generators[co]:
                 # and there are generators of this type
                 for i in generators[co][gentype]:
                     gencost[i] = gencost_new
@@ -514,7 +529,7 @@ def NOTNEEDED_updateStoragePrice(storageprice,datarow,areas_update,generators,ge
     for co in areas_update:
         if not datarow[co] is None:
             storageprice_new = datarow[co]           
-            if generators.has_key(co) and generators[co].has_key(gentype):
+            if co in generators and gentype in generators[co]:
                 # and there are generators of this type
                 for i in generators[co][gentype]:
                     storageprice[i] = storageprice_new
@@ -537,7 +552,7 @@ def updateGenProfileRef(profile_ref,datarow,areas_update,generators,gentype):
     '''Update profile per area and generator type'''
     for co in areas_update:
         if not datarow[co] is None:
-            if generators.has_key(co) and generators[co].has_key(gentype):
+            if co in generators and gentype in generators[co]:
                 for i in generators[co][gentype]:
                     profile_ref[i] = datarow[co]            
     
