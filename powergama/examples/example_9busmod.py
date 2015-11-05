@@ -32,5 +32,5 @@ res = powergama.Results(data,'example_9busmod.sqlite')
 start_time = time.time()
 lp.solve(res)
 end_time = time.time()
-print end_time - start_time, "seconds"
+#print end_time - start_time, "seconds"
 
