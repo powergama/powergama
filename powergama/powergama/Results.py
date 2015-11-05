@@ -1593,6 +1593,64 @@ class Results(object):
         plt.show()
         
     
+    def plotTimeseriesColour(self,areas,value='nodalprice'):
+        '''
+        Plot timeseries values with days on x-axis and hour of day on y-axis
+               
+        
+        Parameters
+        ----------
+        areas : list of strings
+            which areas to include, default=None means include all
+        value : 'nodalprice' (default), 
+                'demand', 
+                'gen_%<type1>%<type2>.. (where type=gentype)
+            which times series value to plot
+        '''        
+        
+        #print("Analysing...")
+        p={}
+        pm={}
+        stepsperday = 24/self.grid.timeDelta
+        numdays = len(self.grid.timerange)/stepsperday
+        for a in areas:
+            if value=='nodalprice':
+                p[a] = self.getAreaPrices(area=a)
+            elif value=='demand':
+                #TODO: This is not generally correct. Should use
+                ## weighted average for all loads in area
+                p[a] = self.grid.demandProfiles['load_'+a]
+            elif value[:3]=='gen':
+                # value is now on form "gen_MA_hydro"
+                strval = value.split('%')
+                gens = self.grid.getGeneratorsPerAreaAndType()
+                #genindx = gens[a][strval[1]]
+                genindx = [i for s in strval[1:] for i in gens[a][s]]
+                timerange=[self.timerange[0],self.timerange[-1]+1]
+                p[a] = self.db.getResultGeneratorPower(genindx,timerange)
+            pm[a]=np.reshape(p[a],(numdays,stepsperday)).T
+        
+        #print("Plotting...")
+        vmin=min([min(p[a]) for a in areas])
+        vmax=max([max(p[a]) for a in areas])
+        num_areas = len(areas)
+        fig,axes = plt.subplots(nrows=num_areas,ncols=1,figsize=(20,1.5*len(areas)))
+        
+        for n in range(num_areas):
+            ax=plt.subplot(num_areas,1,n+1)
+            ax.set_title(areas[n],x=-0.04,y=0.5,
+                         verticalalignment='center',
+                         horizontalalignment='right')
+            im=plt.imshow(pm[areas[n]],vmin=vmin,vmax=vmax)
+        
+        fig.subplots_adjust(right=0.90)
+        cbar_ax = fig.add_axes([0.92, 0.15, 0.02, 0.7])
+        #fig.colorbar(im,cax=cbar_ax)
+        plt.colorbar(cax=cbar_ax)
+        plt.show()
+        
+        
+        
     def _gentypes_ordered_by_fuelcost(self):
         '''Return a list of generator types ordered by their mean fuel cost'''
         generators = self.grid.getGeneratorsPerType()
