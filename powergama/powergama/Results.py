@@ -1302,7 +1302,7 @@ class Results(object):
                 if area_from == area_to:
                     branch_value[i] = allareas.index(area_from)
                 branch_value = np.asarray(branch_value)
-            branch_colormap = plt.get_cmap('hsv')
+            branch_colormap = cm.prism
             branch_colormap.set_under('k')
             filter_branch = [0,len(allareas)]
             branch_label = 'Branch area'
@@ -1388,6 +1388,9 @@ class Results(object):
             node_value = [allareas.index(c) for c in areas]
             node_colormap = cm.prism
             node_plot_colorbar = False
+            # this is to get same colours as for branches:
+            node_colormap.set_under('k')
+            filter_node = [0,len(allareas)]
         elif nodetype=='nodalprice':
             avgprice = self.getAverageNodalPrices(timeMaxMin)
             node_label = 'Nodal price'
