@@ -13,7 +13,7 @@
 \usepackage{fancyhdr}
 
 
-\title{PowerGAMA\\User guide (v0.8)}
+\title{PowerGAMA\\User guide (v1.0.2)}
 \author{Harald G Svendsen}
 \date{\today}
 
@@ -53,7 +53,10 @@ PowerGAMA does not include any power market subtleties (such as start-up costs, 
 PowerGAMA is largely inspired by SINTEF's Power System Simulation Tool (PSST) 
 \cite{korpas2007,hueartas2010}.
 
-
+\bigskip\noindent
+PowerGAMA source code and a wiki is found on this web address:
+\\ 
+\url{https://bitbucket.org/harald_g_svendsen/powergama}.
 
 \subsection{Licence}
 PowerGAMA is open source software distributed under the following licence:
@@ -68,18 +71,15 @@ PowerGAMA is written with Python, and is executed via a Python interpreter.
 It has the following dependencies, all of which are freely available:
 
 \begin{itemize}
-\item Python 2.7
+\item Python 3 or 2.7
 \item Python packages: numpy, scipy, matplotlib, mpl\_toolkits, PuLP
-\item COIN-OR CBC (LP solver)
 \end{itemize}
 
 \subsection{Installation}
 
-The above dependencies must be installed before PowerGAMA can be executed. A convenient Python package that includes the numpy, scipy and matplotlib packages and a Matlab-like development environment is \emph{Python(x,y)} (\url{https://code.google.com/p/pythonxy/}).
-
-Installing additional python packages is generally straightforward, using the "python setup.py install" command. This includes the installation of PowerGAMA itself.
-
-COIN-OR CBC (\url{http://www.coin-or.org}) can be installed as a binary using a standard Windows installer.
+The above dependencies must be installed before PowerGAMA can be executed. Convenient Python packages that includes the numpy, scipy and matplotlib packages and the Matlab-like development environment Spyder are \emph{Anaconda} () and \emph{Python(x,y)}.
+%
+Installing additional python packages is generally straightforward, using e.g. \emph{pip} or the "python setup.py install" command. This includes the installation of PowerGAMA itself.
 
 
 
@@ -374,31 +374,167 @@ $A$ is the node--arc incidence matrix.
 
 
 
-\section{Optimisation (TODO)}
-The optimisation variables are
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Optimisation problem}
+\label{sec:linearoptimisation}
+
+%
+A linear objective function is used in order to ensure fast optimisation that converges, with the practical benefit that it also requires fewer input parameters.
+
+%
+The set of variables to be determined by the optimisation are
 \begin{equation}
-	X = \{P_g^\text{gen}, P_g^\text{pump}, P_n^\text{shed},P_n^\text{flex},P_j, \theta_n \}
+	\label{eq:variables}
+	X = \{P_g^\text{gen}, P_p^\text{pump},P_f^\text{flex}, P_n^\text{shed}, \theta_n, P_j \},
 \end{equation}
+where 
+$g\in \mathcal{G}$, the set of generators;
+$p\in \mathcal{P}$, the set of pumps;
+$f\in \mathcal{F}$, the set of flexible loads;
+$n\in \mathcal{N}$, the set of nodes.
+$j\in \mathcal{B}$, the set of AC and DC branches.
+
+The objective of the optimisation is expressed in terms of an objective function, which in our case is
+\begin{equation}
+\begin{split}
+	\label{eq:objectivefunction}
+	F = & \sum_{g\in \mathcal{G}} c_g^\text{gen} P^\text{gen}_g 
+		- \sum_{p\in \mathcal{P}} c_p^\text{pump} P^\text{pump}_p
+		\\ &
+		- \sum_{f\in \mathcal{F}} c_f^\text{flex} P_c^\text{flex}		
+		+ \sum_{n\in \mathcal{N}} c^\text{shed} P_n^\text{shed},		
+\end{split}
+\end{equation}
+where 
+$c_g$ is the cost of generator $g$,
+$c_p^\text{pump}$ is the cost of pump $p$,
+$c_f^\text{flex}$ is the cost of flexible load $p$,
+and 
+$c^\text{shed}$ is the fixed cost of load shedding.
+As discussed in Section~\ref{sec:energystorage}, these cost parameters are determined by the fuel price for generators without storage, and by storage values in the other cases.
+%
+The negative sign in front of pumping and flexible load means that increasing their value reduces the objective function. However, the energy balance constraint (see below) implies that power for pumping or flexible load must be compensated by generation elsewhere. So whether it is beneficial therefore depends on the cost of that alternative generation.
 
 
-The objective function is
-\begin{align}
-	F = & \sum_g^{N_\text{gen}} \bigl[
-		c_g P^\text{gen}_g 
-		- c_g^\text{pump} P^\text{pump}_g,
-		\Bigr]
-		+ \sum_n^{N_\text{nodes}} \bigl[
-			c_\text{shed} P_n^\text{shed} 
-			- c_\text{flex} P_n^\text{flex},		
-		\Bigr]
-		\\
-		\nonumber 
-		& c_g^\text{pump} = \max[0,(c_g-\Delta_g)]
-\end{align}
-where $c_g$ is the marginal price associated with generator $g$, and $\Delta_g$ is the price offset associated with a pumping station (if any),
- $c_\text{shed}$ is the cost of load shedding, and
-  $c_\text{flex}$ ismarginal price (storage value) associated with flexible loads.
-  
+The variables \eqref{eq:variables} are not free, but 
+constrained through upper and lower bounds, and through equations expressing relationships between them. 
+Referring to these constraints as $C_m$, the optimisation problem is formulated in the standard Linear Programming (LP) form
+\begin{equation}
+	\label{eq:optimisation}
+	\min F = \min \sum c_i X_i \quad \text{such that} \quad  \{C_1,\dots C_6\}.
+\end{equation}
+%
+This must be solved time step by time step, where time steps are coupled due to the presence of storage. 
+The various constraints are now described in more detail.
+
+
+%\subsubsection{Branch flow limited by branch capacity}
+The \emph{first} set of constraints state that power flow on branches is constrained by their capacity limits:
+\begin{equation}
+	C_1:\quad  
+	- P_j^\text{max} \le P_j \le P_j^\text{max}
+\end{equation}
+where $j$ refers to AC and DC branches with limited capacity.
+
+
+%\subsubsection{Generation output limited by available power and capacity}
+The \emph{second} set of constraints state that the power generation at generators is limited by lower and upper bounds, most notably the generation capacity and available power as described in Section \ref{sec:generation}:
+\begin{equation}
+	C_2:\quad 
+	P_g^\text{min} \le P^\text{gen}_g \le P_g^\text{limit},
+\end{equation}
+where $g$ refers to all generators.
+
+%\subsubsection{Pumping limited by pumping capacity}
+The \emph{third} set of constraints state that the pumping is limited by the pump capacity
+\begin{equation}
+	C_3:\quad
+	0 \le P^\text{pump}_p \le P^\text{pump,max}_p, 
+\end{equation}
+where $p$ refers to all pumps.
+
+%\subsubsection{Pumping limited by pumping capacity}
+The \emph{fourth} set of constraints state that the flexible load is limited by the maximum demand
+\begin{equation}
+	C_4:\quad
+	0 \le P^\text{flex}_f \le P^\text{flex,max}_f, 
+\end{equation}
+where $f$ refers to all flexible loads.
+
+
+%\subsubsection{Power balance at each node}
+The \emph{fifth} set of constraints express the condition of power balance at each node,
+which requires that net power injection at a node equals the net AC power flow out of the node. 
+%
+Net power injection is given as generated power minus demand, pumping and load shed plus power inflow via DC connections, which are controllable and free variables in the optimisation.
+%
+Flow in the  AC grid, however is determined by grid impedances by means of non-linear power flow equations.  In order to formulate the problem as a linear optimisation problem, an approximate version of these equations is applied.
+%
+To arrive at the linearised equations, often referred to as the DC power flow equations, the following assumptions are made:
+1) phase angle differences are small;
+2) voltage deviations are small;
+3) branch resistance is small compared to reactance;
+4) shunt reactances are small, so self-admittances can be ignored.
+%
+With these assumptions the AC power flow equations reduce to the linear equations
+\begin{equation}
+	C_5: \quad
+	\mathbf{P}^\text{node} = \mathbf{B}^\prime \mathbf{\Theta},
+\end{equation}
+where $\mathbf{\Theta}$ is a vector of voltage angles,
+$\mathbf{B}^\prime$  is the conductance matrix,
+and $\mathbf{P}^\text{node}$ is a vector of net power injections into all nodes.
+%
+The conductance matrix $\mathbf{B}^\prime$ is the imaginary part of the bus admittance matrix, which are the same with the approximations given above. 
+%The elements of this matrix are 
+%\begin{equation}
+%	B_{ij} = 
+%\end{equation}
+%
+The $\mathbf{P}^\text{node}$ vector elements are given as
+\begin{equation}
+\begin{split}
+	P^\text{node}_k  = & \sum_{j\in\mathcal{G}_k} 
+			P_j^\text{gen}
+			- \sum_{j\in\mathcal{P}_k} P_j^\text{pump}
+			- \sum_{j\in\mathcal{C}_k} P_j^\text{cons}
+			\\ &
+			+\ P_k^\text{shed}
+			+\sum_{j\in\mathcal{D}_k} P_j^\text{dc}
+			,
+\end{split}
+\end{equation}
+where
+$P_j^\text{gen}$ is generator output,
+$\mathcal{G}_k$ is the set of generators at node $k$,
+$P_j^\text{pump}$ is pump demand,
+$\mathcal{P}_k$ is the set of pumps at node $k$,
+$P_k^\text{shed}$ is amount of load shedding at node $k$,
+$P_j^\text{dc}$ is inflow on DC branches (positive or negative),
+$\mathcal{D}_k$ is the set of DC branches connected to node $k$,
+$P_j^\text{cons}$ is consumer demand (fixed \emph{and} flexible),
+and $\mathcal{C}_k$ is the set of loads at node $k$.
+
+
+
+
+%\subsubsection{Nodal phase angle and branch flow relationship}
+The \emph{sixth} set of constraints express the relationship between power flow on branches and nodal voltage angle differences.
+In the linear approximation, power flow $\mathbf{P^\text{ac}}$ on AC branches is related to nodal voltage angles as expressed by the equation
+\begin{equation}
+	C_6:\quad \mathbf{P}^\text{ac} = \mathbf{D A \Theta},
+\end{equation}
+where $\mathbf{D}$ is a diagonal matrix with elements given by the branch reactance $D_{mm} =-\frac{1}{x_m}$,  and $\mathbf{A}$ is the node--branch incidence matrix describing the network topology.
+
+
+
+%\subsubsection{Zero voltage angle at reference node (node zero)}
+The \emph{seventh} constraint specifies the reference node and its voltage angle,
+\begin{equation}
+	C_7:\quad 
+	\theta_0 = 0.
+\end{equation}
+Since these are arbitrary and don't influence the results, the reference is chosen such that the zeroth node has zero voltage angle.
 
 
 
@@ -696,6 +832,14 @@ Interesting analyses that can be addressed using PowerGAMA are
 
 It should be noted that PowerGAMA does not include any power market subtleties (such as start-up costs, forecast errors, unit commitments) and as such will tend to overestimate the ability to accomodate large amounts of variable renewable energy. Essentially it assumes a perfect marking based on nodal pricing without barriers between different countries. This is naturally a gross oversimplification of the real power system, but gives nontheless very useful information to guide the planning of grid developments and to assess broadly the impacts of new generation and new interconnections.
 
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Analysis and plotting of results (TODO)}
+This section gives an overview of methods for analysis and plotting of results, included in PowerGAMA. 
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section{Example}
 
 The following example runs the simulation for the first two weeks of January, using simplified input data (same demand and inflow profiles in all areas).
@@ -787,7 +931,7 @@ The Python script is as follows:
 \newpage
 \appendix
 
-\section{Software design and implementation}
+\section{Software design and implementation (TODO)}
 
 \subsection{Class GridData}
 nodes
