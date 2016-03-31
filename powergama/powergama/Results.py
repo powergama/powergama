@@ -7,7 +7,6 @@ import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import matplotlib as mpl
 import numpy as np
-from mpl_toolkits.basemap import Basemap
 import math
 import powergama.database as db
 import csv
@@ -727,6 +726,41 @@ class Results(object):
         res = [a+b for a,b in zip(res_ac,res_dc)]
         return res
         
+    def getDemandPerArea(self,area,timeMaxMin=None):
+        '''Returns demand timeseries for given area, as dictionary with
+        fields "fixed", "flex", and "sum"
+        
+        Parameters
+        ----------
+        area (string)
+            area to get demand for
+        timeMaxMin (list) (default = None)
+            [min, max] - lower and upper time interval
+        '''
+        
+        if timeMaxMin is None:
+            timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
+        timerange = range(timeMaxMin[0],timeMaxMin[-1])
+        
+        consumer = self.grid.consumer
+    
+        dem=[0]*len(self.timerange)
+        flexdemand = [0]*len(self.timerange)
+        consumers = self.grid.getConsumersPerArea()[area]
+        for i in consumers:
+            ref_profile = consumer.load_profile[i]
+            # accumulate demand for all consumers in this area:
+            dem = [dem[t-self.timerange[0]] + consumer.load[i] 
+                * (1 - consumer.flex_fraction[i])
+                * self.grid.demandProfiles[ref_profile][t-self.timerange[0]]
+                for t in timerange]
+            flexdemand_i = self.db.getResultFlexloadPower(i,timeMaxMin)
+            if len(flexdemand_i)>0:
+                flexdemand = [sum(x) for x in zip(flexdemand,flexdemand_i)]
+        sumdemand = [sum(x) for x in zip(dem,flexdemand)]
+    
+        return {'fixed':dem, 'flex':flexdemand, 'sum':sumdemand}
+
               
     def plotNodalPrice(self,nodeIndx,timeMaxMin=None,showTitle=True):
         '''Show nodal price in single node
@@ -1239,6 +1273,10 @@ class Results(object):
             whether to draw parallels and meridians on map    
         '''
         
+        # basemap is only used here, so to allow using powergama without
+        # basemap installed, it is best to put import statement here.
+        from mpl_toolkits.basemap import Basemap
+
         if timeMaxMin is None:
             timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
 

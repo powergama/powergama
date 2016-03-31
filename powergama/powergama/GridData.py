@@ -307,6 +307,7 @@ class _Consumers(object):
         self.flex_basevalue = []
         self.flex_storage = []
         self.flex_storagevalue_profile_filling = []
+        self.flex_storagevalue_profile_time = []
         self.flex_storagelevel_init = []
     
     def readFromFile(self,filename):
@@ -328,6 +329,8 @@ class _Consumers(object):
                        parseNum(row["flex_storage"],default=0))
                    self.flex_storagevalue_profile_filling.append(
                        parseId(row["flex_storval_filling"]))
+                   self.flex_storagevalue_profile_time.append(
+                       parseId(row["flex_storval_time"]))
                else:
                    # default values are zero
                    self.flex_fraction.append(0)
@@ -335,6 +338,7 @@ class _Consumers(object):
                    self.flex_basevalue.append(0)
                    self.flex_storage.append(0)
                    self.flex_storagevalue_profile_filling.append(0)
+                   self.flex_storagevalue_profile_time.append(0)
                    
            #Hard-coded initial filling level of storage equal to 50%
            print("OBS: Initial flexible storage filling set to 0.5")        

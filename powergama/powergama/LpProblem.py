@@ -82,7 +82,9 @@ class LpProblem(object):
         self._idx_consumersStorageProfileFilling = asarray(
             [grid.consumer.flex_storagevalue_profile_filling[i]
             for i in self._idx_consumersWithFlexLoad])
-
+        self._idx_consumersStorageProfileTime = asarray(
+            [grid.consumer.flex_storagevalue_profile_time[i] 
+            for i in self._idx_consumersWithFlexLoad])
         range_nodes = range(self.num_nodes)
         range_generators = range(self.num_generators)
         range_pumps = range(len(self._idx_generatorsWithPumping))
@@ -365,6 +367,7 @@ class LpProblem(object):
         for i in range(len(self._idx_consumersWithFlexLoad)):
             idx_cons = self._idx_consumersWithFlexLoad[i]
             this_type_filling = self._idx_consumersStorageProfileFilling[i]
+            this_type_time = self._idx_consumersStorageProfileTime[i] 
             # Compute storage capacity in Mwh (from value in hours)
             storagecapacity_flexload = asarray(
                 self._grid.consumer.flex_storage[idx_cons]      # h
@@ -381,7 +384,7 @@ class LpProblem(object):
                 self._marginalcosts_flexload[idx_cons] = (
                     self._grid.consumer.flex_basevalue[idx_cons] 
                     *self._grid.storagevalue_filling[this_type_filling][filling_col]
-                    )
+                    *self._grid.storagevalue_time[this_type_time][timestep])
 
         return
                 
