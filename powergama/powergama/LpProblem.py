@@ -173,7 +173,8 @@ class LpProblem(object):
         self._constraints_dcbranchUpperBounds = [[]]*len(idxDcBranchesConstr)
         self._constraints_pf = [pulp.pulp.LpConstraint()]*self.num_nodes
 
-        # Swing bus angle = 0 (reference)
+        # TODO: Add reference bus for each synchronous area
+		# Swing bus angle = 0 (reference)
         probConstraintSwing = self._var_angle[0]==0
         self.prob.addConstraint(probConstraintSwing,name="swingbus_angle")
         #prob += probConstraintSwing,"swingbus_angle"

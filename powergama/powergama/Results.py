@@ -1645,8 +1645,10 @@ class Results(object):
             which areas to include, default=None means include all
         value : 'nodalprice' (default), 
                 'demand', 
-                'gen_%<type1>%<type2>.. (where type=gentype)
+                'gen%<type1>%<type2>.. (where type=gentype)
             which times series value to plot
+        
+        Example: res.plotTimeseriescolour(['ES'],value='gen%solar_csp%wind')        
         '''        
         
         #print("Analysing...")
