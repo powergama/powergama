@@ -69,7 +69,6 @@ class MipProblem(object):
 
         self._fancy_progressbar = False
         
-        # test
 
         # Collect initial values of marginal costs, storage and storage values
         self._storage = (
