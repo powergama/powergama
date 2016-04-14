@@ -53,7 +53,7 @@ class MipResults(object):
                       (timerange_db[0],timerange_db[-1]))
                 raise Exception('Database time range mismatch')
 
-        '''
+        
         self.objectiveFunctionValue=[]    
         self.generatorOutput=[]
         self.branchFlow=[]
@@ -65,7 +65,7 @@ class MipResults(object):
         self.marginalprice=[]
         self.inflowSpilled=[]
         self.loadshed=[]
-        '''    
+           
         
     def addResultsFromTimestep(self,timestep,objective_function,
                                generator_power,
@@ -108,7 +108,7 @@ class MipResults(object):
             idx_flexload = self.flex_idx_consumers
             )
        
-        '''
+        
         self.objectiveFunctionValue.append(objective_function)
         self.generatorOutput.append(generator_power)
         self.branchFlow.append(branch_power)
@@ -120,7 +120,7 @@ class MipResults(object):
         self.inflowSpilled.append(inflow_spilled)
         self.loadshed.append(loadshed_power)
         self.marginalprice.append(marginalprice)
-        '''
+        
         # self.storageGeneratorsIdx.append(idx_generatorsWithStorage)
 
     def getAverageBranchFlows(self,timeMaxMin=None):

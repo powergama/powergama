@@ -205,12 +205,13 @@ class MipProblem(object):
         print("Defining constraints...")
         idxBranchesConstr = self._grid.getIdxBranchesWithFlowConstraints()
         idxDcBranchesConstr = self._grid.getIdxDcBranchesWithFlowConstraints()
-
+        
+        self._pfPload = np.empty([self.num_nodes, range_time.stop],dtype=object)
         # Initialise lists of constraints
-        self._constraints_branchLowerBounds = [[]]*len(idxBranchesConstr)
-        self._constraints_branchUpperBounds = [[]]*len(idxBranchesConstr)
-        self._constraints_dcbranchLowerBounds = [[]]*len(idxDcBranchesConstr)
-        self._constraints_dcbranchUpperBounds = [[]]*len(idxDcBranchesConstr)
+        self._constraints_branchLowerBounds = np.empty([len(idxBranchesConstr), range_time.stop],dtype=object)
+        self._constraints_branchUpperBounds = np.empty([len(idxBranchesConstr), range_time.stop],dtype=object)
+        self._constraints_dcbranchLowerBounds = np.empty([len(idxDcBranchesConstr), range_time.stop],dtype=object)
+        self._constraints_dcbranchUpperBounds = np.empty([len(idxDcBranchesConstr), range_time.stop],dtype=object)
         self._constraints_pf = np.full([self.num_nodes, range_time.stop],pulp.pulp.LpConstraint(),dtype=object)
 #        self._constraints_pf = [pulp.pulp.LpConstraint()]*self.num_nodes
         
@@ -242,8 +243,8 @@ class MipProblem(object):
                 # need to keep track of these constraints since we want to get
                 # sensitivity information from solution:
                 idx_branch_constr = idxBranchesConstr.index(i)
-                self._constraints_branchLowerBounds[idx_branch_constr] = cl_name
-                self._constraints_branchUpperBounds[idx_branch_constr] = cu_name
+                self._constraints_branchLowerBounds[idx_branch_constr,t] = cl_name
+                self._constraints_branchUpperBounds[idx_branch_constr,t] = cu_name
 
         # Max and min power flow on DC branches
         for i in idxDcBranchesConstr:
@@ -257,8 +258,8 @@ class MipProblem(object):
                 # need to keep track of these constraints since we want to get
                 # sensitivity information from solution:
                 idx_dcbranch_constr = idxDcBranchesConstr.index(i)
-                self._constraints_dcbranchLowerBounds[idx_dcbranch_constr] = dc_cl_name
-                self._constraints_dcbranchUpperBounds[idx_dcbranch_constr] = dc_cu_name
+                self._constraints_dcbranchLowerBounds[idx_dcbranch_constr,t] = dc_cl_name
+                self._constraints_dcbranchUpperBounds[idx_dcbranch_constr,t] = dc_cu_name
 
 #        # Equations giving the branch power flow from the nodal phase angles
 #        for idx_branch in range_branches:
@@ -597,25 +598,26 @@ class MipProblem(object):
         #senseBranchCapacityUpper = [cval.pi if cval.pi!=None else 0 for cval in self._constraints_branchUpperBounds]
         #senseBranchCapacityLower = [cval.pi if cval.pi!=None else 0 for cval in self._constraints_branchLowerBounds]
         #senseN = [cval.pi for cval in self._constraints_pf]
-        senseBranchCapacityUpper = [self.prob.constraints[ckey].pi
-            if self.prob.constraints[ckey].pi!=None else None
-            for ckey in self._constraints_branchUpperBounds]
-        senseBranchCapacityLower = [self.prob.constraints[ckey].pi
-            if self.prob.constraints[ckey].pi!=None else None
-            for ckey in self._constraints_branchLowerBounds]
-        senseDcBranchCapacityUpper = [self.prob.constraints[ckey].pi
-            if self.prob.constraints[ckey].pi!=None else None
-            for ckey in self._constraints_dcbranchUpperBounds]
-        senseDcBranchCapacityLower = [self.prob.constraints[ckey].pi
-            if self.prob.constraints[ckey].pi!=None else None
-            for ckey in self._constraints_dcbranchLowerBounds]
-#        senseN = [self.prob.constraints[ckey].pi/const.baseMVA
-#            if self.prob.constraints[ckey].pi!=None else None
-#            for ckey in self._constraints_pf]
-        senseB = [(i-j)/const.baseMVA if i!=None and j!=None else None
-            for i,j in zip(senseBranchCapacityUpper, senseBranchCapacityLower)]
-        senseDcB = [(i-j)/const.baseMVA  if i!=None and j!=None else None
-            for i,j in zip(senseDcBranchCapacityUpper, senseDcBranchCapacityLower)]
+        for t in range_time:
+            senseBranchCapacityUpper = [self.prob.constraints[ckey].pi
+                if self.prob.constraints[ckey].pi!=None else None
+                for ckey in self._constraints_branchUpperBounds[:,t]]
+            senseBranchCapacityLower = [self.prob.constraints[ckey].pi
+                if self.prob.constraints[ckey].pi!=None else None
+                for ckey in self._constraints_branchLowerBounds[:,t]]
+            senseDcBranchCapacityUpper = [self.prob.constraints[ckey].pi
+                if self.prob.constraints[ckey].pi!=None else None
+                for ckey in self._constraints_dcbranchUpperBounds[:,t]]
+            senseDcBranchCapacityLower = [self.prob.constraints[ckey].pi
+                if self.prob.constraints[ckey].pi!=None else None
+                for ckey in self._constraints_dcbranchLowerBounds[:,t]]
+            senseN = [self.prob.constraints[ckey].pi/const.baseMVA
+                if self.prob.constraints[ckey].pi!=None else None
+                for ckey in self._constraints_pf[:,t]]
+            senseB = [(i-j)/const.baseMVA if i!=None and j!=None else None
+                for i,j in zip(senseBranchCapacityUpper, senseBranchCapacityLower)]
+            senseDcB = [(i-j)/const.baseMVA  if i!=None and j!=None else None
+                for i,j in zip(senseDcBranchCapacityUpper, senseDcBranchCapacityLower)]
 
 #        # TODO: This subtraction generates warning - because it includes nan and inf?
 #        energyspilled = energyStorable-self._storage
@@ -637,7 +639,7 @@ class MipProblem(object):
             node_angle = theta,
             sensitivity_branch_capacity = senseB,
             sensitivity_dcbranch_capacity = senseDcB,
-            sensitivity_node_power = [],
+            sensitivity_node_power = senseN,
             storage = [],
             inflow_spilled = [],
             loadshed_power = loadshed,
