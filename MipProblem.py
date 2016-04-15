@@ -69,7 +69,6 @@ class MipProblem(object):
 
         self._fancy_progressbar = False
         
-
         # Collect initial values of marginal costs, storage and storage values
         self._storage = (
                 asarray(grid.generator.storagelevel_init)
@@ -169,7 +168,7 @@ class MipProblem(object):
 #                _Btheta[i,t] += v * self._var_angle[j,t]
 
 
-        # Variables upper and lower bounds (voltage angle and )
+        # Variables upper and lower bounds (voltage angle and loadshed)
         for i in range(self.num_nodes):
             for t in range_time:
                 self._var_angle[i,t].lowBound = -pi
@@ -199,8 +198,6 @@ class MipProblem(object):
                     )
 
 
-
-
         # TODO: Must add the time dimension for accurate number of constraints
         print("Defining constraints...")
         idxBranchesConstr = self._grid.getIdxBranchesWithFlowConstraints()
@@ -215,13 +212,6 @@ class MipProblem(object):
         self._constraints_pf = np.full([self.num_nodes, range_time.stop],pulp.pulp.LpConstraint(),dtype=object)
 #        self._constraints_pf = [pulp.pulp.LpConstraint()]*self.num_nodes
         
-
-
-
-
-
-
-
 
         # Swing bus angle = 0 (reference)
         for t in range_time:        
@@ -297,6 +287,10 @@ class MipProblem(object):
             # Find DC branches connected to node (direction is important)
             idx_dc_from = grid.getDcBranchesAtNode(idx_node,'from')
             idx_dc_to = grid.getDcBranchesAtNode(idx_node,'to')
+            
+            # Find AC branches connected to node (direction is important)
+            idx_ac_from = grid.getAcBranchesAtNode(idx_node,'from')
+            idx_ac_to = grid.getAcBranchesAtNode(idx_node,'to')
 
             # Find indices of loads connected to this node:
             self._idx_load[idx_node] = grid.getLoadsAtNode(idx_node)
@@ -323,6 +317,9 @@ class MipProblem(object):
                 self._pfPdc[idx_node,t] = (
                     [self._var_dc[i,t]*(1/const.baseMVA) for i in idx_dc_to]
                     +[ -self._var_dc[i,t]*(1/const.baseMVA) for i in idx_dc_from])
+                self._pfPflow[idx_node,t] = (
+                    [self._var_branchflow[i,t]*(1/const.baseMVA) for i in idx_ac_to]
+                    +[ -self._var_dc[i,t]*(1/const.baseMVA) for i in idx_ac_from])
 #                self._pfPflow[idx_node,t] = -_Btheta[idx_node]
                 
                 # this value will be updated later, so using zero for now:
@@ -339,7 +336,8 @@ class MipProblem(object):
                 +self._pfPflexload[idx_node,t]
                 +self._pfPdc[idx_node,t]
                 +self._pfPload[idx_node,t]
-                +self._pfPshed[idx_node,t]) == 0
+                +self._pfPshed[idx_node,t] 
+                +self._pfPflow[idx_node,t])== 0
 #                cpf = pulp.lpSum(
 #                self._pfPgen[idx_node,t]
 #                +self._pfPpump[idx_node,t]
@@ -350,8 +348,7 @@ class MipProblem(object):
                 pf_name = "powerflow_eqn_"+str(idx_node)+"_"+str(t)
                 self.prob.addConstraint(cpf,name=pf_name)
                 self._constraints_pf[idx_node,t] = pf_name
-                
-                
+                     
 
         print("Objective function...")
 
@@ -501,7 +498,8 @@ class MipProblem(object):
                     +self._pfPflexload[idx_node,t]
                     +self._pfPdc[idx_node,t]
                     +self._pfPload[idx_node,t]
-                    +self._pfPshed[idx_node,t] == 0)
+                    +self._pfPshed[idx_node,t] 
+                    +self._pfPflow[idx_node,t] == 0)
 
                 # Find the associated constraint and modify it:
                 key_constr = self._constraints_pf[idx_node,t]

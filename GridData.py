@@ -559,6 +559,18 @@ class GridData(object):
         else:
             raise Exception("Unknown direction in GridData.getDcBranchesAtNode")
         return indices
+
+    def getAcBranchesAtNode(self,nodeIdx,direction):
+        """Indices of all DC branches attached to a particular node"""
+        if direction=='from':
+            indices = [i for i, x in enumerate(self.branch.node_from) 
+            if x == self.node.name[nodeIdx]]
+        elif direction=='to':
+            indices = [i for i, x in enumerate(self.branch.node_to) 
+            if x == self.node.name[nodeIdx]]
+        else:
+            raise Exception("Unknown direction in GridData.getDcBranchesAtNode")
+        return indices
 	
 	
     def getIdxNodesWithLoad(self):
