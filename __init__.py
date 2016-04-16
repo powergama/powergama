@@ -65,7 +65,7 @@ Plot results
 
 '''
 
-from .GridData import GridData
+from .MipGridData import MipGridData
 #from .LpProblem import LpProblem
 from .MipProblem import MipProblem
 #from .Results import Results

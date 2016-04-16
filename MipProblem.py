@@ -103,25 +103,33 @@ class MipProblem(object):
         self._var_generation = [
             pulp.LpVariable("Pgen"+str(i)+"_"+str(t))
             for i in range_generators for t in range_time]
-        self._var_pumping = [
-            pulp.LpVariable("Ppump"+str(i)+"_"+str(t))
-            for i in self._idx_generatorsWithPumping for t in range_time]
-        self._var_flexload = [
-            pulp.LpVariable("Pflexload"+str(i)+"_"+str(t))
-            for i in self._idx_consumersWithFlexLoad for t in range_time]
         self._var_branchflow = [
             pulp.LpVariable("Pbranch"+str(i)+"_"+str(t))
             for i in range_branches for t in range_time]
         self._var_dc = [
             pulp.LpVariable("Pdc"+str(i)+"_"+str(t))
             for i in range_dc_branches for t in range_time]
-        self._var_angle = [
-            pulp.LpVariable("theta"+str(i)+"_"+str(t))
-            for i in range_nodes for t in range_time]
         self._var_loadshedding = [
             pulp.LpVariable("Pshed"+str(i)+"_"+str(t))
             for i in range_nodes for t in range_time]
-
+        self._var_finvestment = [
+            pulp.LpVariable("Ydc_invest"+"_"+str(i), lowBound=0, cat='Integer')
+            for i in range_dc_branches] 
+        self._var_vinvestment = [
+            pulp.LpVariable("Xdc_invest"+"_"+str(i), lowBound=0)
+            for i in range_dc_branches]
+            
+            
+        self._var_angle = [
+            pulp.LpVariable("theta"+str(i)+"_"+str(t))
+            for i in range_nodes for t in range_time]
+        self._var_pumping = [
+            pulp.LpVariable("Ppump"+str(i)+"_"+str(t))
+            for i in self._idx_generatorsWithPumping for t in range_time]
+        self._var_flexload = [
+            pulp.LpVariable("Pflexload"+str(i)+"_"+str(t))
+            for i in self._idx_consumersWithFlexLoad for t in range_time]
+                
         self._idx_load = [[]]*self.num_nodes
 
         # Reshape the lists to get a 2D array (include time dependency)
@@ -209,6 +217,7 @@ class MipProblem(object):
         self._constraints_branchUpperBounds = np.empty([len(idxBranchesConstr), range_time.stop],dtype=object)
         self._constraints_dcbranchLowerBounds = np.empty([len(idxDcBranchesConstr), range_time.stop],dtype=object)
         self._constraints_dcbranchUpperBounds = np.empty([len(idxDcBranchesConstr), range_time.stop],dtype=object)
+        self._constraints_dcinvestMax = np.empty(len(idxDcBranchesConstr), dtype=object)       
         self._constraints_pf = np.full([self.num_nodes, range_time.stop],pulp.pulp.LpConstraint(),dtype=object)
 #        self._constraints_pf = [pulp.pulp.LpConstraint()]*self.num_nodes
         
@@ -222,7 +231,6 @@ class MipProblem(object):
 
         # Max and min power flow on AC branches
         for i in idxBranchesConstr:
-        #for i in range_branches:
             for t in range_time:
                 cl = self._var_branchflow[i,t] >= -self._grid.branch.capacity[i]
                 cu = self._var_branchflow[i,t] <= self._grid.branch.capacity[i]
@@ -239,8 +247,8 @@ class MipProblem(object):
         # Max and min power flow on DC branches
         for i in idxDcBranchesConstr:
             for t in range_time:
-                dc_cl = self._var_dc[i,t] >= -self._grid.dcbranch.capacity[i]
-                dc_cu = self._var_dc[i,t] <= self._grid.dcbranch.capacity[i]
+                dc_cl = self._var_dc[i,t] >= -(self._grid.dcbranch.capacity[i] + self._var_vinvestment[i])
+                dc_cu = self._var_dc[i,t] <= (self._grid.dcbranch.capacity[i] + self._var_vinvestment[i])
                 dc_cl_name = "dcflow_min_"+str(i)+"_"+str(t)
                 dc_cu_name = "dcflow_max_"+str(i)+"_"+str(t)
                 self.prob.addConstraint(dc_cl,name=dc_cl_name)
@@ -251,6 +259,14 @@ class MipProblem(object):
                 self._constraints_dcbranchLowerBounds[idx_dcbranch_constr,t] = dc_cl_name
                 self._constraints_dcbranchUpperBounds[idx_dcbranch_constr,t] = dc_cu_name
 
+        # Investment constraint for capacity wrt lumped unit size (e.g. per 1200MW)
+        for i in idxDcBranchesConstr:
+            dc_invconstr = self._var_vinvestment[i] <= self._grid.dcbranch.max_capacity[i]*self._var_finvestment[i]
+            dc_invconstr_name = "dcinvest_max_"+str(i)
+            self.prob.addConstraint(dc_invconstr, name=dc_invconstr_name)
+            idx_dcinv_constr = idxDcBranchesConstr.index(i)
+            self._constraints_dcinvestMax[idx_dcinv_constr] = dc_invconstr_name
+            
 #        # Equations giving the branch power flow from the nodal phase angles
 #        for idx_branch in range_branches:
 #            for t in range_time:
@@ -452,7 +468,10 @@ class MipProblem(object):
 
         return
 
-
+    def _computeAnnuityFactor(self,rate, years):
+        '''Return the annuity factor that can be multiplied with yearly cashflows to calculate its present value (PV) '''
+        annuity = ((1-1/((1+rate)**years))/rate)
+        return annuity
 
     def _updateLpProblem(self,range_time):
         '''
@@ -462,8 +481,7 @@ class MipProblem(object):
         timestep=0
         range_nodes = range(self.num_nodes)
         range_generators = range(self.num_generators)
-        #range_branches = range(self.num_branches)
-
+        range_dc_branches = range(self.num_dc_branches)
 
         # Update power flow equations
         for t in range_time:
@@ -507,13 +525,22 @@ class MipProblem(object):
 
         # Update objective function
         self._updateMarginalcosts(range_time)
-
+        annuityF = self._computeAnnuityFactor(rate=0.05,years=30)
+        
         probObjective_gen = pulp.lpSum(\
-            [self._marginalcosts[i]*self._var_generation[i,t]*self.timeDelta \
+            [self._marginalcosts[i]*self._var_generation[i,t]*8760/len(range_time)*annuityF \
                 for i in range_generators for t in range_time]  )
         probSlack = pulp.lpSum(\
-            [self._loadsheddingcosts[i]*self._var_loadshedding[i,t]*self.timeDelta \
+            [self._loadsheddingcosts[i]*self._var_loadshedding[i,t]*8760/len(range_time)*annuityF \
                 for i in range_nodes for t in range_time]  )
+        probObjective_finvest = pulp.lpSum(\
+            [self._grid.dcbranch.fixed_cost[i]*self._var_finvestment[i] \
+                for i in range_dc_branches])
+        probObjective_vinvest = pulp.lpSum(\
+            [self._grid.dcbranch.variable_cost[i]*self._var_vinvestment[i] \
+                for i in range_dc_branches])
+        
+
 
         genpumpidx = self._idx_generatorsWithPumping;
         probObjective_pump = pulp.lpSum([
@@ -532,7 +559,9 @@ class MipProblem(object):
         self.prob.setObjective(probObjective_gen
                                 +probObjective_pump
                                 +probObjective_flexload
-                                +probSlack)
+                                +probSlack
+                                +probObjective_finvest
+                                +probObjective_vinvest)
 
         return
 
@@ -667,7 +696,6 @@ class MipProblem(object):
 
         #if results == None:
         #    results = Results(self._grid)
-
         print("Solving...")
         self.prob.solve(self.solver)
         # store results and update storage levels

@@ -91,8 +91,12 @@ class _Branches(object):
         self.node_from = []
         self.node_to = []
         self.reactance = []
-        self.capacity = []
         self._susceptance = []
+        self.capacity = []
+        self.loss = []
+        self.max_capacity = []
+        self.fixed_cost = []
+        self.variable_cost = []
     
     def readFromFile(self,filename):
         with openfile(filename,'r') as csvfile:
