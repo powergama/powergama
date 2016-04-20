@@ -4,13 +4,14 @@ Module for PowerGAMA constants
 '''
 
 ## Per unit base value for power in W (100 MW)
-baseS = 100.0e6
+#baseS = 100.0e6
+baseS = 1e6
 
 ## Per unit base value for voltage in V (400 kV)
 baseV = 400.0e3
 
 ## Penalty (/MWh) for load shedding
-loadshedcost = 1000.0
+loadshedcost = 1000000000.0
 
 ## Hours per year (365*24 = 8760)
 hoursperyear = 8760.0

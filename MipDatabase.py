@@ -82,7 +82,8 @@ class Database(object):
                         +"output DOUBLE)")
             cur.execute("CREATE TABLE Res_FlexibleLoad(timestep INT, indx INT,"
                         +"demand DOUBLE, storage DOUBLE, value DOUBLE)")
-    
+            cur.execute("CREATE TABLE Res_DC_Investment(indx INT,"
+                        +"Ydc DOUBLE, Xdc DOUBLE)")   
     
         return nodes
     def getTimerange(self):
@@ -115,7 +116,9 @@ class Database(object):
                        idx_storagegen,
                        idx_branchsens,
                        idx_pumpgen,
-                       idx_flexload):
+                       idx_flexload,
+                       fixed_investment,
+                       variable_investment):
         '''
         Store results from a given timestep to the database
     
@@ -169,7 +172,7 @@ class Database(object):
             cur.execute("INSERT INTO Res_ObjFunc VALUES(?,?)",(0,objective_function))
             for t in timestep:            
                 cur.executemany("INSERT INTO Res_Nodes VALUES(?,?,?,?,?)",
-                        tuple((t,i,node_angle[t][i],
+                        tuple((t,i,0,
                               sensitivity_node_power[i],loadshed_power[t][i]) 
                         for i in range(len(sensitivity_node_power))))
                 cur.executemany("INSERT INTO Res_Branches VALUES(?,?,?)",
@@ -186,20 +189,23 @@ class Database(object):
                 cur.executemany("INSERT INTO Res_Generators VALUES(?,?,?,?)",
                         tuple((t,i,generator_power[t][i],0) 
                         for i in range(len(generator_power[t]))))
-                cur.executemany("INSERT INTO Res_Storage VALUES(?,?,?,?)",
-                        tuple((t,idx_storagegen[i],
-                               storage[i],marginalprice[i]) 
-                        for i in range(len(storage))))
-                cur.executemany("INSERT INTO Res_Pumping VALUES(?,?,?)",
-                        tuple((t,idx_pumpgen[i],
-                               generator_pumped[t][i],) 
-                        for i in range(len(generator_pumped[t]))))
-                cur.executemany("INSERT INTO Res_FlexibleLoad VALUES(?,?,?,?,?)",
-                        tuple((t,idx_flexload[i],
-                               flexload_power[t][i],
-                               flexload_storage[i],
-                               flexload_storagevalue[i]) 
-                        for i in range(len(flexload_power[t]))))
+#                cur.executemany("INSERT INTO Res_Storage VALUES(?,?,?,?)",
+#                        tuple((t,idx_storagegen[i],
+#                               storage[i],marginalprice[i]) 
+#                        for i in range(len(storage))))
+#                cur.executemany("INSERT INTO Res_Pumping VALUES(?,?,?)",
+#                        tuple((t,idx_pumpgen[i],
+#                               generator_pumped[t][i],) 
+#                        for i in range(len(generator_pumped[t]))))
+#                cur.executemany("INSERT INTO Res_FlexibleLoad VALUES(?,?,?,?,?)",
+#                        tuple((t,idx_flexload[i],
+#                               flexload_power[t][i],
+#                               flexload_storage[i],
+#                               flexload_storagevalue[i]) 
+#                        for i in range(len(flexload_power[t]))))
+            cur.executemany("INSERT INTO Res_DC_Investment VALUES(?,?,?)",
+                tuple((i,fixed_investment[i],variable_investment[i]) 
+                for i in range(len(fixed_investment))))
       
 
     

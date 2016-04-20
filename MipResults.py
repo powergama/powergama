@@ -65,6 +65,8 @@ class MipResults(object):
         self.marginalprice=[]
         self.inflowSpilled=[]
         self.loadshed=[]
+        self.fixedDcInvest=[]
+        self.varDcInvest=[]
            
         
     def addResultsFromTimestep(self,timestep,objective_function,
@@ -80,7 +82,9 @@ class MipResults(object):
                                marginalprice,
                                flexload_power,
                                flexload_storage,
-                               flexload_storagevalue):
+                               flexload_storagevalue,
+                               fixed_investment,
+                               variable_investment):
         '''Store results from optimal power flow for a new timestep'''
         
         # Store results in sqlite database on disk (to avoid memory problems)
@@ -102,6 +106,8 @@ class MipResults(object):
             flexload_power = flexload_power,
             flexload_storage = flexload_storage,
             flexload_storagevalue = flexload_storagevalue,
+            fixed_investment = fixed_investment,
+            variable_investment = variable_investment,
             idx_storagegen = self.storage_idx_generators,
             idx_branchsens = self.idxConstrainedBranchCapacity,
             idx_pumpgen = self.pump_idx_generators,
@@ -116,10 +122,12 @@ class MipResults(object):
         self.sensitivityBranchCapacity.append(sensitivity_branch_capacity)
         self.sensitivityDcBranchCapacity.append(sensitivity_dcbranch_capacity)
         self.sensitivityNodePower.append(sensitivity_node_power)
-        self.storage.append(storage)
-        self.inflowSpilled.append(inflow_spilled)
+#        self.storage.append(storage)
+#        self.inflowSpilled.append(inflow_spilled)
         self.loadshed.append(loadshed_power)
         self.marginalprice.append(marginalprice)
+        self.fixedDcInvest.append(fixed_investment)
+        self.varDcInvest.append(variable_investment)
         
         # self.storageGeneratorsIdx.append(idx_generatorsWithStorage)
 

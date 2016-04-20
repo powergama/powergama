@@ -41,7 +41,7 @@ class MipProblem(object):
     Class containing problem definition as a LP problem, and function calls
     to solve the problem
     '''
-    solver = None
+    solver = pulp.GUROBI()
 
 
     def __init__(self,grid):
@@ -120,38 +120,39 @@ class MipProblem(object):
             for i in range_dc_branches]
             
             
-        self._var_angle = [
-            pulp.LpVariable("theta"+str(i)+"_"+str(t))
-            for i in range_nodes for t in range_time]
-        self._var_pumping = [
-            pulp.LpVariable("Ppump"+str(i)+"_"+str(t))
-            for i in self._idx_generatorsWithPumping for t in range_time]
-        self._var_flexload = [
-            pulp.LpVariable("Pflexload"+str(i)+"_"+str(t))
-            for i in self._idx_consumersWithFlexLoad for t in range_time]
+#        self._var_angle = [
+#            pulp.LpVariable("theta"+str(i)+"_"+str(t))
+#            for i in range_nodes for t in range_time]
+#        self._var_pumping = [
+#            pulp.LpVariable("Ppump"+str(i)+"_"+str(t))
+#            for i in self._idx_generatorsWithPumping for t in range_time]
+#        self._var_flexload = [
+#            pulp.LpVariable("Pflexload"+str(i)+"_"+str(t))
+#            for i in self._idx_consumersWithFlexLoad for t in range_time]
                 
         self._idx_load = [[]]*self.num_nodes
 
         # Reshape the lists to get a 2D array (include time dependency)
         self._var_generation = np.reshape(self._var_generation, 
                                           (range_generators.stop,range_time.stop))
-        self._var_pumping = np.reshape(self._var_pumping, 
-                                          (len(self._idx_generatorsWithPumping),range_time.stop))
-        self._var_flexload = np.reshape(self._var_flexload, 
-                                          (len(self._idx_consumersWithFlexLoad),range_time.stop))
         self._var_branchflow = np.reshape(self._var_branchflow, 
                                                   (range_branches.stop,range_time.stop))
         self._var_dc = np.reshape(self._var_dc, 
                                  (range_dc_branches.stop,range_time.stop))
-        self._var_angle = np.reshape(self._var_angle, 
-                                     (range_nodes.stop,range_time.stop))
         self._var_loadshedding = np.reshape(self._var_loadshedding, 
                                      (range_nodes.stop,range_time.stop))
+                                     
+#        self._var_pumping = np.reshape(self._var_pumping, 
+#                                          (len(self._idx_generatorsWithPumping),range_time.stop))
+#        self._var_flexload = np.reshape(self._var_flexload, 
+#                                          (len(self._idx_consumersWithFlexLoad),range_time.stop))
+#        self._var_angle = np.reshape(self._var_angle, 
+#                                     (range_nodes.stop,range_time.stop))
                                           
         # Compute matrices used in power flow equaions
-        print("Computing B and DA matrices...")
-        self._Bbus, self._DA = grid.computePowerFlowMatrices(const.baseZ)
-        print("Creating B.theta and DA.theta expressions")
+#        print("Computing B and DA matrices...")
+#        self._Bbus, self._DA = grid.computePowerFlowMatrices(const.baseZ)
+#        print("Creating B.theta and DA.theta expressions")
 
          # Matrix * vector product -- Using coo_matrix
         # (http://stackoverflow.com/questions/4319014/
@@ -177,10 +178,10 @@ class MipProblem(object):
 
 
         # Variables upper and lower bounds (voltage angle and loadshed)
-        for i in range(self.num_nodes):
-            for t in range_time:
-                self._var_angle[i,t].lowBound = -pi
-                self._var_angle[i,t].upBound = pi
+#        for i in range(self.num_nodes):
+#            for t in range_time:
+#                self._var_angle[i,t].lowBound = -pi
+#                self._var_angle[i,t].upBound = pi
 
         for i in range(self.num_nodes):
             for t in range_time:
@@ -189,21 +190,21 @@ class MipProblem(object):
                 # upper bound should not exceed total demand at load
                 #TODO: Replace unlimited upper bound by real value
 
-        for i in range_pumps:
-            for t in range_time:
-                self._var_pumping[i,t].lowBound = 0
-                self._var_pumping[i,t].upBound = grid.generator.pump_cap[
-                                            self._idx_generatorsWithPumping[i]]
+#        for i in range_pumps:
+#            for t in range_time:
+#                self._var_pumping[i,t].lowBound = 0
+#                self._var_pumping[i,t].upBound = grid.generator.pump_cap[
+#                                            self._idx_generatorsWithPumping[i]]
 
-        for i in range_flexloads:
-            for t in range_time:
-                idx_cons = self._idx_consumersWithFlexLoad[i]
-                self._var_flexload[i,t].lowBound = 0
-                self._var_flexload[i,t].upBound = (
-                    grid.consumer.load[idx_cons]
-                    * grid.consumer.flex_fraction[idx_cons]
-                    / grid.consumer.flex_on_off[idx_cons]
-                    )
+#        for i in range_flexloads:
+#            for t in range_time:
+#                idx_cons = self._idx_consumersWithFlexLoad[i]
+#                self._var_flexload[i,t].lowBound = 0
+#                self._var_flexload[i,t].upBound = (
+#                    grid.consumer.load[idx_cons]
+#                    * grid.consumer.flex_fraction[idx_cons]
+#                    / grid.consumer.flex_on_off[idx_cons]
+#                    )
 
 
         # TODO: Must add the time dimension for accurate number of constraints
@@ -223,10 +224,10 @@ class MipProblem(object):
         
 
         # Swing bus angle = 0 (reference)
-        for t in range_time:        
-            probConstraintSwing = self._var_angle[0,t]==0
-            angl_name = "swingbus_angle_t="+str(t)
-            self.prob.addConstraint(probConstraintSwing,name=angl_name)
+#        for t in range_time:        
+#            probConstraintSwing = self._var_angle[0,t]==0
+#            angl_name = "swingbus_angle_t="+str(t)
+#            self.prob.addConstraint(probConstraintSwing,name=angl_name)
 
 
         # Max and min power flow on AC branches
@@ -286,11 +287,11 @@ class MipProblem(object):
 
         self._pfPload = np.empty([self.num_nodes, range_time.stop],dtype=object)
         self._pfPgen = np.empty([self.num_nodes, range_time.stop],dtype=object)
-        self._pfPpump= np.empty([self.num_nodes, range_time.stop],dtype=object)
-        self._pfPflexload= np.empty([self.num_nodes, range_time.stop],dtype=object)
         self._pfPflow = np.empty([self.num_nodes, range_time.stop],dtype=object)
         self._pfPshed = np.empty([self.num_nodes, range_time.stop],dtype=object)
         self._pfPdc = np.empty([self.num_nodes, range_time.stop],dtype=object)
+#        self._pfPpump= np.empty([self.num_nodes, range_time.stop],dtype=object)
+#        self._pfPflexload= np.empty([self.num_nodes, range_time.stop],dtype=object)
 
         for idx_node in range_nodes:
             # Find generators connected to this node:
@@ -298,7 +299,7 @@ class MipProblem(object):
 
             # the idx_gen_pump has  indices referring to the list of generators
             # the number of pumps is equal to the length of this list
-            idx_gen_pump = grid.getGeneratorsWithPumpAtNode(idx_node)
+#            idx_gen_pump = grid.getGeneratorsWithPumpAtNode(idx_node)
 
             # Find DC branches connected to node (direction is important)
             idx_dc_from = grid.getDcBranchesAtNode(idx_node,'from')
@@ -313,21 +314,21 @@ class MipProblem(object):
 
             # the idx_flexload has  indices referring to the list of loads
             # the number of flexible loads equals the length of this list
-            idx_flexload = grid.getLoadsFlexibleAtNode(idx_node)
+#            idx_flexload = grid.getLoadsFlexibleAtNode(idx_node)
 
             # TODO: label constraints with time step (this is the node constraint)
             # Constant part of power flow equations
             for t in range_time:
                 self._pfPgen[idx_node,t] = [
                     self._var_generation[i,t]*(1/const.baseMVA) for i in idx_gen]
-                self._pfPpump[idx_node,t] = [
-                    -self._var_pumping[
-                    self._idx_generatorsWithPumping.index(i),t]*(1/const.baseMVA)
-                    for i in idx_gen_pump]
-                self._pfPflexload[idx_node,t] = [
-                    -self._var_flexload[
-                    self._idx_consumersWithFlexLoad.index(i),t]*(1/const.baseMVA)
-                    for i in idx_flexload]
+#                self._pfPpump[idx_node,t] = [
+#                    -self._var_pumping[
+#                    self._idx_generatorsWithPumping.index(i),t]*(1/const.baseMVA)
+#                    for i in idx_gen_pump]
+#                self._pfPflexload[idx_node,t] = [
+#                    -self._var_flexload[
+#                    self._idx_consumersWithFlexLoad.index(i),t]*(1/const.baseMVA)
+#                    for i in idx_flexload]
                 self._pfPshed[idx_node,t] = (
                     self._var_loadshedding[idx_node,t]*(1/const.baseMVA))
                 self._pfPdc[idx_node,t] = (
@@ -348,11 +349,11 @@ class MipProblem(object):
                 # Flow out of the node is positive
                 cpf = pulp.lpSum(
                 self._pfPgen[idx_node,t]
-                +self._pfPpump[idx_node,t]
-                +self._pfPflexload[idx_node,t]
+#                +self._pfPpump[idx_node,t]
+#                +self._pfPflexload[idx_node,t]
                 +self._pfPdc[idx_node,t]
                 +self._pfPload[idx_node,t]
-                +self._pfPshed[idx_node,t] 
+#                +self._pfPshed[idx_node,t] 
                 +self._pfPflow[idx_node,t])== 0
 #                cpf = pulp.lpSum(
 #                self._pfPgen[idx_node,t]
@@ -512,11 +513,11 @@ class MipProblem(object):
 
                 cpf = (
                     self._pfPgen[idx_node,t]
-                    +self._pfPpump[idx_node,t]
-                    +self._pfPflexload[idx_node,t]
+#                    +self._pfPpump[idx_node,t]
+#                    +self._pfPflexload[idx_node,t]
                     +self._pfPdc[idx_node,t]
                     +self._pfPload[idx_node,t]
-                    +self._pfPshed[idx_node,t] 
+#                    +self._pfPshed[idx_node,t] 
                     +self._pfPflow[idx_node,t] == 0)
 
                 # Find the associated constraint and modify it:
@@ -542,23 +543,23 @@ class MipProblem(object):
         
 
 
-        genpumpidx = self._idx_generatorsWithPumping;
-        probObjective_pump = pulp.lpSum([
-            max(0,(self._marginalcosts[genpumpidx[i]]
-            -self._grid.generator.pump_deadband[genpumpidx[i]]))
-            * (-self._var_pumping[i,t])
-            for i in range(len(genpumpidx)) for t in range_time
-            ])
-
-        flexloadidx = self._idx_consumersWithFlexLoad
-        probObjective_flexload = pulp.lpSum([
-            -self._marginalcosts_flexload[flexloadidx[i]]
-            * self._var_flexload[i,t]
-            for i in range(len(flexloadidx)) for t in range_time])
+#        genpumpidx = self._idx_generatorsWithPumping;
+#        probObjective_pump = pulp.lpSum([
+#            max(0,(self._marginalcosts[genpumpidx[i]]
+#            -self._grid.generator.pump_deadband[genpumpidx[i]]))
+#            * (-self._var_pumping[i,t])
+#            for i in range(len(genpumpidx)) for t in range_time
+#            ])
+#
+#        flexloadidx = self._idx_consumersWithFlexLoad
+#        probObjective_flexload = pulp.lpSum([
+#            -self._marginalcosts_flexload[flexloadidx[i]]
+#            * self._var_flexload[i,t]
+#            for i in range(len(flexloadidx)) for t in range_time])
 
         self.prob.setObjective(probObjective_gen
-                                +probObjective_pump
-                                +probObjective_flexload
+#                                +probObjective_pump
+#                                +probObjective_flexload
                                 +probSlack
                                 +probObjective_finvest
                                 +probObjective_vinvest)
@@ -573,22 +574,26 @@ class MipProblem(object):
         range_time = self._grid.timerange
         timestep=0
         Pgen = np.empty([range_time.stop,],dtype=object)
-        Ppump = np.empty([range_time.stop,],dtype=object)
-        Pflexload = np.empty([range_time.stop,],dtype=object)
+#        Ppump = np.empty([range_time.stop,],dtype=object)
+#        Pflexload = np.empty([range_time.stop,],dtype=object)
         Pb = np.empty([range_time.stop,],dtype=object)
         Pdc = np.empty([range_time.stop,],dtype=object)
-        theta = np.empty([range_time.stop,],dtype=object)
-        loadshed = np.empty([range_time.stop,],dtype=object)     
+#        theta = np.empty([range_time.stop,],dtype=object)
+        loadshed = np.empty([range_time.stop,],dtype=object)   
+        Xdc = np.empty([range_time.stop,],dtype=object)
+        Ydc = np.empty([range_time.stop,],dtype=object)
 
         
         for t in range_time:
             Pgen[t] = [v[t].varValue for v in self._var_generation]
-            Ppump[t] = [v[t].varValue for v in self._var_pumping]
-            Pflexload[t] = [v[t].varValue for v in self._var_flexload]
+#            Ppump[t] = [v[t].varValue for v in self._var_pumping]
+#            Pflexload[t] = [v[t].varValue for v in self._var_flexload]
             Pb[t] = [v[t].varValue for v in self._var_branchflow]
             Pdc[t] = [v[t].varValue for v in self._var_dc]
-            theta[t] = [v[t].varValue for v in self._var_angle]
+#            theta[t] = [v[t].varValue for v in self._var_angle]
             loadshed[t] = [v[t].varValue for v in self._var_loadshedding]
+        Xdc = [v.varValue for v in self._var_vinvestment]
+        Ydc = [v.varValue for v in self._var_finvestment]
             
 #        # Update storage:
 #        inflow_profile_refs = self._grid.generator.inflow_profile
@@ -641,10 +646,10 @@ class MipProblem(object):
             senseN = [self.prob.constraints[ckey].pi/const.baseMVA
                 if self.prob.constraints[ckey].pi!=None else None
                 for ckey in self._constraints_pf[:,t]]
-            senseB = [(i-j)/const.baseMVA if i!=None and j!=None else None
-                for i,j in zip(senseBranchCapacityUpper, senseBranchCapacityLower)]
-            senseDcB = [(i-j)/const.baseMVA  if i!=None and j!=None else None
-                for i,j in zip(senseDcBranchCapacityUpper, senseDcBranchCapacityLower)]
+#            senseB = [(i-j)/const.baseMVA if i!=None and j!=None else None
+#                for i,j in zip(senseBranchCapacityUpper, senseBranchCapacityLower)]
+#            senseDcB = [(i-j)/const.baseMVA  if i!=None and j!=None else None
+#                for i,j in zip(senseDcBranchCapacityUpper, senseDcBranchCapacityLower)]
 
 #        # TODO: This subtraction generates warning - because it includes nan and inf?
 #        energyspilled = energyStorable-self._storage
@@ -660,20 +665,22 @@ class MipProblem(object):
             timestep = self._grid.timerange,
             objective_function = F,
             generator_power = Pgen,
-            generator_pumped = Ppump,
+            generator_pumped = [],
             branch_power = Pb,
             dcbranch_power = Pdc,
-            node_angle = theta,
-            sensitivity_branch_capacity = senseB,
-            sensitivity_dcbranch_capacity = senseDcB,
+            node_angle = [],
+            sensitivity_branch_capacity = senseBranchCapacityUpper,
+            sensitivity_dcbranch_capacity = senseDcBranchCapacityUpper,
             sensitivity_node_power = senseN,
             storage = [],
             inflow_spilled = [],
             loadshed_power = loadshed,
             marginalprice = [],
-            flexload_power = Pflexload,
+            flexload_power = [],
             flexload_storage = [],
-            flexload_storagevalue = []
+            flexload_storagevalue = [],
+            fixed_investment = Ydc,
+            variable_investment = Xdc
             )
 
         return
@@ -698,6 +705,7 @@ class MipProblem(object):
         #    results = Results(self._grid)
         print("Solving...")
         self.prob.solve(self.solver)
+        print("Status:", pulp.LpStatus[self.prob.status])
         # store results and update storage levels
         self._storeResultsAndUpdateStorage(results)
 
