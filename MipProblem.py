@@ -341,6 +341,19 @@ class MipProblem(object):
                 
                 # this value will be updated later, so using zero for now:
                 self._pfPload[idx_node,t] = pulp.lpSum(0)
+                # Update load
+                idx_loads = self._idx_load[idx_node] #indices of loads at this node
+                demOutflow=[]
+                # Usually there is maximum one load per node, but it could be more
+                for i in idx_loads:
+                    average = self._grid.consumer.load[i]*(
+                            1-self._grid.consumer.flex_fraction[i])
+                    profile_ref = self._grid.consumer.load_profile[i]
+                    demOutflow.append(
+                            -self._grid.demandProfiles[profile_ref][t]
+                            *average/const.baseMVA)
+
+                self._pfPload[idx_node,t] = demOutflow
 
                 # Generation is positive
                 # Pumping is negative
@@ -480,54 +493,46 @@ class MipProblem(object):
         power demand, power inflow and marginal generator costs
         '''
         timestep=0
+        
         range_nodes = range(self.num_nodes)
         range_generators = range(self.num_generators)
         range_dc_branches = range(self.num_dc_branches)
 
-        # Update power flow equations
-        for t in range_time:
-            for idx_node in range_nodes:
-
-                # Update load
-                idx_loads = self._idx_load[idx_node] #indices of loads at this node
-                demOutflow=[]
-                # Usually there is maximum one load per node, but it could be more
-                for i in idx_loads:
-                    average = self._grid.consumer.load[i]*(
-                            1-self._grid.consumer.flex_fraction[i])
-                    profile_ref = self._grid.consumer.load_profile[i]
-                    demOutflow.append(
-                            -self._grid.demandProfiles[profile_ref][t]
-                            *average/const.baseMVA)
-
-                self._pfPload[idx_node,t] = demOutflow
-
-
-#                cpf = (
-#                    self._pfPgen[idx_node,t]
-#                    +self._pfPpump[idx_node,t]
-#                    +self._pfPflexload[idx_node,t]
-#                    +self._pfPdc[idx_node,t]
-#                    +self._pfPload[idx_node,t]
-#                    +self._pfPshed[idx_node,t] == self._pfPflow[idx_node,t])
-
-                cpf = (
-                    self._pfPgen[idx_node,t]
-#                    +self._pfPpump[idx_node,t]
-#                    +self._pfPflexload[idx_node,t]
-                    +self._pfPdc[idx_node,t]
-                    +self._pfPload[idx_node,t]
-#                    +self._pfPshed[idx_node,t] 
-                    +self._pfPflow[idx_node,t] == 0)
-
-                # Find the associated constraint and modify it:
-                key_constr = self._constraints_pf[idx_node,t]
-                self.prob.constraints[key_constr] = cpf
+#        # Update power flow equations
+#        for t in range_time:
+#            for idx_node in range_nodes:
+#
+##                # Update load
+##                idx_loads = self._idx_load[idx_node] #indices of loads at this node
+##                demOutflow=[]
+##                # Usually there is maximum one load per node, but it could be more
+##                for i in idx_loads:
+##                    average = self._grid.consumer.load[i]*(
+##                            1-self._grid.consumer.flex_fraction[i])
+##                    profile_ref = self._grid.consumer.load_profile[i]
+##                    demOutflow.append(
+##                            -self._grid.demandProfiles[profile_ref][t]
+##                            *average/const.baseMVA)
+##
+##                self._pfPload[idx_node,t] = demOutflow
+#                
+#                cpf = pulp.lpsum( 
+#                self._pfPgen[idx_node,t]
+##               +self._pfPpump[idx_node,t]
+##               +self._pfPflexload[idx_node,t]
+#                +self._pfPdc[idx_node,t]
+#                +self._pfPload[idx_node,t]
+##               +self._pfPshed[idx_node,t] 
+#                +self._pfPflow[idx_node,t]) == 0
+#
+#                # Find the associated constraint and modify it:
+#                key_constr = self._constraints_pf[idx_node,t]
+#                self.prob.constraints[key_constr] = cpf
 
         # Update objective function
         self._updateMarginalcosts(range_time)
         annuityF = self._computeAnnuityFactor(rate=0.05,years=30)
-        
+            
         probObjective_gen = pulp.lpSum(\
             [self._marginalcosts[i]*self._var_generation[i,t]*8760/len(range_time)*annuityF \
                 for i in range_generators for t in range_time]  )
