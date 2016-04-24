@@ -42,6 +42,15 @@ class Database(object):
             data.branch.capacity[i],
             data.branch.reactance[i]
             ) for i in range(len(data.branch.capacity)))
+            
+        br_from = data.dcbranch.node_fromIdx(data.node)
+        br_to = data.dcbranch.node_toIdx(data.node)        
+        dcbranches = tuple((
+            i,
+            br_from[i],
+            br_to[i],
+            data.dcbranch.capacity[i]
+            ) for i in range(len(data.dcbranch.capacity)))
         
         if os.path.isfile(self.filename):
             #delete existing file
@@ -64,6 +73,10 @@ class Database(object):
                         +"toIndx INT, capacity DOUBLE, reactance DOUBLE)")
             cur.executemany("INSERT INTO Grid_Branches VALUES(?,?,?,?,?)",
                             branches)
+            cur.execute("CREATE TABLE Grid_DcBranches(indx INT, fromIndx INT,"
+                        +"toIndx INT, capacity DOUBLE)")
+            cur.executemany("INSERT INTO Grid_DcBranches VALUES(?,?,?,?)",
+                            dcbranches)
     
             cur.execute("CREATE TABLE Res_ObjFunc(timestep INT, value DOUBLE)")
             cur.execute("CREATE TABLE Res_Branches(timestep INT, indx INT,"

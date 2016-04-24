@@ -41,7 +41,7 @@ class MipProblem(object):
     Class containing problem definition as a LP problem, and function calls
     to solve the problem
     '''
-    solver = pulp.GUROBI()
+    solver = pulp.CPLEX()
 
 
     def __init__(self,grid):
@@ -336,7 +336,7 @@ class MipProblem(object):
                     +[ -self._var_dc[i,t]*(1/const.baseMVA) for i in idx_dc_from])
                 self._pfPflow[idx_node,t] = (
                     [self._var_branchflow[i,t]*(1/const.baseMVA) for i in idx_ac_to]
-                    +[ -self._var_dc[i,t]*(1/const.baseMVA) for i in idx_ac_from])
+                    +[ -self._var_branchflow[i,t]*(1/const.baseMVA) for i in idx_ac_from])
 #                self._pfPflow[idx_node,t] = -_Btheta[idx_node]
                 
                 # this value will be updated later, so using zero for now:
@@ -565,7 +565,7 @@ class MipProblem(object):
         self.prob.setObjective(probObjective_gen
 #                                +probObjective_pump
 #                                +probObjective_flexload
-                                +probSlack
+#                                +probSlack
                                 +probObjective_finvest
                                 +probObjective_vinvest)
 
