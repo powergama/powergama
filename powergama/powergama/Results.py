@@ -682,6 +682,81 @@ class Results(object):
         return dict(exp=sum_export,imp=sum_import)
         
 
+    def getEnergyBalanceInArea(self,area,spillageGen,resolution='H',
+                               fileName=None,timeMaxMin=None,
+                               start_date='1/1/2014',):
+        '''
+        Print time series of energy balance in an area, including
+        production, spillage, load shedding, storage, pump consumption
+        and imports
+        
+        NOTE: This function assumes that the simulation resolution is hourly.
+        '''
+        #Eirik/Arne
+        import pandas as pd
+        
+        if timeMaxMin == None:
+            timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
+        prod = pd.DataFrame()
+        genTypes = self.grid.getAllGeneratorTypes()
+        generators = self.grid.getGeneratorsPerAreaAndType()[area]
+        pumpIdx = self.grid.getGeneratorsWithPumpByArea()[area]
+        storageGen = self.grid.getIdxGeneratorsWithStorage()
+        areaGen = [item for sublist in list(
+                    generators.values()) for item in sublist]
+        matches = [x for x in areaGen if x in storageGen]
+        for gt in genTypes:
+            if gt in generators:
+                prod[gt] = self.db.getResultGeneratorPower(generators[gt],
+                timeMaxMin)
+                if gt in spillageGen:
+                    prod[gt+' spilled'] = self.db.getResultGeneratorSpilled(
+                                            generators[gt],timeMaxMin)
+        prod['load shedding'] = self.getLoadheddingInArea(area,timeMaxMin)
+        prod['storage'] = self.db.getResultStorageFillingMultiple(matches,
+                            False,timeMaxMin)
+        if len(pumpIdx) > 0:
+            prod['pumped'] = self.db.getResultPumpPowerArea(pumpIdx,
+                                    True,timeMaxMin)
+        prod['net import'] = self.getNetImport(area,timeMaxMin)
+        prod.index = pd.date_range(start_date,
+            periods=timeMaxMin[-1]-timeMaxMin[0], freq='H')
+        if resolution != 'H':
+            prod = prod.resample(resolution, how='sum')
+        if fileName:
+            prod.to_csv(fileName)
+        else:
+            return prod
+
+
+    def getStorageFillingInAreas(self,areas,generator_type, 
+                                 relative_storage=True,timeMaxMin=None):        
+        '''
+        Gets aggregated storage filling for specified area(s) for a
+        specific generator type.
+        '''
+        #Eirik/Arne
+        
+        if timeMaxMin == None:
+            timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
+        storageGen = self.grid.getIdxGeneratorsWithStorage()
+        storageTypes = self.grid.generator.gentype
+        nodeNames = self.grid.generator.node
+        nodeAreas = self.grid.node.area
+        storCapacities = self.grid.generator.storage
+        generators = []
+        capacity = 0
+        for gen in storageGen:
+            area = nodeAreas[self.grid.node.name.index(nodeNames[gen])]
+            if area in areas and storageTypes[gen] == generator_type:
+                generators.append(gen)
+                if relative_storage:
+                    capacity += storCapacities[gen]
+            filling = self.db.getResultStorageFillingMultiple(generators,
+                          timeMaxMin,capacity)
+        return filling
+        
+
     def getNetImport(self,area,timeMaxMin=None):        
         '''Return time series for net import for a specified area'''
         if timeMaxMin is None:
