@@ -632,7 +632,7 @@ class Database(object):
         return values
 
 
-    def getResultPumpPowerMultiple(self,genindx,negative,timeMaxMin):
+    def getResultPumpPowerMultiple(self,genindx,timeMaxMin,negative=True):
         '''Get pumping for generators with pumping'''
         
         con = db.connect(self.filename)

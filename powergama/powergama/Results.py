@@ -684,19 +684,39 @@ class Results(object):
 
     def getEnergyBalanceInArea(self,area,spillageGen,resolution='H',
                                fileName=None,timeMaxMin=None,
-                               start_date='1/1/2014',):
+                               start_date='2014-01-01',):
         '''
         Print time series of energy balance in an area, including
         production, spillage, load shedding, storage, pump consumption
         and imports
         
-        NOTE: This function assumes that the simulation resolution is hourly.
+        Parameters
+        ----------
+        area : string
+            area code
+        spillageGen : list
+            generator types for which to show spillage (renewables)
+        resolution : string
+            resolution of output, see pandas:resample
+        fileName : string (default=None)
+            name of file to export results
+        timeMaxMin : list
+            time range to consider
+        start_date : date string
+            date when time series start
+        
         '''
         #Eirik/Arne
+        
+        # This function requires pandas
         import pandas as pd
         
         if timeMaxMin == None:
             timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
+            
+        # data resolution in whole seconds (usually, timeDelta=1.0)
+        resolutionS = int(self.grid.timeDelta*3600)
+        
         prod = pd.DataFrame()
         genTypes = self.grid.getAllGeneratorTypes()
         generators = self.grid.getGeneratorsPerAreaAndType()[area]
@@ -714,13 +734,14 @@ class Results(object):
                                             generators[gt],timeMaxMin)
         prod['load shedding'] = self.getLoadheddingInArea(area,timeMaxMin)
         prod['storage'] = self.db.getResultStorageFillingMultiple(matches,
-                            False,timeMaxMin)
+                            timeMaxMin,capacity=False)
         if len(pumpIdx) > 0:
-            prod['pumped'] = self.db.getResultPumpPowerArea(pumpIdx,
-                                    True,timeMaxMin)
+            prod['pumped'] = self.db.getResultPumpPowerMultiple(pumpIdx,
+                                    timeMaxMin,negative=True)
         prod['net import'] = self.getNetImport(area,timeMaxMin)
         prod.index = pd.date_range(start_date,
-            periods=timeMaxMin[-1]-timeMaxMin[0], freq='H')
+                                   periods=timeMaxMin[-1]-timeMaxMin[0],
+                                   freq='{}s'.format(resolutionS))
         if resolution != 'H':
             prod = prod.resample(resolution, how='sum')
         if fileName:
@@ -732,8 +753,19 @@ class Results(object):
     def getStorageFillingInAreas(self,areas,generator_type, 
                                  relative_storage=True,timeMaxMin=None):        
         '''
-        Gets aggregated storage filling for specified area(s) for a
-        specific generator type.
+        Gets time-series with aggregated storage filling for specified area(s) 
+        for a specific generator type.
+        
+        Parameters
+        ----------
+        areas : list
+            list of area codes (e.g. ['DE','FR'])
+        generator_type : string
+            generator type string (e.g. 'hydro')
+        relative_storage : boolean
+            show relative (True) or absolute (False) storage
+        timeMaxMin : list
+            time range to consider (e.g. [0,8760])
         '''
         #Eirik/Arne
         
