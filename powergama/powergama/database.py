@@ -631,6 +631,27 @@ class Database(object):
             values = [row[0] for row in rows]        
         return values
 
+
+    def getResultPumpPowerMultiple(self,genindx,timeMaxMin,negative=True):
+        '''Get pumping for generators with pumping'''
+        
+        con = db.connect(self.filename)
+        with con:
+            #con.row_factory = db.Row
+            cur = con.cursor()
+            cur.execute("SELECT SUM(output) FROM Res_Pumping "
+                +"WHERE timestep>=? AND timestep<? AND indx IN ({})".format(
+                ",".join(map(str,genindx)))
+                +" GROUP BY timestep ORDER BY timestep",
+                (timeMaxMin[0],timeMaxMin[-1]))
+            rows = cur.fetchall()
+            if negative==True:
+                values = [-row[0] for row in rows]
+            else:
+                values = [row[0] for row in rows]
+        return values
+
+
     def getResultStorageFilling(self,genindx,timeMaxMin):
         '''Get storage filling level for storage generators'''
         con = db.connect(self.filename)
@@ -658,6 +679,26 @@ class Database(object):
             values = [row[1] for row in rows]  
         return values
 
+    def getResultStorageFillingMultiple(self,genindx,timeMaxMin,capacity=None):
+        '''Get storage filling level for multiple storage generators
+        '''
+        con = db.connect(self.filename)
+        with con:
+            #con.row_factory = db.Row
+            cur = con.cursor()
+            cur.execute("SELECT SUM(storage) FROM Res_Storage "
+                +"WHERE timestep>=? AND timestep<? AND indx IN ({})".format(
+                ",".join(map(str,genindx)))
+                +" GROUP BY timestep ORDER BY timestep",
+                (timeMaxMin[0],timeMaxMin[-1]))
+            rows = cur.fetchall()
+            if capacity:
+                values = [row[0]/capacity for row in rows]
+            else:
+                values = [row[0] for row in rows]
+        return values
+
+
     def getResultStorageValue(self,storageindx,timeMaxMin):
         '''Get storage value for storage generators'''
         con = db.connect(self.filename)
@@ -670,6 +711,24 @@ class Database(object):
             rows = cur.fetchall()
             values = [row[0] for row in rows]        
         return values
+
+
+    def getResultStorageValueMultiple(self,storageindx,timeMaxMin):
+        '''Get average storage value (marginal price) for multiple 
+        storage generators'''
+        
+        con = db.connect(self.filename)
+        with con:
+            cur = con.cursor()
+            cur.execute("SELECT AVG(marginalprice) FROM Res_Storage "
+                +"WHERE timestep>=? AND timestep<? AND indx IN (%s)"
+                % ",".join(map(str,storageindx))
+                +" GROUP BY timestep ORDER BY timestep",
+                (timeMaxMin[0],timeMaxMin[-1]))
+            rows = cur.fetchall()
+            values = [row[0] for row in rows]
+        return values
+    
 
     def getResultGeneratorSpilledSums(self,timeMaxMin):
         '''Get sum of spilled power for all generator'''

@@ -10,7 +10,6 @@ import numpy as np
 import math
 import powergama.database as db
 import csv
-#from mpl_toolkits.basemap import Basemap #made local to function using it
 
 class Results(object):
     '''
@@ -683,6 +682,113 @@ class Results(object):
         return dict(exp=sum_export,imp=sum_import)
         
 
+    def getEnergyBalanceInArea(self,area,spillageGen,resolution='H',
+                               fileName=None,timeMaxMin=None,
+                               start_date='2014-01-01',):
+        '''
+        Print time series of energy balance in an area, including
+        production, spillage, load shedding, storage, pump consumption
+        and imports
+        
+        Parameters
+        ----------
+        area : string
+            area code
+        spillageGen : list
+            generator types for which to show spillage (renewables)
+        resolution : string
+            resolution of output, see pandas:resample
+        fileName : string (default=None)
+            name of file to export results
+        timeMaxMin : list
+            time range to consider
+        start_date : date string
+            date when time series start
+        
+        '''
+        #Eirik/Arne
+        
+        # This function requires pandas
+        import pandas as pd
+        
+        if timeMaxMin == None:
+            timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
+            
+        # data resolution in whole seconds (usually, timeDelta=1.0)
+        resolutionS = int(self.grid.timeDelta*3600)
+        
+        prod = pd.DataFrame()
+        genTypes = self.grid.getAllGeneratorTypes()
+        generators = self.grid.getGeneratorsPerAreaAndType()[area]
+        pumpIdx = self.grid.getGeneratorsWithPumpByArea()[area]
+        storageGen = self.grid.getIdxGeneratorsWithStorage()
+        areaGen = [item for sublist in list(
+                    generators.values()) for item in sublist]
+        matches = [x for x in areaGen if x in storageGen]
+        for gt in genTypes:
+            if gt in generators:
+                prod[gt] = self.db.getResultGeneratorPower(generators[gt],
+                timeMaxMin)
+                if gt in spillageGen:
+                    prod[gt+' spilled'] = self.db.getResultGeneratorSpilled(
+                                            generators[gt],timeMaxMin)
+        prod['load shedding'] = self.getLoadheddingInArea(area,timeMaxMin)
+        prod['storage'] = self.db.getResultStorageFillingMultiple(matches,
+                            timeMaxMin,capacity=False)
+        if len(pumpIdx) > 0:
+            prod['pumped'] = self.db.getResultPumpPowerMultiple(pumpIdx,
+                                    timeMaxMin,negative=True)
+        prod['net import'] = self.getNetImport(area,timeMaxMin)
+        prod.index = pd.date_range(start_date,
+                                   periods=timeMaxMin[-1]-timeMaxMin[0],
+                                   freq='{}s'.format(resolutionS))
+        if resolution != 'H':
+            prod = prod.resample(resolution, how='sum')
+        if fileName:
+            prod.to_csv(fileName)
+        else:
+            return prod
+
+
+    def getStorageFillingInAreas(self,areas,generator_type, 
+                                 relative_storage=True,timeMaxMin=None):        
+        '''
+        Gets time-series with aggregated storage filling for specified area(s) 
+        for a specific generator type.
+        
+        Parameters
+        ----------
+        areas : list
+            list of area codes (e.g. ['DE','FR'])
+        generator_type : string
+            generator type string (e.g. 'hydro')
+        relative_storage : boolean
+            show relative (True) or absolute (False) storage
+        timeMaxMin : list
+            time range to consider (e.g. [0,8760])
+        '''
+        #Eirik/Arne
+        
+        if timeMaxMin == None:
+            timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
+        storageGen = self.grid.getIdxGeneratorsWithStorage()
+        storageTypes = self.grid.generator.gentype
+        nodeNames = self.grid.generator.node
+        nodeAreas = self.grid.node.area
+        storCapacities = self.grid.generator.storage
+        generators = []
+        capacity = 0
+        for gen in storageGen:
+            area = nodeAreas[self.grid.node.name.index(nodeNames[gen])]
+            if area in areas and storageTypes[gen] == generator_type:
+                generators.append(gen)
+                if relative_storage:
+                    capacity += storCapacities[gen]
+            filling = self.db.getResultStorageFillingMultiple(generators,
+                          timeMaxMin,capacity)
+        return filling
+        
+
     def getNetImport(self,area,timeMaxMin=None):        
         '''Return time series for net import for a specified area'''
         if timeMaxMin is None:
@@ -727,6 +833,41 @@ class Results(object):
         res = [a+b for a,b in zip(res_ac,res_dc)]
         return res
         
+    def getDemandPerArea(self,area,timeMaxMin=None):
+        '''Returns demand timeseries for given area, as dictionary with
+        fields "fixed", "flex", and "sum"
+        
+        Parameters
+        ----------
+        area (string)
+            area to get demand for
+        timeMaxMin (list) (default = None)
+            [min, max] - lower and upper time interval
+        '''
+        
+        if timeMaxMin is None:
+            timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
+        timerange = range(timeMaxMin[0],timeMaxMin[-1])
+        
+        consumer = self.grid.consumer
+    
+        dem=[0]*len(self.timerange)
+        flexdemand = [0]*len(self.timerange)
+        consumers = self.grid.getConsumersPerArea()[area]
+        for i in consumers:
+            ref_profile = consumer.load_profile[i]
+            # accumulate demand for all consumers in this area:
+            dem = [dem[t-self.timerange[0]] + consumer.load[i] 
+                * (1 - consumer.flex_fraction[i])
+                * self.grid.demandProfiles[ref_profile][t-self.timerange[0]]
+                for t in timerange]
+            flexdemand_i = self.db.getResultFlexloadPower(i,timeMaxMin)
+            if len(flexdemand_i)>0:
+                flexdemand = [sum(x) for x in zip(flexdemand,flexdemand_i)]
+        sumdemand = [sum(x) for x in zip(dem,flexdemand)]
+    
+        return {'fixed':dem, 'flex':flexdemand, 'sum':sumdemand}
+
               
     def plotNodalPrice(self,nodeIndx,timeMaxMin=None,showTitle=True):
         '''Show nodal price in single node
@@ -1239,9 +1380,10 @@ class Results(object):
             whether to draw parallels and meridians on map    
         '''
         
-        # make this import local to function because it is only needed here.        
+        # basemap is only used here, so to allow using powergama without
+        # basemap installed, it is best to put import statement here.
         from mpl_toolkits.basemap import Basemap
-        
+
         if timeMaxMin is None:
             timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
 
@@ -1305,7 +1447,7 @@ class Results(object):
                 if area_from == area_to:
                     branch_value[i] = allareas.index(area_from)
                 branch_value = np.asarray(branch_value)
-            branch_colormap = plt.get_cmap('hsv')
+            branch_colormap = cm.prism
             branch_colormap.set_under('k')
             filter_branch = [0,len(allareas)]
             branch_label = 'Branch area'
@@ -1391,6 +1533,9 @@ class Results(object):
             node_value = [allareas.index(c) for c in areas]
             node_colormap = cm.prism
             node_plot_colorbar = False
+            # this is to get same colours as for branches:
+            node_colormap.set_under('k')
+            filter_node = [0,len(allareas)]
         elif nodetype=='nodalprice':
             avgprice = self.getAverageNodalPrices(timeMaxMin)
             node_label = 'Nodal price'
@@ -1596,6 +1741,66 @@ class Results(object):
         plt.show()
         
     
+    def plotTimeseriesColour(self,areas,value='nodalprice'):
+        '''
+        Plot timeseries values with days on x-axis and hour of day on y-axis
+               
+        
+        Parameters
+        ----------
+        areas : list of strings
+            which areas to include, default=None means include all
+        value : 'nodalprice' (default), 
+                'demand', 
+                'gen%<type1>%<type2>.. (where type=gentype)
+            which times series value to plot
+        
+        Example: res.plotTimeseriescolour(['ES'],value='gen%solar_csp%wind')        
+        '''        
+        
+        #print("Analysing...")
+        p={}
+        pm={}
+        stepsperday = 24/self.grid.timeDelta
+        numdays = len(self.grid.timerange)/stepsperday
+        for a in areas:
+            if value=='nodalprice':
+                p[a] = self.getAreaPrices(area=a)
+            elif value=='demand':
+                #TODO: This is not generally correct. Should use
+                ## weighted average for all loads in area
+                p[a] = self.grid.demandProfiles['load_'+a]
+            elif value[:3]=='gen':
+                # value is now on form "gen_MA_hydro"
+                strval = value.split('%')
+                gens = self.grid.getGeneratorsPerAreaAndType()
+                #genindx = gens[a][strval[1]]
+                genindx = [i for s in strval[1:] for i in gens[a][s]]
+                timerange=[self.timerange[0],self.timerange[-1]+1]
+                p[a] = self.db.getResultGeneratorPower(genindx,timerange)
+            pm[a]=np.reshape(p[a],(numdays,stepsperday)).T
+        
+        #print("Plotting...")
+        vmin=min([min(p[a]) for a in areas])
+        vmax=max([max(p[a]) for a in areas])
+        num_areas = len(areas)
+        fig,axes = plt.subplots(nrows=num_areas,ncols=1,figsize=(20,1.5*len(areas)))
+        
+        for n in range(num_areas):
+            ax=plt.subplot(num_areas,1,n+1)
+            ax.set_title(areas[n],x=-0.04,y=0.5,
+                         verticalalignment='center',
+                         horizontalalignment='right')
+            im=plt.imshow(pm[areas[n]],vmin=vmin,vmax=vmax)
+        
+        fig.subplots_adjust(right=0.90)
+        cbar_ax = fig.add_axes([0.92, 0.15, 0.02, 0.7])
+        #fig.colorbar(im,cax=cbar_ax)
+        plt.colorbar(cax=cbar_ax)
+        plt.show()
+        
+        
+        
     def _gentypes_ordered_by_fuelcost(self):
         '''Return a list of generator types ordered by their mean fuel cost'''
         generators = self.grid.getGeneratorsPerType()
