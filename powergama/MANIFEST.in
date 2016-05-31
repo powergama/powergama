@@ -1,3 +1,4 @@
 include *.txt
 recursive-include examples *.py
 recursive-include examples/data *.csv
+include userguide/UserGuide.pdf
