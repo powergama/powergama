@@ -1,3 +1,6 @@
+v1.0.3 2016-05-31 -- Version 1.
+-added possibility for time dependence on flexible demand strategy (new column in input file)
+
 v1.0.2 2015-03-27 -- Version 1.03-27
 -improvements to result plotting
 -python 3 compatible

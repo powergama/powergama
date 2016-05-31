@@ -13,7 +13,7 @@
 \usepackage{fancyhdr}
 
 
-\title{PowerGAMA\\User guide (v1.0.2)}
+\title{PowerGAMA\\User guide (v1.0.3)}
 \author{Harald G Svendsen}
 \date{\today}
 
@@ -619,7 +619,8 @@ Consumers are loads connected to nodes. There may be any number of consumers per
 	``flex\_fraction"		& Fraction of demand which is flexible (OPT) 	& float	& \\
 	``flex\_on\_off"		& Flexibility on/off ratio (OPT)		& float		&  \\
 	``flex\_storage"				& Maximum flexibility (OPT)	& float		& MWh \\
-	``flex\_storval\_filling"		& Profile reference (OPT)	& string	&  \\
+	``flex\_storval\_filling"& Profile ref, storage value filling dependence (OPT)	& string	&  \\
+	``flex\_storval\_time"& Profile ref, storage value time dependence (OPT)	& string	&  \\
 	``flex\_basevalue"			& Base storage value (OPT)	& string	& \\
 	\hline
 \end{tabular}
@@ -647,8 +648,8 @@ The three columns related to pumping only need to be filled out if the pumping c
 	``inflow\_ref"		& Inflow profile reference	& string & \\
 	``storage\_cap"	& Storage capacity		& float	& MWh \\
 	``storage\_price"			& Base for storage value	& float	& €/MWh \\
-	``storval\_filling\_ref"	& Storage value filling level dependence reference	& string & \\
-	``storval\_time\_ref"	& Storage value time dependence reference	& string & \\
+	``storval\_filling\_ref"	& Profile ref, storage value filling level dependence 	& string & \\
+	``storval\_time\_ref"	& Profile ref, storage value time dependence 	& string & \\
 	``storage\_ini"		& Initial storage filling level	& float	& 1 \\
 	``pump\_cap''		& Pumping capacity (OPT)	& float		& MW \\
 	``pump\_efficiency''	& Pumping efficiency (OPT) & float	& \\
@@ -836,6 +837,19 @@ It should be noted that PowerGAMA does not include any power market subtleties (
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section{Analysis and plotting of results (TODO)}
 This section gives an overview of methods for analysis and plotting of results, included in PowerGAMA. 
+
+See powergama source code (Results class) for some documentation
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Scenario generation tool (TODO)}
+This section gives an overview of methods that can be used to generate scenarios.
+
+The key function are :
+\begin{itemize}
+\item powergama.scenarios.saveScenario(...)
+\item powergama.scenarios.newScenario(...)
+\end{itemize}
 
 
 
