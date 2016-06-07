@@ -79,7 +79,7 @@ class SipProblem(object):
         model = ConcreteModel()
         
         # SETS
-        model.NODES = Set(initialize=range_nodes, doc='nodes')
+        model.NODES = Set(initialize=range_nodes)
         model.GEN = Set(initialize=range_generators)
         model.BRANCH = Set(initialize=range_branches)
         model.DC = Set(initialize=range_dc_branches)
@@ -121,14 +121,17 @@ class SipProblem(object):
             return min(P_inflow + P_storage[g], P_min[g])
         model.genMin = Param(model.GEN, model.TIME, initialize=genMin_rule)
         
-        def genMax_rule(model,g,t):
-            P_storage = self._storage / self.timeDelta
-            P_max = self._grid.generator.prodMax
+        def genMax_rule(model,g):
             inflow_factor = self._grid.generator.inflow_factor[g]
             capacity = self._grid.generator.prodMax[g]
+            return capacity * inflow_factor
+        model.genMax = Param(model.GEN, initialize=genMax_rule, mutable=True)
+                
+        def genProfile_rule(model,g,t):
+            P_storage = self._storage / self.timeDelta
+            P_max = self._grid.generator.prodMax
             inflow_profile = self._grid.generator.inflow_profile[g]
-            P_inflow =  (capacity * inflow_factor
-                * self._grid.inflowProfiles[inflow_profile][t])
+            P_inflow =  self._grid.inflowProfiles[inflow_profile][t]
             if P_storage[g]==0:
                 '''
                 Don't let P_max limit the output (e.g. solar PV)
@@ -137,8 +140,8 @@ class SipProblem(object):
                 '''
                 return P_inflow
             else:
-                return min(P_inflow+P_storage[g],P_max[g])
-        model.genMax = Param(model.GEN, model.TIME, initialize=genMax_rule)
+                return min(P_inflow+P_storage[g]/P_max[g],1)
+        model.genProfile = Param(model.GEN, model.TIME, initialize=genProfile_rule)
         
         def genMC_rule(model, g):
             return self._marginalcosts[g]
@@ -210,7 +213,7 @@ class SipProblem(object):
             
         # Bounds on maximum and minimum production (power inflow)
         def max_gen_rule(model,g,t):
-            return model.generation[g,t] <= model.genMax[g,t]
+            return model.generation[g,t] <= model.genMax[g]*model.genProfile[g,t]
         model.maxGeneration = Constraint(model.GEN, model.TIME, rule=max_gen_rule)
         
         def min_gen_rule(model,g,t):
