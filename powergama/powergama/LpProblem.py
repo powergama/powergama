@@ -533,8 +533,10 @@ class LpProblem(object):
             for i,j in zip(senseDcBranchCapacityUpper, senseDcBranchCapacityLower)]
             
         loadshed = [v.varValue for v in self._var_loadshedding]
-        # TODO: This subtraction generates warning - because it includes nan and inf?
-        energyspilled = energyStorable-self._storage
+        # consider spilled energy only for generators with storage<infinity
+        energyspilled = zeros(energyStorable.shape)
+        indx = self._grid.getIdxGeneratorsWithNonzeroInflow()
+        energyspilled[indx] = energyStorable[indx]-self._storage[indx] 
         storagelevel = self._storage[self._idx_generatorsWithStorage]
         marginalprice = self._marginalcosts[self._idx_generatorsWithStorage]
         flexload_storagelevel = self._storage_flexload[self._idx_consumersWithFlexLoad]
