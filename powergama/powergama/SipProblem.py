@@ -107,7 +107,7 @@ class SipProblem(object):
                     profile_ref = self._grid.consumer.load_profile[i]
                     demOutflow += -self._grid.demandProfiles[profile_ref][t]
             return demOutflow
-        model.demand = Param(model.NODES, model.TIME, initialize=demand_rule, mutable=True)
+        model.demand = Param(model.NODES, model.TIME, initialize=demand_rule)
         
         def genMin_rule(model,g,t):
             P_storage = self._storage / self.timeDelta
@@ -217,7 +217,7 @@ class SipProblem(object):
         model.maxGeneration = Constraint(model.GEN, model.TIME, rule=max_gen_rule)
         
         def min_gen_rule(model,g,t):
-            return model.generation[g,t] >= model.genMin[g,t]
+            return model.generation[g,t] >= 0 # model.genMin[g,t]
         model.minGeneration = Constraint(model.GEN, model.TIME, rule=min_gen_rule)
 
         # Power flow equations (constraints)

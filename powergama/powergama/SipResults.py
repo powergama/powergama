@@ -735,7 +735,267 @@ class SipResults(object):
             
         res = [a+b for a,b in zip(res_ac,res_dc)]
         return res
+    
+    def plotLoadDistribution(self,nodetype='',branchtype='',dcbranchtype='',
+                    show_node_labels=False,latlon=None,timeMaxMin=None,
+                    dotsize=40, filter_node=None, filter_branch=None,
+                    draw_par_mer=False,showTitle=True):
+        '''
+        Plot results to map
         
+        >> res.plotMapGrid(nodetype="area", branchtype="area")
+        
+        Parameters
+        ----------
+        nodetype : string
+            "", "area", "nodalprice", "energybalance", "loadshedding"
+        branchtype : string
+            "", "capacity", "area", "utilisation", "flow", "sensitivity"
+        dcbranchtype : string
+            ""
+        show_node_labels : boolean
+            whether to show node names (true/false)
+        dotsize : integer
+            set dot size for each plotted node
+        latlon: list of four floats
+            map area [lat_min, lon_min, lat_max, lon_max]
+        filter_node : list of two floats
+            [min,max] - lower and upper cutoff for node value
+        filter_branch : list of two floats
+            [min,max] - lower and upper cutoff for branch value
+        draw_par_mer : boolean
+            whether to draw parallels and meridians on map    
+        '''
+        
+        if timeMaxMin is None:
+            timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
+
+        fig = plt.figure()
+        data = self.grid
+        #res = self
+        
+        if latlon is None:
+            lat_max =  max(data.node.lat)+1
+            lat_min =  min(data.node.lat)-1
+            lon_max =  max(data.node.lon)+1
+            lon_min =  min(data.node.lon)-1
+        else:
+            lat_min = latlon[0]
+            lon_min = latlon[1]
+            lat_max = latlon[2]
+            lon_max = latlon[3]
+        
+        # Use the average latitude as latitude of true scale
+        lat_truescale = np.mean(data.node.lat)
+                
+        m = Basemap(resolution='l',projection='merc',\
+                      lat_ts=lat_truescale, \
+                      llcrnrlon=lon_min, llcrnrlat=lat_min,\
+                      urcrnrlon=lon_max ,urcrnrlat=lat_max, \
+                      anchor='W')
+         
+        # Draw coastlines, meridians and parallels.
+        m.drawcoastlines()
+        m.drawcountries(zorder=0)
+        m.fillcontinents(color='lightgray',lake_color='lightgray',zorder=0)
+        m.drawmapboundary(fill_color='white')
+        
+        if draw_par_mer:
+            m.drawparallels(np.arange(_myround(lat_min,10,'floor'),
+                _myround(lat_max,10,'ceil'),10),
+                labels=[1,1,0,0])
+
+            m.drawmeridians(np.arange(_myround(lon_min,10,'floor'),
+                _myround(lon_max,10,'ceil'),10),
+                labels=[0,0,0,1])
+        
+        num_branches = self.grid.branch.numBranches()
+        num_dcbranches = self.grid.dcbranch.numBranches()
+        num_nodes = self.grid.node.numNodes()
+
+
+        # AC Branches
+        
+        lwidths = [2]*num_branches
+        branch_plot_colorbar = True
+        if branchtype=='area':
+            areas = data.node.area
+            allareas = data.getAllAreas()
+            branch_value = [-1]*num_branches
+            for i in range(num_branches):
+                node_indx_from = data.node.name.index(data.branch.node_from[i])
+                node_indx_to = data.node.name.index(data.branch.node_to[i])
+                area_from = areas[node_indx_from]
+                area_to = areas[node_indx_to]
+                if area_from == area_to:
+                    branch_value[i] = allareas.index(area_from)
+                branch_value = np.asarray(branch_value)
+            branch_colormap = plt.get_cmap('hsv')
+            branch_colormap.set_under('k')
+            filter_branch = [0,len(allareas)]
+            branch_label = 'Branch area'
+            branch_plot_colorbar = False
+        elif branchtype=='utilisation':
+            utilisation = self.getAverageUtilisation(timeMaxMin)
+            branch_value = utilisation
+            branch_colormap = plt.get_cmap('hot')
+            branch_label = 'Branch utilisation'
+        elif branchtype=='capacity':
+            cap = self.grid.branch.capacity
+            branch_value = np.asarray(cap)
+            maxcap = np.nanmax(branch_value)
+            branch_colormap = plt.get_cmap('hot')
+            branch_label = 'Branch capacity'
+            if filter_branch is None:
+                # need an upper limit to avoid crash due to inf capacity
+                filter_branch = [0,np.round(maxcap,-2)+100]
+        elif branchtype=='flow':
+            avgflow = self.getAverageBranchFlows(timeMaxMin)[2]
+            branch_value = np.asarray(avgflow)
+            branch_colormap = plt.get_cmap('hot')
+            branch_label = 'Branch flow'
+        elif branchtype=='sensitivity':
+            branch_value = np.zeros(num_branches)
+            avgsense = self.getAverageBranchSensitivity(timeMaxMin)
+            branch_value[self.idxConstrainedBranchCapacity] = -avgsense
+            branch_colormap = plt.get_cmap('hot')
+            branch_label = 'Branch sensitivity'
+            # These sensitivities are mostly negative 
+            # (reduced cost by increasing branch capacity)
+            #minsense = np.nanmin(avgsense)
+            #maxsense = np.nanmax(avgsense)
+        else:
+            branch_value = np.asarray([0.5]*num_branches)
+            branch_colormap = cm.gray
+            branch_plot_colorbar = False
+        
+        idx_from = data.branch.node_fromIdx(data.node)
+        idx_to = data.branch.node_toIdx(data.node)
+        branch_lat1 = [data.node.lat[i] for i in idx_from]        
+        branch_lon1 = [data.node.lon[i] for i in idx_from]        
+        branch_lat2 = [data.node.lat[i] for i in idx_to]        
+        branch_lon2 = [data.node.lon[i] for i in idx_to]
+
+        x1, y1 = m(branch_lon1,branch_lat1)
+        x2, y2 = m(branch_lon2,branch_lat2)
+
+        ls = [[(x1[i],y1[i]),(x2[i],y2[i])] for i in range(len(x1))]
+        line_segments_ac = mpl.collections.LineCollection(
+                ls, linewidths=lwidths,cmap=branch_colormap)
+    
+        if filter_branch is not None:
+            line_segments_ac.set_clim(filter_branch)
+        line_segments_ac.set_array(branch_value)
+        ax=plt.axes()    
+        ax.add_collection(line_segments_ac)
+      
+
+        # DC Branches
+        idx_from = data.dcbranch.node_fromIdx(data.node)
+        idx_to = data.dcbranch.node_toIdx(data.node)
+        branch_lat1 = [data.node.lat[i] for i in idx_from]        
+        branch_lon1 = [data.node.lon[i] for i in idx_from]        
+        branch_lat2 = [data.node.lat[i] for i in idx_to]        
+        branch_lon2 = [data.node.lon[i] for i in idx_to]
+
+        x1, y1 = m(branch_lon1,branch_lat1)
+        x2, y2 = m(branch_lon2,branch_lat2)
+        ls = [[(x1[i],y1[i]),(x2[i],y2[i])] for i in range(len(x1))]
+        line_segments_dc = mpl.collections.LineCollection(
+                ls, linewidths=2,colors='blue')
+    
+        ax.add_collection(line_segments_dc)
+        
+        # Nodes
+        node_plot_colorbar = True
+        if nodetype=='area':
+            areas = data.node.area
+            allareas = data.getAllAreas()
+            #colours_co = cm.prism(np.linspace(0, 1, len(allareas)))
+            node_label = 'Node area'
+            node_value = [allareas.index(c) for c in areas]
+            node_colormap = cm.prism
+            node_plot_colorbar = False
+        elif nodetype=='distribution':
+            areas = data.node.area
+            allareas = data.getAllAreas()
+            #colours_co = cm.prism(np.linspace(0, 1, len(allareas)))
+            node_label = 'Node area'
+            node_value = [allareas.index(c) for c in areas]
+            node_colormap = cm.prism
+            node_plot_colorbar = False
+            num_nodes = self.grid.node.numNodes()
+            self._idx_load = [[]]*num_nodes
+            load = [[]]*num_nodes
+            for n in range(num_nodes):
+                self._idx_load[n] = self.grid.getLoadsAtNode(n)
+                idx_loads = self._idx_load[n]
+                for i in idx_loads:
+                    load[n] = self.grid.consumer.load[i]      
+            dotsize = dotsize*(1 + 2*load/max(load))
+        elif nodetype=='nodalprice':
+            avgprice = self.getAverageNodalPrices(timeMaxMin)
+            node_label = 'Nodal price'
+            node_value = avgprice
+            node_colormap = cm.jet
+        elif nodetype=='energybalance':
+            avg_energybalance = self.getAverageEnergyBalance(timeMaxMin)
+            node_label = 'Nodal energy balance'
+            node_value = avg_energybalance
+            node_colormap = cm.hot
+        elif nodetype=='loadshedding':
+            node_value = self.getLoadsheddingPerNode(timeMaxMin)
+            node_label = 'Loadshedding'
+            node_colormap = cm.hot
+        else:
+            node_value = 'dimgray'
+            node_colormap = cm.jet
+            node_label = ''
+            node_plot_colorbar  = False
+        
+
+        x, y = m(data.node.lon,data.node.lat)
+        sc=m.scatter(x,y,marker='o',c=node_value, cmap=node_colormap,
+                     zorder=2,s=dotsize)           
+        #sc.cmap.set_under('dimgray')
+        #sc.cmap.set_over('dimgray')
+        if filter_node is not None:
+            sc.set_clim(filter_node[0], filter_node[1])
+            
+            # #TODO: Er dette nødvendig lenger, Harald?
+            # #nodes with NAN nodal price plotted in gray:
+            # for i in range(len(avgprice)):
+                # if np.isnan(avgprice[i]):
+                    # m.scatter(x[i],y[i],c='dimgray',
+                              # zorder=2,s=dotsize)
+        
+        
+        #NEW Colorbar for nodes
+        # m. or plt.?
+        if node_plot_colorbar:
+            axcb2 = plt.colorbar(sc)
+            axcb2.set_label(node_label)
+
+        #NEW Colorbar for branch capacity
+        if branch_plot_colorbar:
+            axcb = plt.colorbar(line_segments_ac)
+            axcb.set_label(branch_label)
+
+
+        # Show names of nodes
+        if show_node_labels:
+            labels = data.node.name
+            x1,x2,y1,y2 = plt.axis()
+            offset_x = (x2-x1)/50
+            for label, xpt, ypt in zip(labels, x, y):
+                if xpt > x1 and xpt < x2 and ypt > y1 and ypt < y2:
+                    plt.text(xpt+offset_x, ypt, label)
+        
+        if showTitle:
+            plt.title('Nodes (%s) and branches (%s)' %(nodetype,branchtype))
+        plt.show()
+                
+        return
               
     def plotNodalPrice(self,nodeIndx,timeMaxMin=None,showTitle=True):
         '''Show nodal price in single node
@@ -941,8 +1201,7 @@ class SipResults(object):
         if ax2 is not None:
             ax2.add_artist(lgd)
             ax1.legend=None
-        nodeidx = self.grid.node.name.index(
-            self.grid.consumer.node[consumer_index])
+        nodeidx = self.grid.node.name.index(self.grid.consumer.node[consumer_index])
         if showTitle:
             plt.title("Consumer %d at node %d (%s)" 
                 % (consumer_index, nodeidx, 
@@ -1091,8 +1350,8 @@ class SipResults(object):
             plt.title("Generation in %s"%(area))
         plt.show()
         return
-
-
+  
+    
     def plotDemandPerArea(self,areas,timeMaxMin=None,showTitle=True):
         '''Show demand in area(s) 
         
