@@ -594,9 +594,13 @@ class GridData(object):
         idx = [i for i,v in enumerate(self.generator.storage) 
             if v>0 and v<numpy.inf]
         return idx
-        #nonzeros = numpy.nonzero(self.generator.storage)[0]
-        #return nonzeros.tolist()
         
+    def getIdxGeneratorsWithNonzeroInflow(self):
+        """Indices of all generators with nonzero inflow"""
+        idx = [i for i,v in enumerate(self.generator.inflow_factor) 
+            if v>0]
+        return idx
+
     def getIdxGeneratorsWithPumping(self):
         """Indices of all generators with pumping capacity"""
         idx = [i for i,v in enumerate(self.generator.pump_cap) 

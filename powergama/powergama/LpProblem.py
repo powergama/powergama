@@ -38,13 +38,16 @@ class LpProblem(object):
     '''
     Class containing problem definition as a LP problem, and function calls
     to solve the problem
+    
+    Parameters
+    ----------
+    grid : DataGrid
+        PowerGAMA grid model object
     '''
     solver = None
 
 
     def __init__(self,grid):
-        '''Create and initialise LpProblem object'''
-        
         #def lpProblemInitialise(self,grid):
 
         self._grid = grid
@@ -306,6 +309,11 @@ class LpProblem(object):
     def initialiseSolver(self,cbcpath):
         '''
         Initialise solver - normally not necessary
+		
+		Parameters
+		----------
+		cbcpath : string
+		   Path to location of CBC solver
         '''
         solver = pulp.solvers.COIN_CMD(path=cbcpath)
         if solver.available():
@@ -533,8 +541,10 @@ class LpProblem(object):
             for i,j in zip(senseDcBranchCapacityUpper, senseDcBranchCapacityLower)]
             
         loadshed = [v.varValue for v in self._var_loadshedding]
-        # TODO: This subtraction generates warning - because it includes nan and inf?
-        energyspilled = energyStorable-self._storage
+        # consider spilled energy only for generators with storage<infinity
+        energyspilled = zeros(energyStorable.shape)
+        indx = self._grid.getIdxGeneratorsWithNonzeroInflow()
+        energyspilled[indx] = energyStorable[indx]-self._storage[indx] 
         storagelevel = self._storage[self._idx_generatorsWithStorage]
         marginalprice = self._marginalcosts[self._idx_generatorsWithStorage]
         flexload_storagelevel = self._storage_flexload[self._idx_consumersWithFlexLoad]
@@ -569,14 +579,14 @@ class LpProblem(object):
         '''
         Solve LP problem for each time step in the time range
         
-        Arguments
-        ---------
-        results
+        Parameters
+        ----------
+        results : Results
             PowerGAMA Results object reference (optional)
             
         Returns
-        ------
-        results
+        -------
+        results : Results
             PowerGAMA Results object reference
         '''
 
@@ -622,6 +632,13 @@ class LpProblem(object):
                 sys.stdout.flush()
     
     def setProgressBar(self,value):
+        '''Specify how to show simulation progress
+		
+        Parameters
+        ----------
+        value : string
+            'fancy' or 'default'
+        '''
         if value=='fancy':
             self._fancy_progressbar=True
         elif value=='default':
