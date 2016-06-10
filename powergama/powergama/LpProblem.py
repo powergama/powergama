@@ -43,7 +43,13 @@ class LpProblem(object):
 
 
     def __init__(self,grid):
-        '''Create and initialise LpProblem object'''
+        '''Create and initialise LpProblem object
+		
+		Parameters
+		----------
+		grid : DataGrid
+		   PowerGAMA grid model object
+		'''
         
         #def lpProblemInitialise(self,grid):
 
@@ -306,6 +312,11 @@ class LpProblem(object):
     def initialiseSolver(self,cbcpath):
         '''
         Initialise solver - normally not necessary
+		
+		Parameters
+		----------
+		cbcpath : string
+		   Path to location of CBC solver
         '''
         solver = pulp.solvers.COIN_CMD(path=cbcpath)
         if solver.available():
@@ -571,14 +582,14 @@ class LpProblem(object):
         '''
         Solve LP problem for each time step in the time range
         
-        Arguments
-        ---------
-        results
+        Parameters
+        ----------
+        results : Results
             PowerGAMA Results object reference (optional)
             
         Returns
-        ------
-        results
+        -------
+        results : Results
             PowerGAMA Results object reference
         '''
 
@@ -624,6 +635,13 @@ class LpProblem(object):
                 sys.stdout.flush()
     
     def setProgressBar(self,value):
+        '''Specify how to show simulation progress
+		
+        Parameters
+        ----------
+        value : string
+            'fancy' or 'default'
+        '''
         if value=='fancy':
             self._fancy_progressbar=True
         elif value=='default':
