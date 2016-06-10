@@ -4,11 +4,9 @@ Module for creating different PowerGAMA scenarios by scaling grid model paramete
 according to specified input.
 '''
 
-#import csv
 import pandas as pd
 import powergama.constants as const
 
-#_QUOTINGTYPE=csv.QUOTE_MINIMAL
 _EMPTY = pd.np.nan
 
 def saveScenario(base_grid_data, scenario_file):
@@ -16,12 +14,13 @@ def saveScenario(base_grid_data, scenario_file):
     Saves the data in the current grid model to a scenario file of the 
     format used to create new scenarios
     
-    Arguments:
-        base_grid_data (GridData): PowerGAMA GridData object
-        scenario_file (str): name of scenario (CSV) file
+    Parameters
+    ----------
+        base_grid_data :  GridData
+            PowerGAMA GridData object
+        scenario_file : string
+            name of new scenario (CSV) file
     
-    Returns:
-        None, but data is written to file
         
     '''
     
@@ -156,23 +155,6 @@ def saveScenario(base_grid_data, scenario_file):
     df = pd.DataFrame.from_dict(data,orient='index')
     df.to_csv(scenario_file,sep=',')
     
-    '''    
-    #old:
-    headers = areas_grid
-    headers.sort()
-    headers.insert(0,"PARAMETER")
-    fieldnames = list(data.keys())
-    fieldnames.sort()
-    with open(scenario_file,'wb') as csvfile:
-        datawriter = csv.DictWriter(csvfile, delimiter=',',fieldnames=headers,\
-                            quotechar='"', quoting=_QUOTINGTYPE)
-        datawriter.writerow(dict((fn,fn) for fn in headers))
-        for fn in fieldnames: 
-            datarow = data[fn]
-            datarow["PARAMETER"]=fn
-            datawriter.writerow(datarow)
-
-    '''
     return
 
 
@@ -182,18 +164,23 @@ def saveScenario(base_grid_data, scenario_file):
 
 def newScenario(base_grid_data, scenario_file, newfile_prefix):
     '''
-    Create new input data files by up- and down-scaling data based 
-    on additional input data given per area.
+    Create new dataset by modifying grid model according to scenario file
+    
+    This method replaces generator and consumer data according to
+    information given in scenario file. Information that should not
+    be replaced should be omitted from or have an empty value in the 
+    scenario file; the default is to keep existing value.
     
     Parameters
     ----------
-        base_grid_data : GridData object        
-        scenario_file : Name of scenario file (CSV)        
-        newfiles_prefix : prefix used when creating new files
+        base_grid_data : GridData
+            PowerGAMA grid model object used as basis for modifications 
+        scenario_file : string
+            Name of scenario file (CSV)
+        newfiles_prefix : string
+            Prefix used when creating new files. New files will be 
+            the same as old files with this additional prefix
     
-    Returns
-    -------
-        None, but GridData object is modified
     '''
     
 
@@ -238,35 +225,35 @@ def newScenario(base_grid_data, scenario_file, newfile_prefix):
         
         if parameter == "demand_annual":
             print("Annual demand (GWh)")
-            row = {k:(parseNum(x) if x!='' else None) 
+            row = {k:(_parseNum(x) if x!='' else None) 
                     for k,x in row.items() if k in areas_update}
-            load_new = scaleDemand(load_new,row,areas_update,consumers)
+            load_new = _scaleDemand(load_new,row,areas_update,consumers)
                 
         elif parameter == "demand_profile":
-            row = {k:(parseId(x) if x!='' else None) 
+            row = {k:(_parseId(x) if x!='' else None) 
                     for k,x in row.items() if k in areas_update}
             print("Demand profile references")
-            loadprofiles_new = updateDemandProfileRef(loadprofiles_new,row,areas_update,consumers)
+            loadprofiles_new = _updateDemandProfileRef(loadprofiles_new,row,areas_update,consumers)
             
         #elif parameter[:14] == "inflow_annual_":
         elif parameter[:14] == "inflow_factor_":
             gentype = parameter[14:]
-            row = {k:(parseNum(x) if x!='' else None) 
+            row = {k:(_parseNum(x) if x!='' else None) 
                     for k,x in row.items() if k in areas_update}
             print("Inflow factor for "+str(gentype))
-            inflow_new = updateInflowFactor(inflow_new,row,areas_update,generators,gentype)
+            inflow_new = _updateInflowFactor(inflow_new,row,areas_update,generators,gentype)
             
         elif parameter[:15] == "inflow_profile_":
             gentype = parameter[15:]
-            row = {k:(parseId(x) if x!='' else None) 
+            row = {k:(_parseId(x) if x!='' else None) 
                     for k,x in row.items() if k in areas_update}
             print("Inflow profile references for "+str(gentype))
-            inflowprofiles_new = updateGenProfileRef(
+            inflowprofiles_new = _updateGenProfileRef(
                 inflowprofiles_new,row,areas_update,generators,gentype)
 
         elif parameter[:7] == "gencap_":
             gentype = parameter[7:]
-            row = {k:(parseNum(x) if x!='' else None) 
+            row = {k:(_parseNum(x) if x!='' else None) 
                     for k,x in row.items() if k in areas_update}
             print("Generation capacities for "+str(gentype))
             if not gentype in gentypes_grid:
@@ -274,29 +261,29 @@ def newScenario(base_grid_data, scenario_file, newfile_prefix):
                       gentype)
             else:
                 gentypes_data.append(gentype)
-                gencap_new = scaleGencap(
+                gencap_new = _scaleGencap(
                     gencap_new,row,areas_update,generators,gentype)
 
         elif parameter[:9] == "fuelcost_":
             gentype = parameter[9:]
-            row = {k:(parseNum(x) if x!='' else None) 
+            row = {k:(_parseNum(x) if x!='' else None) 
                     for k,x in row.items() if k in areas_update}
             print("Generation fuel costs for "+str(gentype))
-            gencost_new = updateGenCost(
+            gencost_new = _updateGenCost(
                 gencost_new,row,areas_update,generators,gentype)
         
         elif parameter[:14] == "storage_price_":
             gentype = parameter[14:]
             #print("row.items={}".format(row.items()))
-            row = {k:(parseNum(x) if x!='' else None) 
+            row = {k:(_parseNum(x) if x!='' else None) 
                     for k,x in row.items() if k in areas_update}
             print("Storage base price for "+str(gentype))
-            storval_basevalue_new = updateGenCost(
+            storval_basevalue_new = _updateGenCost(
                 storval_basevalue_new,row,areas_update,generators,gentype)
 
         elif parameter[:11] == "storagecap_":
             gentype = parameter[11:]
-            row = {k:(parseNum(x) if x!='' else None) 
+            row = {k:(_parseNum(x) if x!='' else None) 
                     for k,x in row.items() if k in areas_update}
             print("Storage capacities for "+str(gentype))
             if not gentype in gentypes_grid:
@@ -304,12 +291,12 @@ def newScenario(base_grid_data, scenario_file, newfile_prefix):
                       str(gentype))
             else:
                 gentypes_data.append(gentype)
-                storagecap_new = scaleStoragecap(
+                storagecap_new = _scaleStoragecap(
                     storagecap_new,row,areas_update,generators,gentype)
 
         elif parameter[:12] == "storage_ini_":
             gentype = parameter[12:]
-            row = {k:(parseNum(x) if x!='' else None) 
+            row = {k:(_parseNum(x) if x!='' else None) 
                     for k,x in row.items() if k in areas_update}
             print("Initial storage filling level for "+str(gentype))
             if not gentype in gentypes_grid:
@@ -317,27 +304,27 @@ def newScenario(base_grid_data, scenario_file, newfile_prefix):
                       str(gentype))
             else:
                 gentypes_data.append(gentype)
-                storagelevel_new = updateStorageLevel(
+                storagelevel_new = _updateStorageLevel(
                     storagelevel_new,row,areas_update,
                     generators,gentype)
 
         elif parameter[:20] == "storval_filling_ref_":
             gentype = parameter[20:]
-            row = {k:(parseId(x) if x!='' else None) 
+            row = {k:(_parseId(x) if x!='' else None) 
                     for k,x in row.items() if k in areas_update}
             print("Storage value filling level profile reference for "+
                   str(gentype))
-            storval_filling_ref_new = updateGenProfileRef(
+            storval_filling_ref_new = _updateGenProfileRef(
                 storval_filling_ref_new,row,areas_update,
                 generators,gentype)
 
         elif parameter[:17] == "storval_time_ref_":
             gentype = parameter[17:]
-            row = {k:(parseId(x) if x!='' else None) 
+            row = {k:(_parseId(x) if x!='' else None) 
                     for k,x in row.items() if k in areas_update}
             print("Storage value time profile reference for "+
                    str(gentype))
-            storval_time_ref_new =  updateGenProfileRef(
+            storval_time_ref_new =  _updateGenProfileRef(
                 storval_time_ref_new,row,areas_update,generators,gentype)
 
         elif parameter[:6] == "IGNORE":
@@ -372,7 +359,7 @@ def newScenario(base_grid_data, scenario_file, newfile_prefix):
 
         
 
-def scaleDemand(demand,datarow,areas_update,consumers):
+def _scaleDemand(demand,datarow,areas_update,consumers):
     # Find all loads in this area
 
     print("  Total average demand before = "+str(sum(demand)))
@@ -408,7 +395,7 @@ def scaleDemand(demand,datarow,areas_update,consumers):
     return demand
 
 
-def updateDemandProfileRef(load_profile,datarow,areas_update,consumers):
+def _updateDemandProfileRef(load_profile,datarow,areas_update,consumers):
 
     for co in areas_update:
         if not datarow[co] is _EMPTY:
@@ -423,7 +410,7 @@ def updateDemandProfileRef(load_profile,datarow,areas_update,consumers):
     return load_profile
 
             
-def scaleGencap(gencap,datarow,areas_update,generators,gentype):
+def _scaleGencap(gencap,datarow,areas_update,generators,gentype):
 
     for co in areas_update:
         if not datarow[co] is _EMPTY:
@@ -455,7 +442,7 @@ def scaleGencap(gencap,datarow,areas_update,generators,gentype):
     return gencap
 
 
-def scaleStoragecap(storagecap,datarow,areas_update,generators,gentype):
+def _scaleStoragecap(storagecap,datarow,areas_update,generators,gentype):
 
     for co in areas_update:
         if not datarow[co] is _EMPTY:
@@ -486,7 +473,7 @@ def scaleStoragecap(storagecap,datarow,areas_update,generators,gentype):
     return storagecap
 
 
-def updateInflowFactor(inflowfactor,datarow,areas_update,generators,gentype):
+def _updateInflowFactor(inflowfactor,datarow,areas_update,generators,gentype):
     '''Update inflow factors per type and area'''
     
     for co in areas_update:        
@@ -500,7 +487,7 @@ def updateInflowFactor(inflowfactor,datarow,areas_update,generators,gentype):
     return inflowfactor
 
 
-def updateStorageLevel(storagelevel,datarow,areas_update,generators,gentype):
+def _updateStorageLevel(storagelevel,datarow,areas_update,generators,gentype):
     '''Update initial storage level per type and area'''
     
     for co in areas_update:        
@@ -513,7 +500,7 @@ def updateStorageLevel(storagelevel,datarow,areas_update,generators,gentype):
     return storagelevel
 
 
-def updateGenCost(gencost,datarow,areas_update,generators,gentype):
+def _updateGenCost(gencost,datarow,areas_update,generators,gentype):
 
     for co in areas_update:
         if not datarow[co] is _EMPTY:
@@ -525,7 +512,7 @@ def updateGenCost(gencost,datarow,areas_update,generators,gentype):
             
     return gencost
 
-def NOTNEEDED_updateStoragePrice(storageprice,datarow,areas_update,generators,gentype):
+def _NOTNEEDED_updateStoragePrice(storageprice,datarow,areas_update,generators,gentype):
 
     for co in areas_update:
         if not datarow[co] is _EMPTY:
@@ -538,18 +525,7 @@ def NOTNEEDED_updateStoragePrice(storageprice,datarow,areas_update,generators,ge
     return storageprice
 
 
-##def updateInflowProfileRef(inflow_profile,datarow,areas_update,generators,gentype):
-##
-##    #inflow_profile = griddata.generator.inflow_profile[:]
-##
-##    for co in areas_update:
-##        if generators.has_key(co) and generators[co].has_key(gentype):
-##            for i in generators[co][gentype]:
-##                inflow_profile[i] = datarow[co]            
-##
-##    return inflow_profile
-
-def updateGenProfileRef(profile_ref,datarow,areas_update,generators,gentype):
+def _updateGenProfileRef(profile_ref,datarow,areas_update,generators,gentype):
     '''Update profile per area and generator type'''
     for co in areas_update:
         if not datarow[co] is _EMPTY:
@@ -560,17 +536,12 @@ def updateGenProfileRef(profile_ref,datarow,areas_update,generators,gentype):
     return profile_ref
 
 
-#for debugging:
-#global data
-#saveScenario(data,"../scenario1/scenario_base.csv")
-#newScenario(data,'../examples/scenario_new.csv','../examples/newscenario')
-
-
-def parseId(value):
-    '''parse ID string/integer and return a string'''    
+def _parseId(value):
+    '''parse ID string/integer and return a string   
     
-    # This method is used when reading input data in order to not interpret 
-    # an integer node id o e.g. 100 as "100.0", but always as "100"
+     This method is used when reading input data in order to not interpret 
+     an integer node id o e.g. 100 as "100.0", but always as "100"
+     '''
     try:
         #if it is an integer number
         s = str(int(value))
@@ -579,7 +550,7 @@ def parseId(value):
         s=value
     return s
 
-def parseNum(num):
+def _parseNum(num):
     '''parse number and return a float'''
     return float(num)
 
