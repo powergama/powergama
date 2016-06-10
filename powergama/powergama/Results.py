@@ -14,6 +14,17 @@ import csv
 class Results(object):
     '''
     Class for storing and analysing/presenting results from PowerGAMA
+
+    Parameters
+    ----------
+    grid : GridData
+        PowerGAMA GridData object
+    databasefile : string
+        name of sqlite3 file for storage of results
+    replace : boolean
+        whether to replace existing sqlite file (default=true). 
+        replace=false is useful to analyse previously
+        generated results
     '''    
     
     
@@ -21,14 +32,6 @@ class Results(object):
         '''
         Create a PowerGAMA Results object
         
-        Parameters
-        ----------
-        grid
-            GridData - object reference
-            databasefile - name of sqlite3 file for storage of results
-            replace - replace existing sqlite file (default=true). 
-                        replace=false is useful to analyse previously
-                        generated results
             
             
         '''

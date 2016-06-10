@@ -24,6 +24,7 @@ Code documentation:
    code_GridData
    code_LpProblem
    code_Results
+   code_constants
    code_scenarios
    code_GIS
 

@@ -38,19 +38,16 @@ class LpProblem(object):
     '''
     Class containing problem definition as a LP problem, and function calls
     to solve the problem
+    
+    Parameters
+    ----------
+    grid : DataGrid
+        PowerGAMA grid model object
     '''
     solver = None
 
 
     def __init__(self,grid):
-        '''Create and initialise LpProblem object
-		
-		Parameters
-		----------
-		grid : DataGrid
-		   PowerGAMA grid model object
-		'''
-        
         #def lpProblemInitialise(self,grid):
 
         self._grid = grid
