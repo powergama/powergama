@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import matplotlib as mpl
 import numpy as np
+import pandas as pd
 from mpl_toolkits.basemap import Basemap
 import math
 import powergama.SipDatabase as db
@@ -931,7 +932,7 @@ class SipResults(object):
                 self._idx_load[n] = self.grid.getLoadsAtNode(n)
                 idx_loads = self._idx_load[n]
                 for i in idx_loads:
-                    load[n] = self.grid.consumer.load[i]      
+                    load[n] = self.grid.consumer.load[i]    
             dotsize = dotsize*(1 + 2*load/max(load))
         elif nodetype=='nodalprice':
             avgprice = self.getAverageNodalPrices(timeMaxMin)

@@ -74,6 +74,15 @@ class SipProblem(object):
         idxBranchesConstr = self._grid.getIdxBranchesWithFlowConstraints()
         idxDcBranchesConstr = self._grid.getIdxDcBranchesWithFlowConstraints()
         
+        nodeCostDcOffshore = 406*10**6
+        nodeCostDcOnshore =  1
+        dcFixedCost = 312*10**3
+        dcDistanceCost = 1236*10**3
+        dcDistancePowerCost = 578
+        dcEndpointSea = 453123*10**3
+        dcEndpointLand = 58209*10**3
+        
+        
         ######################### Creating LP problem ########################
         
         model = ConcreteModel()
@@ -160,17 +169,42 @@ class SipProblem(object):
             return self._grid.dcbranch.max_capacity[j]
         model.dcMaxNew = Param(model.DC, initialize=dcNewbranchMax_rule)
         
+        # TODO: make a proper VC rule for DC branch
+        DctoIdx = self._grid.dcbranch.node_toIdx(self._grid.node)
+        DcfromIdx = self._grid.dcbranch.node_fromIdx(self._grid.node)
+        
         def dcVC_rule(model,j):
-            return self._grid.dcbranch.variable_cost[j]
+            lat = [self._grid.node.lat[DcfromIdx[j]], 
+                   self._grid.node.lat[DctoIdx[j]]]
+            lon = [self._grid.node.lon[DcfromIdx[j]], 
+                   self._grid.node.lon[DctoIdx[j]]]
+            distance = self._getDistance(lat, lon)
+            return (dcDistanceCost + dcDistancePowerCost*1000)*distance    # temporary assumption of 1000MW unit size
         model.dcVC = Param(model.DC, initialize=dcVC_rule)
         
+        # TODO: make a proper FC rule for DC branch (offshore/onshore nodes)
         def dcFC_rule(model, j):
-            return self._grid.dcbranch.fixed_cost[j]
+            idx_nodes = [DctoIdx[j], DcfromIdx[j]]
+            expr = dcFixedCost
+            for ii in idx_nodes:    
+                if self._grid.node.offshore[ii]:
+                    expr += dcEndpointSea
+                else:
+                    expr += dcEndpointLand
+            return expr
         model.dcFC = Param(model.DC, initialize=dcFC_rule)
+        
+        def nodeFC_rule(model, n):
+            if self._grid.node.offshore[n]:
+                return nodeCostDcOffshore
+            else:
+                return nodeCostDcOnshore
+        model.nodeFC = Param(model.NODES, initialize=nodeFC_rule)
         
         # VARIABLES  
         model.dcVarInvest = Var(model.DC, domain = NonNegativeReals, initialize=0)
         model.dcFixInvest = Var(model.DC, domain = NonNegativeIntegers, initialize=0)
+        model.nodeInvest = Var(model.NODES, domain = Binary, initialize=0)
 
         model.generation = Var(model.GEN, model.TIME, domain = NonNegativeReals, initialize=0)
         model.loadShed = Var(model.NODES, model.TIME, domain = NonNegativeReals, initialize=0)
@@ -216,20 +250,22 @@ class SipProblem(object):
             return model.generation[g,t] <= model.genMax[g]*model.genProfile[g,t]
         model.maxGeneration = Constraint(model.GEN, model.TIME, rule=max_gen_rule)
         
-        def min_gen_rule(model,g,t):
-            return model.generation[g,t] >= 0 # model.genMin[g,t]
-        model.minGeneration = Constraint(model.GEN, model.TIME, rule=min_gen_rule)
-
-        # Power flow equations (constraints)
-        print("Power flow equations...")
-        self._pfPload = np.empty([self.num_nodes, range_time.stop],dtype=object)
-        self._pfPgen = np.empty([self.num_nodes, range_time.stop],dtype=object)
-        self._pfPflow = np.empty([self.num_nodes, range_time.stop],dtype=object)
-        self._pfPshed = np.empty([self.num_nodes, range_time.stop],dtype=object)
-        self._pfPdc = np.empty([self.num_nodes, range_time.stop],dtype=object)
-
+#        # TODO: find out why model was infeasible with minGen from datafile (and 0 MW is OK...)
+#        def min_gen_rule(model,g,t):
+#            return model.generation[g,t] >= 0 # model.genMin[g,t]
+#        model.minGeneration = Constraint(model.GEN, model.TIME, rule=min_gen_rule)
+        
+        # TODO: couple "big M" with max number of new branches
+        # TODO: figure out whether node is onshore or offshore
+        def node_invest_rule(model, n):
+            idx_dc_to = grid.getDcBranchesAtNode(n,'to')
+            idx_dc_from = grid.getDcBranchesAtNode(n,'from')
+            expr = sum(model.dcFixInvest[jj] for jj in idx_dc_to)
+            expr += sum(model.dcFixInvest[ii] for ii in idx_dc_from)
+            return expr <= 10*model.nodeInvest[n]
+        model.nodeInvestBigM = Constraint(model.NODES, rule=node_invest_rule)
+        
         def power_balance_rule(model, i, t):        
-#            for idx_node in range_nodes:
             # Find generators connected to this node:
             idx_gen = grid.getGeneratorsAtNode(i)
 
@@ -244,9 +280,6 @@ class SipProblem(object):
             # Find indices of loads connected to this node:
             self._idx_load[i] = grid.getLoadsAtNode(i)
 
-            # TODO: label constraints with time step (this is the node constraint)
-            # Constant part of power flow equations
-#            for t in range_time:
             expr = sum(model.generation[ii,t]*(1/const.baseMVA) for ii in idx_gen)
             expr += model.loadShed[i,t]*(1/const.baseMVA)
             expr += sum(model.dcFlow[ii,t]*(1/const.baseMVA) for ii in idx_dc_to)
@@ -257,17 +290,19 @@ class SipProblem(object):
         model.PowerBalance = Constraint(model.NODES, model.TIME, rule=power_balance_rule)             
         
         # STAGE SPESIFICS
+        a = self._computeAnnuityFactor(rate=0.05, years=30)
+        
         def ComputeFirstStageCost_rule(model):
             expr = summation(model.dcVC, model.dcVarInvest) 
             expr += summation(model.dcFC, model.dcFixInvest)
-            return expr
+            expr += summation(model.nodeFC, model.nodeInvest)
+            return expr*(1 + 0.02*a)    # incl. O&M costs
         model.FirstStageCost = Expression(rule=ComputeFirstStageCost_rule)
 
         def ComputeSecondStageCost_rule(model):
-            annuityF = self._computeAnnuityFactor(rate=0.05,years=30)
-            expr = sum(model.generation[i,t]*model.genMC[i] for i in model.GEN for t in model.TIME)*8760/len(range_time)*annuityF 
-            expr += sum(model.loadShed[i,t]*model.shedCost[i] for i in model.NODES for t in model.TIME)*8760/len(range_time)*annuityF
-            return expr
+            expr = sum(model.generation[i,t]*model.genMC[i] for i in model.GEN for t in model.TIME)
+            expr += sum(model.loadShed[i,t]*model.shedCost[i] for i in model.NODES for t in model.TIME)
+            return expr*8760/len(range_time)*a 
         model.SecondStageCost = Expression(rule=ComputeSecondStageCost_rule)
         
         # OBJECTIVE
@@ -434,6 +469,24 @@ class SipProblem(object):
         '''Return the annuity factor that can be multiplied with yearly cashflows to calculate its present value (PV) '''
         annuity = ((1-1/((1+rate)**years))/rate)
         return annuity
+        
+    def _getDistance(self, lat, lon):
+        from math import sin, cos, sqrt, atan2, radians
+        # approximate radius of earth in km
+        R = 6373.0
+        lat1 = radians(lat[0])
+        lon1 = radians(lon[0])
+        lat2 = radians(lat[1])
+        lon2 = radians(lon[1])
+        
+        dlon = lon2 - lon1
+        dlat = lat2 - lat1
+        
+        a = sin(dlat / 2)**2 + cos(lat1) * cos(lat2) * sin(dlon / 2)**2
+        c = 2 * atan2(sqrt(a), sqrt(1 - a))
+        
+        distance = R * c #km
+        return distance
 
     def _updateLpProblem(self,range_time):
         '''

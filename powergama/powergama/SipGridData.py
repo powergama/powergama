@@ -54,6 +54,7 @@ class _Nodes(object):
         self.area = []
         self.lat = []
         self.lon = []
+        self.offshore = []
     
     def readFromFile(self,filename):
         with openfile(filename,'r') as csvfile:
@@ -63,6 +64,7 @@ class _Nodes(object):
                 self.area.append(parseId(row["area"]))
                 self.lat.append(parseNum(row["lat"]))
                 self.lon.append(parseNum(row["lon"]))
+                self.offshore.append(parseNum(row["offshore"]))
         return
         
     def writeToFile(self,filename):
@@ -568,7 +570,7 @@ class SipGridData(object):
             if v>0 and v<numpy.inf and self.consumer.load[i]>0]
         return idx
         
-
+        
     def getDcBranchesAtNode(self,nodeIdx,direction):
         """Indices of all DC branches attached to a particular node"""
         if direction=='from':
