@@ -468,12 +468,12 @@ class SipGridData(object):
                                         quoting=_QUOTINGTYPE)
             fieldnames = datareader.fieldnames
             profiles= {fn:[] for fn in fieldnames}
-            rowNum=0
+#            rowNum=0
             for row in datareader:
-                if rowNum in timerange:
+#                if rowNum in timerange:
                     for fn in fieldnames:
                         profiles[fn].append(parseNum(row[fn]))
-                rowNum = rowNum+1
+#                rowNum = rowNum+1
         return profiles
         # keep only values within given time range:
         #values = values[timerange,:]
