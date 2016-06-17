@@ -214,6 +214,7 @@ class _Generators(object):
         self.prodMax = []
         self.prodMin = []
         self.fuelcost = []
+        self.energy = []
         self.storage = []
         self.storagevalue_abs= []
         self.storagevalue_profile_filling = []
@@ -245,6 +246,7 @@ class _Generators(object):
                 self.prodMax.append(parseNum(row["pmax"]))
                 self.prodMin.append(parseNum(row["pmin"]))
                 self.fuelcost.append(parseNum(row["fuelcost"]))
+                self.energy.append(parseNum(row["energy"]))
                 self.inflow_factor.append(parseNum(row["inflow_fac"]))
                 self.inflow_profile.append(parseId(row["inflow_ref"]))
                 self.storage.append(

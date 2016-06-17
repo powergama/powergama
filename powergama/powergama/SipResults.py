@@ -933,6 +933,8 @@ class SipResults(object):
                 idx_loads = self._idx_load[n]
                 for i in idx_loads:
                     load[n] = self.grid.consumer.load[i]    
+            load2 = [x for x in load if x != [] ]
+            dotload = [x/max(load2) for x in load]
             dotsize = dotsize*(1 + 2*load/max(load))
         elif nodetype=='nodalprice':
             avgprice = self.getAverageNodalPrices(timeMaxMin)

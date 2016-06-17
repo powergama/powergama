@@ -81,7 +81,9 @@ class SipProblem(object):
         dcDistancePowerCost = 578
         dcEndpointSea = 453123*10**3
         dcEndpointLand = 58209*10**3
-        
+        loss = 0.005/100
+        AC_constraints = False          # False sets AC branch limits to 20 GW
+        curtailment_cost = 0 # EUR/MWh
         
         ######################### Creating LP problem ########################
         
@@ -151,14 +153,17 @@ class SipProblem(object):
             else:
                 return min(P_inflow+P_storage[g]/P_max[g],1)
         model.genProfile = Param(model.GEN, model.TIME, initialize=genProfile_rule)
-        
+            
         def genMC_rule(model, g):
             return self._marginalcosts[g]
         model.genMC = Param(model.GEN, initialize=genMC_rule)
         model.shedCost = Param(model.NODES, initialize=const.loadshedcost)
         
         def branchMax_rule(model, j):
-            return self._grid.branch.capacity[j]
+            if AC_constraints:
+                return self._grid.branch.capacity[j]
+            else:
+                return 20000
         model.branchMax = Param(model.BRANCH, initialize=branchMax_rule)
         
         def dcbranchMax_rule(model,j):
@@ -173,14 +178,23 @@ class SipProblem(object):
         DctoIdx = self._grid.dcbranch.node_toIdx(self._grid.node)
         DcfromIdx = self._grid.dcbranch.node_fromIdx(self._grid.node)
         
-        def dcVC_rule(model,j):
+        def dcVarD_rule(model,j):
             lat = [self._grid.node.lat[DcfromIdx[j]], 
                    self._grid.node.lat[DctoIdx[j]]]
             lon = [self._grid.node.lon[DcfromIdx[j]], 
                    self._grid.node.lon[DctoIdx[j]]]
             distance = self._getDistance(lat, lon)
-            return (dcDistanceCost + dcDistancePowerCost*1000)*distance    # temporary assumption of 1000MW unit size
-        model.dcVC = Param(model.DC, initialize=dcVC_rule)
+            return dcDistanceCost*distance    # dependent on number of branches
+        model.dcVarD = Param(model.DC, initialize=dcVarD_rule)
+        
+        def dcVarDP_rule(model,j):
+            lat = [self._grid.node.lat[DcfromIdx[j]], 
+                   self._grid.node.lat[DctoIdx[j]]]
+            lon = [self._grid.node.lon[DcfromIdx[j]], 
+                   self._grid.node.lon[DctoIdx[j]]]
+            distance = self._getDistance(lat, lon)
+            return dcDistancePowerCost*distance    # dependent on power rating
+        model.dcVarDP = Param(model.DC, initialize=dcVarDP_rule)
         
         # TODO: make a proper FC rule for DC branch (offshore/onshore nodes)
         def dcFC_rule(model, j):
@@ -204,12 +218,14 @@ class SipProblem(object):
         # VARIABLES  
         model.dcVarInvest = Var(model.DC, domain = NonNegativeReals, initialize=0)
         model.dcFixInvest = Var(model.DC, domain = NonNegativeIntegers, initialize=0)
-        model.nodeInvest = Var(model.NODES, domain = Binary, initialize=0)
+        model.nodeInvest = Var(model.NODES, domain = Binary)
 
         model.generation = Var(model.GEN, model.TIME, domain = NonNegativeReals, initialize=0)
         model.loadShed = Var(model.NODES, model.TIME, domain = NonNegativeReals, initialize=0)
         model.branchFlow = Var(model.BRANCH, model.TIME, domain = Reals, initialize=0)
         model.dcFlow = Var(model.DC, model.TIME, domain = Reals, initialize=0)
+        
+        model.curtailment = Var(model.GEN, model.TIME, domain = NonNegativeReals, initialize=0)
         
 #        model.FirstStageCost = Var()
 #        model.SecondStageCost = Var()
@@ -250,6 +266,21 @@ class SipProblem(object):
             return model.generation[g,t] <= model.genMax[g]*model.genProfile[g,t]
         model.maxGeneration = Constraint(model.GEN, model.TIME, rule=max_gen_rule)
         
+        def genEnergy_rule(model, g):
+            E_max = self._grid.generator.energy
+            if np.isnan(E_max[g]):
+                return Constraint.Skip
+            else:
+                return sum(model.generation[g,t] for t in model.TIME)*8760/len(range_time) <= E_max[g]*10**6
+        model.energyMax = Constraint(model.GEN, rule=genEnergy_rule)
+        
+        def curtailment_rule(model,g,t):
+            if model.genMC[g] == 0:
+                return model.curtailment[g,t] == model.genMax[g]*model.genProfile[g,t] - model.generation[g,t]
+            else:
+                return Constraint.Skip
+        model.genCurtailment = Constraint(model.GEN, model.TIME, rule=curtailment_rule)
+        
 #        # TODO: find out why model was infeasible with minGen from datafile (and 0 MW is OK...)
 #        def min_gen_rule(model,g,t):
 #            return model.generation[g,t] >= 0 # model.genMin[g,t]
@@ -280,21 +311,22 @@ class SipProblem(object):
             # Find indices of loads connected to this node:
             self._idx_load[i] = grid.getLoadsAtNode(i)
 
-            expr = sum(model.generation[ii,t]*(1/const.baseMVA) for ii in idx_gen)
-            expr += model.loadShed[i,t]*(1/const.baseMVA)
-            expr += sum(model.dcFlow[ii,t]*(1/const.baseMVA) for ii in idx_dc_to)
-            expr += sum(-model.dcFlow[ii,t]*(1/const.baseMVA) for ii in idx_dc_from)
-            expr += sum(model.branchFlow[ii,t]*(1/const.baseMVA) for ii in idx_ac_to)
-            expr += sum(-model.branchFlow[ii,t]*(1/const.baseMVA) for ii in idx_ac_from)
-            return expr == -model.demand[i,t]*model.demandMax[i]/const.baseMVA
+            expr = sum(model.generation[ii,t] for ii in idx_gen)
+            expr += model.loadShed[i,t]
+            expr += sum(model.dcFlow[ii,t] for ii in idx_dc_to)*(1-loss)
+            expr += sum(-model.dcFlow[ii,t] for ii in idx_dc_from)
+            expr += sum(model.branchFlow[ii,t] for ii in idx_ac_to)*(1-loss)
+            expr += sum(-model.branchFlow[ii,t] for ii in idx_ac_from)
+            return expr == -model.demand[i,t]*model.demandMax[i]
         model.PowerBalance = Constraint(model.NODES, model.TIME, rule=power_balance_rule)             
         
         # STAGE SPESIFICS
         a = self._computeAnnuityFactor(rate=0.05, years=30)
         
         def ComputeFirstStageCost_rule(model):
-            expr = summation(model.dcVC, model.dcVarInvest) 
-            expr += summation(model.dcFC, model.dcFixInvest)
+            expr = summation(model.dcVarDP, model.dcVarInvest)          # DistancePower costs
+            expr += summation(model.dcVarD, model.dcFixInvest)          # Distance costs per branch
+            expr += summation(model.dcFC, model.dcFixInvest)            # Fixed cost per branch
             expr += summation(model.nodeFC, model.nodeInvest)
             return expr*(1 + 0.02*a)    # incl. O&M costs
         model.FirstStageCost = Expression(rule=ComputeFirstStageCost_rule)
@@ -302,6 +334,7 @@ class SipProblem(object):
         def ComputeSecondStageCost_rule(model):
             expr = sum(model.generation[i,t]*model.genMC[i] for i in model.GEN for t in model.TIME)
             expr += sum(model.loadShed[i,t]*model.shedCost[i] for i in model.NODES for t in model.TIME)
+            expr += sum(model.curtailment[i,t]*curtailment_cost for i in model.GEN for t in model.TIME)
             return expr*8760/len(range_time)*a 
         model.SecondStageCost = Expression(rule=ComputeSecondStageCost_rule)
         

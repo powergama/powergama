@@ -10,7 +10,7 @@ baseS = 100.0e6
 baseV = 400.0e3
 
 ## Penalty (/MWh) for load shedding
-loadshedcost = 1000.0
+loadshedcost = 350
 
 ## Hours per year (365*24 = 8760)
 hoursperyear = 8760.0
