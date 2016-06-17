@@ -6,7 +6,6 @@
 Results Module
 ==================
 .. automodule:: powergama.Results
-   :special-members: __init__ 
    :members:
    :undoc-members:
 

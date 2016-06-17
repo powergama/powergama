@@ -992,13 +992,13 @@ class Results(object):
             ax1.plot(timerange,[self.grid.inflowProfiles[profile][t-self.timerange[0]]
                 *self.grid.generator.inflow_factor[generator_index]
                 *self.grid.generator.prodMax[generator_index] 
-                for t in timerange],'-b', label="inflow")
+                for t in timerange],'-.b', label="inflow")
 
         # Power pumped (if generator has nonzero pumping capacity)
         if self.grid.generator.pump_cap[generator_index] > 0:
             pump_output = self.db.getResultPumpPower(
                 generator_index,timeMaxMin)
-            ax1.plot(timerange,pump_output,'-c', label="pumping")
+            ax1.plot(timerange,pump_output,':c', label="pumping")
         
         # Storage filling level (if generator has storage)
         ax2=None        
@@ -1009,14 +1009,20 @@ class Results(object):
                 cap = self.grid.generator.storage[generator_index]
                 storagefilling = [x/cap for x in storagefilling]
             ax2 = plt.twinx() #separate y axis
-            ax2.plot(timerange,storagefilling,'-g', label='storage')
-            ax2.legend(loc="upper right")
+            ax2.plot(timerange,storagefilling,'--g', label='storage')
+            ax2.legend(loc='lower right', bbox_to_anchor=(1,1), 
+                       borderaxespad=0.0,
+                       frameon=False)
             ax2.set_ylim(ymin=0)
                      
-        lgd=ax1.legend(loc="upper left")
+        lgd=ax1.legend(loc='lower left', bbox_to_anchor=(0,1), 
+                       borderaxespad=0.0,
+                       frameon=False)
         if ax2 is not None:
-            ax2.add_artist(lgd)
-            ax1.legend=None
+            #TODO: Add comment - What whas the point of this??            
+            #ax2.add_artist(lgd)
+            #ax1.legend=None
+            pass
         nodeidx = self.grid.node.name.index(
             self.grid.generator.node[generator_index])
         if showTitle:
@@ -1052,14 +1058,14 @@ class Results(object):
         ax1.plot(timerange,[self.grid.demandProfiles[profile][t-self.timerange[0]]
             *self.grid.consumer.load[consumer_index]
             *(1 - self.grid.consumer.flex_fraction[consumer_index]) 
-            for t in timerange],'-b', label="fixed load")
+            for t in timerange],'-r', label="fixed load")
 
         # Flexible load  (if consumer has nonzero flexible load)
         ax2=None
         if self.grid.consumer.flex_fraction[consumer_index] > 0:
             flexload_power = self.db.getResultFlexloadPower(
                 consumer_index,timeMaxMin)
-            ax1.plot(timerange,flexload_power,'-c', label="flexible load")
+            ax1.plot(timerange,flexload_power,'-.b', label="flexible load")
         
             # Storage filling level
             storagefilling = self.db.getResultFlexloadStorageFilling(
@@ -1069,13 +1075,17 @@ class Results(object):
                             consumer_index)
                 storagefilling = [x/cap for x in storagefilling]
             ax2 = plt.twinx() #separate y axis
-            ax2.plot(timerange,storagefilling,'-g', label='storage')
-            ax2.legend(loc="upper right")
-            
-        lgd=ax1.legend(loc="upper left")
-        if ax2 is not None:
-            ax2.add_artist(lgd)
-            ax1.legend=None
+            ax2.plot(timerange,storagefilling,'--g', label='storage')
+            ax2.legend(loc='lower right', bbox_to_anchor=(1,1), 
+                       borderaxespad=0.0,
+                       frameon=False)
+                     
+        lgd=ax1.legend(loc='lower left', bbox_to_anchor=(0,1), 
+                       borderaxespad=0.0,
+                       frameon=False)
+        #if ax2 is not None:
+        #    ax2.add_artist(lgd)
+        #    ax1.legend=None
         nodeidx = self.grid.node.name.index(
             self.grid.consumer.node[consumer_index])
         if showTitle:
@@ -1296,14 +1306,17 @@ class Results(object):
             pumpprice = [x - self.grid.generator.pump_deadband[genindx]
                          for x in storagevalue]
             plt.figure()
-            p, = plt.plot(timerange,storagevalue,label='storage value')
+            p, = plt.plot(timerange,storagevalue,'-b',label='storage value')
             if genindx in self.pump_idx_generators:
                 pumpprice = [x - self.grid.generator.pump_deadband[genindx]
                              for x in storagevalue]
-                plt.plot(timerange,pumpprice,'--',color=p.get_color(),
+                plt.plot(timerange,pumpprice,':',color=p.get_color(),
                          label='pump threshold')
-            plt.plot(timerange,nodalprice,label='nodal price')
+            plt.plot(timerange,nodalprice,'--r',label='nodal price')
             plt.legend()
+            plt.legend(loc='lower left', bbox_to_anchor=(0,1), 
+                       borderaxespad=0.0, ncol=4, frameon=False)
+
             if showTitle:
                 plt.title("Storage value  for generator %d (%s) in %s"
                     % (genindx,

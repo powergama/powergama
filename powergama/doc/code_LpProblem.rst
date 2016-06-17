@@ -6,7 +6,6 @@
 LpProblem Module
 ==================
 .. automodule:: powergama.LpProblem
-   :special-members: __init__ 
    :members:
    :undoc-members:
    
