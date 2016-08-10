@@ -52,10 +52,10 @@ class LpProblem(object):
 
         self._grid = grid
         self.timeDelta = grid.timeDelta
-        self.num_nodes = grid.node.numNodes()        
-        self.num_generators = grid.generator.numGenerators()
-        self.num_branches = grid.branch.numBranches()
-        self.num_dc_branches = grid.dcbranch.numBranches()
+        self.num_nodes = grid.numNodes()        
+        self.num_generators = grid.numGenerators()
+        self.num_branches = grid.numBranches()
+        self.num_dc_branches = grid.numDcBranches()
         self._idx_generatorsWithPumping = grid.getIdxGeneratorsWithPumping()
         
         self._idx_generatorsWithStorage = grid.getIdxGeneratorsWithStorage()
@@ -71,22 +71,22 @@ class LpProblem(object):
 
         # Initial values of marginal costs, storage and storage values      
         self._storage = (
-            asarray(grid.generator.storagelevel_init)
-            *asarray(grid.generator.storage) )
-        self._marginalcosts = asarray(grid.generator.fuelcost)        
+            asarray(grid.generator['storage_ini'])
+            *asarray(grid.generator['storage_cap']) )
+        self._marginalcosts = asarray(grid.generator['fuelcost'])        
         
         self._storage_flexload = (
-                asarray(grid.consumer.flex_storagelevel_init)
-                * asarray(grid.consumer.flex_storage) 
-                * asarray(grid.consumer.flex_fraction)
-                * asarray(grid.consumer.load)
+                asarray(grid.consumer['flex_storagelevel_init'])
+                * asarray(grid.consumer['flex_storage']) 
+                * asarray(grid.consumer['flex_fraction'])
+                * asarray(grid.consumer['demand_avg'])
                 )
-        self._marginalcosts_flexload = asarray(grid.consumer.flex_basevalue)      
+        self._marginalcosts_flexload = asarray(grid.consumer['flex_basevalue'])      
         self._idx_consumersStorageProfileFilling = asarray(
-            [grid.consumer.flex_storagevalue_profile_filling[i]
+            [grid.consumer['flex_storval_filling'][i]
             for i in self._idx_consumersWithFlexLoad])
         self._idx_consumersStorageProfileTime = asarray(
-            [grid.consumer.flex_storagevalue_profile_time[i] 
+            [grid.consumer['flex_storval_time'][i] 
             for i in self._idx_consumersWithFlexLoad])
         range_nodes = range(self.num_nodes)
         range_generators = range(self.num_generators)
@@ -332,8 +332,8 @@ class LpProblem(object):
         '''Specify constraints for generator output'''       
 
         P_storage = self._storage / self.timeDelta
-        P_max = self._grid.generator.prodMax
-        P_min = self._grid.generator.prodMin
+        P_max = self._grid.generator['pmax']
+        P_min = self._grid.generator['pmin']
         
         for i in range(self.num_generators):
             inflow_factor = self._grid.generator.inflow_factor[i]
