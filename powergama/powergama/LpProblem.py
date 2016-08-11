@@ -60,10 +60,10 @@ class LpProblem(object):
         
         self._idx_generatorsWithStorage = grid.getIdxGeneratorsWithStorage()
         self._idx_generatorsStorageProfileFilling = asarray(
-            [grid.generator.storagevalue_profile_filling[i] 
+            [grid.generator['storval_filling_ref'][i] 
             for i in self._idx_generatorsWithStorage])
         self._idx_generatorsStorageProfileTime = asarray(
-            [grid.generator.storagevalue_profile_time[i] 
+            [grid.generator['storval_time_ref'][i] 
             for i in self._idx_generatorsWithStorage])
 
         self._idx_consumersWithFlexLoad = grid.getIdxConsumersWithFlexibleLoad()                
@@ -160,9 +160,9 @@ class LpProblem(object):
             idx_cons = self._idx_consumersWithFlexLoad[i]
             self._var_flexload[i].lowBound = 0
             self._var_flexload[i].upBound = (
-                grid.consumer.load[idx_cons]
-                * grid.consumer.flex_fraction[idx_cons]
-                / grid.consumer.flex_on_off[idx_cons]
+                grid.consumer['demand_avg'][idx_cons]
+                * grid.consumer['flex_fraction'][idx_cons]
+                / grid.consumer['flex_on_off'][idx_cons]
                 )
  
         print("Defining constraints...")
@@ -336,9 +336,9 @@ class LpProblem(object):
         P_min = self._grid.generator['pmin']
         
         for i in range(self.num_generators):
-            inflow_factor = self._grid.generator.inflow_factor[i]
-            capacity = self._grid.generator.prodMax[i]
-            inflow_profile = self._grid.generator.inflow_profile[i]
+            inflow_factor = self._grid.generator['inflow_fac'][i]
+            capacity = self._grid.generator['pmax'][i]
+            inflow_profile = self._grid.generator['inflow_ref'][i]
             P_inflow =  (capacity * inflow_factor 
                 * self._grid.inflowProfiles[inflow_profile][timestep])
             self._var_generation[i].lowBound = min(
@@ -364,11 +364,11 @@ class LpProblem(object):
             idx_gen = self._idx_generatorsWithStorage[i]
             this_type_filling = self._idx_generatorsStorageProfileFilling[i]
             this_type_time = self._idx_generatorsStorageProfileTime[i]           
-            storagecapacity = asarray(self._grid.generator.storage[idx_gen])
+            storagecapacity = asarray(self._grid.generator['storage_cap'][idx_gen])
             fillinglevel = self._storage[idx_gen] / storagecapacity       
             filling_col = int(round(fillinglevel*100))
             self._marginalcosts[idx_gen] = (
-                self._grid.generator.storagevalue_abs[idx_gen] 
+                self._grid.generator['storage_price'][idx_gen] 
                 *self._grid.storagevalue_filling[this_type_filling][filling_col]
                 *self._grid.storagevalue_time[this_type_time][timestep])
 
@@ -379,9 +379,9 @@ class LpProblem(object):
             this_type_time = self._idx_consumersStorageProfileTime[i] 
             # Compute storage capacity in Mwh (from value in hours)
             storagecapacity_flexload = asarray(
-                self._grid.consumer.flex_storage[idx_cons]      # h
-                * self._grid.consumer.flex_fraction[idx_cons]   #
-                * self._grid.consumer.load[idx_cons])           # MW
+                self._grid.consumer['flex_storage'][idx_cons]      # h
+                * self._grid.consumer['flex_fraction'][idx_cons]   #
+                * self._grid.consumer['demand_avg'][idx_cons])           # MW
             fillinglevel = (
                 self._storage_flexload[idx_cons] / storagecapacity_flexload  )     
             filling_col = int(round(fillinglevel*100))
@@ -420,9 +420,9 @@ class LpProblem(object):
             demOutflow=[]
             # Usually there is maximum one load per node, but it could be more
             for i in idx_loads:
-                average = self._grid.consumer.load[i]*(
-                            1-self._grid.consumer.flex_fraction[i])
-                profile_ref = self._grid.consumer.load_profile[i]
+                average = self._grid.consumer['demand_avg'][i]*(
+                            1-self._grid.consumer['flex_fraction'][i])
+                profile_ref = self._grid.consumer['demand_ref'][i]
                 demOutflow.append(
                     -self._grid.demandProfiles[profile_ref][timestep]
                     *average/const.baseMVA)
@@ -484,9 +484,9 @@ class LpProblem(object):
         Pflexload = [v.varValue for v in self._var_flexload]
 
         # Update storage:
-        inflow_profile_refs = self._grid.generator.inflow_profile
-        inflow_factor = self._grid.generator.inflow_factor
-        capacity= self._grid.generator.prodMax
+        inflow_profile_refs = self._grid.generator['inflow_ref']
+        inflow_factor = self._grid.generator['inflow_fac']
+        capacity= self._grid.generator['pmax']
         genInflow = [capacity[i] * inflow_factor[i] 
         			 * self._grid.inflowProfiles[inflow_profile_refs[i]][timestep]
                         for i in range(len(capacity))]
@@ -494,20 +494,20 @@ class LpProblem(object):
         energyIn = asarray(genInflow)*self.timeDelta
         pumpedIn = zeros(len(capacity))
         for i,x in enumerate(self._idx_generatorsWithPumping):
-            pumpedIn[x] = Ppump[i]*self._grid.generator.pump_efficiency[x]
+            pumpedIn[x] = Ppump[i]*self._grid.generator['pump_efficiency'][x]
         pumpedIn = pumpedIn*self.timeDelta
 
         energyOut = asarray(Pgen)*self.timeDelta
         energyStorable = self._storage + energyIn + pumpedIn - energyOut
-        storagecapacity = asarray(self._grid.generator.storage)
+        storagecapacity = asarray(self._grid.generator['storage_cap'])
         self._storage = vstack((storagecapacity,energyStorable)).min(axis=0)
 
-        energyIn_flexload = zeros(len(self._grid.consumer.flex_fraction))        
+        energyIn_flexload = zeros(len(self._grid.consumer['flex_fraction']))        
         for i,x in enumerate(self._idx_consumersWithFlexLoad):
             energyIn_flexload[x] = Pflexload[i]*self.timeDelta
         energyOut_flexload = (
-            asarray(self._grid.consumer.flex_fraction)
-            * asarray(self._grid.consumer.load)
+            asarray(self._grid.consumer['flex_fraction'])
+            * asarray(self._grid.consumer['demand_avg'])
             * self.timeDelta )
         self._storage_flexload = (
             self._storage_flexload + energyIn_flexload - energyOut_flexload )

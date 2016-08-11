@@ -23,25 +23,25 @@ class Database(object):
         # convert from lists to tuple of tuples
         nodes = tuple((
             i,
-            data.node.name[i],
-            data.node.area[i],
-            data.node.lat[i],
-            data.node.lon[i]
-            ) for i in range(len(data.node.name)))
+            data.node['id'][i],
+            data.node['area'][i],
+            data.node['lat'][i],
+            data.node['lon'][i]
+            ) for i in range(len(data.node['id'])))
         generators = tuple((
             i,            
-            data.generator.node[i],
-            data.generator.gentype[i],
-            ) for i in range(len(data.generator.node)))
-        br_from = data.branch.node_fromIdx(data.node)
-        br_to = data.branch.node_toIdx(data.node)        
+            data.generator['node'][i],
+            data.generator['type'][i],
+            ) for i in range(len(data.generator['node'])))
+        br_from = data.branchFromNodeIdx()
+        br_to = data.branchToNodeIdx()
         branches = tuple((
             i,
             br_from[i],
             br_to[i],
-            data.branch.capacity[i],
-            data.branch.reactance[i]
-            ) for i in range(len(data.branch.capacity)))
+            data.branch['capacity'][i],
+            data.branch['reactance'][i]
+            ) for i in range(len(data.branch['capacity'])))
         
         if os.path.isfile(self.filename):
             #delete existing file

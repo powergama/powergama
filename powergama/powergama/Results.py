@@ -288,15 +288,15 @@ class Results(object):
             timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
 
         branchflows = self.db.getResultBranchFlowsMean(timeMaxMin)
-        if self.grid.dcbranch.numBranches() > 0:
+        if self.grid.numDcBranches() > 0:
             branchflowsDc = self.db.getResultBranchFlowsMean(timeMaxMin,
                                                              ac=False)
-        br_from = self.grid.branch.node_fromIdx(self.grid.node)
-        br_to = self.grid.branch.node_toIdx(self.grid.node)
-        dcbr_from = self.grid.dcbranch.node_fromIdx(self.grid.node)
-        dcbr_to = self.grid.dcbranch.node_toIdx(self.grid.node)
+        br_from = self.grid.branchFromNodeIdx()
+        br_to = self.grid.branchToNodeIdx()
+        dcbr_from = self.grid.dcBranchFromNodeIdx()
+        dcbr_to = self.grid.dcBranchToNodeIdx()
         energybalance = []
-        for n in range(len(self.grid.node.name)):
+        for n in range(len(self.grid.node['id'])):
             idx_from = [ i for i,x in enumerate(br_from) if x==n]
             idx_to = [ i for i,x in enumerate(br_to) if x==n]
             dc_idx_from = [ i for i,x in enumerate(dcbr_from) if x==n]
@@ -405,9 +405,10 @@ class Results(object):
             timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
 
         generation_per_gen = self.db.getResultGeneratorPowerSum(timeMaxMin)
-        fuelcost_per_gen = self.grid.generator.fuelcost
-        areas_per_gen = [self.grid.node.area[self.grid.node.name.index(n)] 
-                    for n in self.grid.generator.node]
+        fuelcost_per_gen = self.grid.generator['fuelcost']
+        areas_per_gen = [self.grid.node['area']
+                            [self.grid.node['id']==n].tolist()[0] 
+                            for n in self.grid.generator['node']]
                 
         allareas = self.grid.getAllAreas()
         generationcost = dict()
@@ -987,15 +988,15 @@ class Results(object):
 
 
         # Power inflow (if generator has nonzero inflow factor)
-        if self.grid.generator.inflow_factor[generator_index] > 0:
-            profile = self.grid.generator.inflow_profile[generator_index]
+        if self.grid.generator['inflow_fac'][generator_index] > 0:
+            profile = self.grid.generator['inflow_ref'][generator_index]
             ax1.plot(timerange,[self.grid.inflowProfiles[profile][t-self.timerange[0]]
-                *self.grid.generator.inflow_factor[generator_index]
-                *self.grid.generator.prodMax[generator_index] 
+                *self.grid.generator['inflow_fac'][generator_index]
+                *self.grid.generator['pmax'][generator_index] 
                 for t in timerange],'-.b', label="inflow")
 
         # Power pumped (if generator has nonzero pumping capacity)
-        if self.grid.generator.pump_cap[generator_index] > 0:
+        if self.grid.generator['pump_cap'][generator_index] > 0:
             pump_output = self.db.getResultPumpPower(
                 generator_index,timeMaxMin)
             ax1.plot(timerange,pump_output,':c', label="pumping")
@@ -1006,7 +1007,7 @@ class Results(object):
             storagefilling = self.db.getResultStorageFilling(
                 generator_index,timeMaxMin)
             if relativestorage:
-                cap = self.grid.generator.storage[generator_index]
+                cap = self.grid.generator['storage_cap'][generator_index]
                 storagefilling = [x/cap for x in storagefilling]
             ax2 = plt.twinx() #separate y axis
             ax2.plot(timerange,storagefilling,'--g', label='storage')
@@ -1023,14 +1024,14 @@ class Results(object):
             #ax2.add_artist(lgd)
             #ax1.legend=None
             pass
-        nodeidx = self.grid.node.name.index(
-            self.grid.generator.node[generator_index])
+        nodeidx = self.grid.node['id'].tolist().index(
+            self.grid.generator['node'][generator_index])
         if showTitle:
             plt.title("Generator %d (%s) at node %d (%s)" 
                 % (generator_index,
-                   self.grid.generator.gentype[generator_index],
+                   self.grid.generator['type'][generator_index],
                    nodeidx, 
-                   self.grid.generator.node[generator_index]))
+                   self.grid.generator['node'][generator_index]))
         plt.show()
         return
 
@@ -1056,8 +1057,8 @@ class Results(object):
         # Fixed load 
         profile = self.grid.consumer.load_profile[consumer_index]
         ax1.plot(timerange,[self.grid.demandProfiles[profile][t-self.timerange[0]]
-            *self.grid.consumer.load[consumer_index]
-            *(1 - self.grid.consumer.flex_fraction[consumer_index]) 
+            *self.grid.consumer['demand_avg'][consumer_index]
+            *(1 - self.grid.consumer['flex_fraction'][consumer_index]) 
             for t in timerange],'-r', label="fixed load")
 
         # Flexible load  (if consumer has nonzero flexible load)
@@ -1071,7 +1072,7 @@ class Results(object):
             storagefilling = self.db.getResultFlexloadStorageFilling(
                 consumer_index,timeMaxMin)
             if relativestorage:
-                cap = self.grid.consumer.getFlexibleLoadStorageCapacity(
+                cap = self.grid.getFlexibleLoadStorageCapacity(
                             consumer_index)
                 storagefilling = [x/cap for x in storagefilling]
             ax2 = plt.twinx() #separate y axis
@@ -1086,7 +1087,7 @@ class Results(object):
         #if ax2 is not None:
         #    ax2.add_artist(lgd)
         #    ax1.legend=None
-        nodeidx = self.grid.node.name.index(
+        nodeidx = self.grid.node['id'].tolist().index(
             self.grid.consumer.node[consumer_index])
         if showTitle:
             plt.title("Consumer %d at node %d (%s)" 
@@ -1264,8 +1265,8 @@ class Results(object):
             for i in consumers:
                 ref_profile = consumer.load_profile[i]
                 # accumulate demand for all consumers in this area:
-                dem = [dem[t-self.timerange[0]] + consumer.load[i] 
-                    * (1 - consumer.flex_fraction[i])
+                dem = [dem[t-self.timerange[0]] + consumer['demand_avg'][i] 
+                    * (1 - consumer['flex_fraction'][i])
                     * self.grid.demandProfiles[ref_profile][t-self.timerange[0]]
                     for t in timerange]
                 flexdemand_i = self.db.getResultFlexloadPower(i,timeMaxMin)
@@ -1299,7 +1300,7 @@ class Results(object):
         timerange = range(timeMaxMin[0],timeMaxMin[-1])
 
         if genindx in self.storage_idx_generators:
-            nodeidx = self.grid.node.name.index(
+            nodeidx = self.grid.node['id'].tolist().index(
                 self.grid.generator.node[genindx])
             storagevalue = self.db.getResultStorageValue(genindx,timeMaxMin)
             nodalprice = self.db.getResultNodalPrice(nodeidx,timeMaxMin)
@@ -1442,9 +1443,9 @@ class Results(object):
                 _myround(lon_max,10,'ceil'),10),
                 labels=[0,0,0,1])
         
-        num_branches = self.grid.branch.numBranches()
-        num_dcbranches = self.grid.dcbranch.numBranches()
-        num_nodes = self.grid.node.numNodes()
+        num_branches = self.grid.numBranches()
+        num_dcbranches = self.grid.numDcBranches()
+        num_nodes = self.grid.numNodes()
 
 
         # AC Branches
@@ -1502,8 +1503,8 @@ class Results(object):
             branch_colormap = cm.gray
             branch_plot_colorbar = False
         
-        idx_from = data.branch.node_fromIdx(data.node)
-        idx_to = data.branch.node_toIdx(data.node)
+        idx_from = data.branchFromNodeIdx()
+        idx_to = data.branchToNodeIdx()
         branch_lat1 = [data.node.lat[i] for i in idx_from]        
         branch_lon1 = [data.node.lon[i] for i in idx_from]        
         branch_lat2 = [data.node.lat[i] for i in idx_to]        
@@ -1524,8 +1525,8 @@ class Results(object):
       
 
         # DC Branches
-        idx_from = data.dcbranch.node_fromIdx(data.node)
-        idx_to = data.dcbranch.node_toIdx(data.node)
+        idx_from = data.dcBranchFromNodeIdx()
+        idx_to = data.dcBranchToNodeIdx()
         branch_lat1 = [data.node.lat[i] for i in idx_from]        
         branch_lon1 = [data.node.lon[i] for i in idx_from]        
         branch_lat2 = [data.node.lat[i] for i in idx_to]        
@@ -1573,7 +1574,7 @@ class Results(object):
             node_plot_colorbar  = False
         
 
-        x, y = m(data.node.lon,data.node.lat)
+        x, y = m(data.node['lon'].tolist(),data.node['lat'].tolist())
         sc=m.scatter(x,y,marker='o',c=node_value, cmap=node_colormap,
                      zorder=2,s=dotsize)           
         #sc.cmap.set_under('dimgray')
@@ -1603,7 +1604,7 @@ class Results(object):
 
         # Show names of nodes
         if show_node_labels:
-            labels = data.node.name
+            labels = data.node['id']
             x1,x2,y1,y2 = plt.axis()
             offset_x = (x2-x1)/50
             for label, xpt, ypt in zip(labels, x, y):

@@ -433,15 +433,18 @@ class GridData(object):
         self.branch = pd.read_csv(ac_branches)
         if not dc_branches is None:
             self.dcbranch = pd.read_csv(dc_branches)
-        self.generator = pd.read_csv(generators)
-        self.consumer = pd.read_csv(consumers)
+        else:
+            self.dcbranch = pd.DataFrame(columns=self._keys_dcbranch.keys())
+        self.generator = pd.read_csv(generators).fillna(0)
+        self.consumer = pd.read_csv(consumers).fillna(0)
 
         self._checkGridData()
-        self._addDefaultGridData()
+        self._addDefaultColumns()
 
 
-    def _addDefaultGridData(self):
-        '''insert default grid values when none are provided in input files'''
+    def _addDefaultColumns(self):
+        '''insert optional columns with default values when none
+        are provided in input files'''
         for k in self._keys_generator:
             if k not in self.generator.keys():
                 self.generator[k] = self._keys_generator[k]
@@ -459,10 +462,9 @@ class GridData(object):
         for k,v in self._keys_branch.items():
             if v==None and not k in self.branch:
                 raise Exception("Branch input file must contain %s" %k)
-        if not self.dcbranch is None:
-            for k,v in self._keys_dcbranch.items():
-                if v==None and not k in self.dcbranch:
-                    raise Exception("DC branch input file must contain %s" %k)
+        for k,v in self._keys_dcbranch.items():
+            if v==None and not k in self.dcbranch:
+                raise Exception("DC branch input file must contain %s" %k)
         for k,v in self._keys_generator.items():
             if v==None and not k in self.generator:
                 raise Exception("Generator input file must contain %s" %k)
@@ -483,6 +485,9 @@ class GridData(object):
     def _readProfileFromFile(self,filename,timerange):          
         profiles = pd.read_csv(filename,sep=self.CSV_SEPARATOR)
         profiles = profiles.ix[timerange]
+        #profiles =pd.DataFrame(data=profiles.ix[timerange],
+        #                       index=range(len(timerange)))
+        profiles.index = range(len(timerange))
         return profiles
 
     def _readStoragevaluesFromFile(self,filename):  
@@ -560,6 +565,16 @@ class GridData(object):
         return [self.node[self.node['id']==self.branch['node_to'][k]] 
                 .index.tolist()[0] for k in range(self.numBranches())]
     
+    def dcBranchFromNodeIdx(self):
+        """get node indices for dc branch FROM node"""
+        return [self.node[self.node['id']==self.dcbranch['node_from'][k]]
+                .index.tolist()[0] for k in range(self.numDcBranches())]
+
+    def dcBranchToNodeIdx(self):
+        """get node indices for dc branch FROM node"""
+        return [self.node[self.node['id']==self.dcbranch['node_to'][k]] 
+                .index.tolist()[0] for k in range(self.numDcBranches())]
+    
     
     def getGeneratorsAtNode(self,nodeIdx):
         """Indices of all generators attached to a particular node"""
@@ -594,6 +609,13 @@ class GridData(object):
             if v>0 and v<numpy.inf and self.consumer['demand_avg'][i]>0]
         return idx
         
+    def getFlexibleLoadStorageCapacity(self,consumer_indx):
+        ''' flexible load storage capacity in MWh'''
+        cap = (self.consumer['demand_avg'][consumer_indx] 
+                * self.consumer['flex_fraction'][consumer_indx] 
+                * self.consumer['flex_storage'][consumer_indx] )
+        return cap
+   
 
     def getDcBranchesAtNode(self,nodeIdx,direction):
         """Indices of all DC branches attached to a particular node"""
@@ -719,14 +741,25 @@ class GridData(object):
             if ge not in alltypes:
                 alltypes.append(ge)
         return alltypes
-        
+    
+    def getConsumerAreas(self):
+        """List of areas for each consumer"""
+        areas = [self.node['area'][self.node['id']==n].tolist()[0]
+                    for n in self.consumer['node']]
+        return areas
+    
+    def getGeneratorAreas(self):
+        """List of areas for each generator"""
+        areas = [self.node['area'][self.node['id']==n].tolist()[0]
+                    for n in self.generator['node']]
+        return areas
+    
     def getConsumersPerArea(self):
         '''Returns dictionary with indices of loads within each area'''
         consumers = {}
+        consumer_areas = self.getConsumerAreas()
         for idx_load in range(self.numConsumers()):
-            node_name = self.consumer['node'][idx_load]
-            node_idx = self.node['id'].index(node_name)
-            area_name = self.node['area'][node_idx]
+            area_name = consumer_areas[idx_load]
             if area_name in consumers:
                 consumers[area_name].append(idx_load)
             else:
@@ -736,11 +769,10 @@ class GridData(object):
     def getGeneratorsPerAreaAndType(self): 
         '''Returns dictionary with indices of generators within each area'''
         generators = {}
+        generator_areas = self.getGeneratorAreas()
         for idx_gen in range(self.numGenerators()):
-            gtype = self.generator['gentype'][idx_gen]
-            node_name = self.generator['node'][idx_gen]
-            node_idx = self.node['id'].index(node_name)
-            area_name = self.node['area'][node_idx]
+            gtype = self.generator['type'][idx_gen]
+            area_name = generator_areas[idx_gen]
             if area_name in generators:
                 if gtype in generators[area_name]:
                     generators[area_name][gtype].append(idx_gen)
@@ -754,7 +786,7 @@ class GridData(object):
         '''Returns dictionary with indices of generators per type'''
         generators = {}
         for idx_gen in range(self.numGenerators()):
-            gtype = self.generator['gentype'][idx_gen]
+            gtype = self.generator['type'][idx_gen]
             if gtype in generators:
                 generators[gtype].append(idx_gen)
             else:
@@ -795,11 +827,11 @@ class GridData(object):
                             
         # indices of from and to nodes of all branches:
         if acdc=='ac':
-            br_from_nodes = self.branch.node_fromIdx(self.node)
-            br_to_nodes = self.branch.node_toIdx(self.node)
+            br_from_nodes = self.branchFromNodeIdx()
+            br_to_nodes = self.branchToNodeIdx()
         elif acdc=='dc':
-            br_from_nodes = self.dcbranch.node_fromIdx(self.node)
-            br_to_nodes = self.dcbranch.node_toIdx(self.node)
+            br_from_nodes = self.dcBranchFromNodeIdx()
+            br_to_nodes = self.dcBranchToNodeIdx()
         else:
             raise Exception('Branch type must be "ac" or "dc"')
         
