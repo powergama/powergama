@@ -187,11 +187,11 @@ class Results(object):
 
         #area_nodes = [n._i for n in self.grid.node if n.area==area]
         loads = self.grid.getConsumersPerArea()[area]
-        node_weight = [0]*len(self.grid.node.name)
+        node_weight = [0]*len(self.grid.node['id'])
         for ld in loads:
-            the_node = self.grid.consumer.node[ld]
-            the_load = self.grid.consumer.load[ld]
-            node_indx = self.grid.node.name.index(the_node)
+            the_node = self.grid.consumer['node'][ld]
+            the_load = self.grid.consumer['demand_avg'][ld]
+            node_indx = self.grid.node['id'].tolist().index(the_node)
             node_weight[node_indx] += the_load
             
         sumWght = sum(node_weight)
@@ -219,12 +219,12 @@ class Results(object):
         for area in areas:
             nodes_in_area = [i for i,n in enumerate(self.grid.node.area) 
                                 if n==area]
-            node_weight = [0]*len(self.grid.node.name)
+            node_weight = [0]*len(self.grid.node.id)
             if area in all_loads:
                 loads = all_loads[area]
                 for ld in loads:
                     the_node = self.grid.consumer.node[ld]
-                    the_load = self.grid.consumer.load[ld]
+                    the_load = self.grid.consumer.demand_avg[ld]
                     node_indx = self.grid.node.name.index(the_node)
                     node_weight[node_indx] += the_load                
                 sumWght = sum(node_weight)
@@ -859,9 +859,9 @@ class Results(object):
         flexdemand = [0]*len(self.timerange)
         consumers = self.grid.getConsumersPerArea()[area]
         for i in consumers:
-            ref_profile = consumer.load_profile[i]
+            ref_profile = consumer.demand_ref[i]
             # accumulate demand for all consumers in this area:
-            dem = [dem[t-self.timerange[0]] + consumer.load[i] 
+            dem = [dem[t-self.timerange[0]] + consumer.demand_avg[i] 
                 * (1 - consumer.flex_fraction[i])
                 * self.grid.demandProfiles[ref_profile][t-self.timerange[0]]
                 for t in timerange]

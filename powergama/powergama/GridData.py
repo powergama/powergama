@@ -11,373 +11,6 @@ import numpy
 from scipy.sparse import csr_matrix as sparse
 
 
-def parseId(num):
-    '''parse ID string/integer and return a string'''    
-    
-    # This method is used when reading input data in order to not interpret 
-    # an integer node id o e.g. 100 as "100.0", but always as "100"
-    if num is None:
-        return ''
-    else:
-        try:
-            d = int(num)
-        except ValueError:
-            d=num
-        return str(d)
-
-def parseNum(num,default=None):
-    '''parse number and return a float'''
-    if default is None:
-        return float(num)
-    elif num=='' or num is None:
-        return default
-    else:
-        return float(num)
-
-
-class _OBSNodes(object):
-    '''Private class for grid model nodes'''
-    
-    def __init__(self):
-        self.name = []
-        self.area = []
-        self.lat = []
-        self.lon = []
-    
-    def readFromFile(self,filename):
-        with openfile(filename,'r') as csvfile:
-            datareader = csv.DictReader(csvfile,delimiter=',',quoting=_QUOTINGTYPE)         
-            for row in datareader:
-                self.name.append(parseId(row["id"]))
-                self.area.append(parseId(row["area"]))
-                self.lat.append(parseNum(row["lat"]))
-                self.lon.append(parseNum(row["lon"]))
-        return
-        
-    def writeToFile(self,filename):
-        print ("Saving node data to file "+str(filename))
-        
-        headers = ["id","area","lat","lon"]
-        with openfile(filename,'w') as csvfile:
-            datawriter = csv.DictWriter(csvfile, delimiter=',',fieldnames=headers,\
-                            quotechar='"', quoting=_QUOTINGTYPE)
-                        
-            datawriter.writerow(dict((fn,fn) for fn in headers))
-            for i in range(self.numNodes()):
-                datarow = {"id":self.name[i],"area":self.area[i],\
-                        "lat":self.lat[i],"lon":self.lon[i]}
-                datawriter.writerow(datarow)
-        return
-        
-    def numNodes(self):
-        return len(self.name)
-    
-    
-class _OBSBranches(object):
-    '''Private class for grid model branches'''
-    
-    def __init__(self):
-        self.node_from = []
-        self.node_to = []
-        self.reactance = []
-        self.capacity = []
-        self._susceptance = []
-    
-    def readFromFile(self,filename):
-        with openfile(filename,'r') as csvfile:
-            datareader = csv.DictReader(csvfile,delimiter=',',quoting=_QUOTINGTYPE)           
-            for row in datareader:
-                self.node_from.append(parseId(row["from"]))
-                self.node_to.append(parseId(row["to"]))
-                self.reactance.append(parseNum(row["reactance"])) 
-                self._susceptance.append(-1.0/parseNum(row["reactance"])) #redundant, but useful
-                self.capacity.append(parseNum(row["capacity"]))
-#                if row["capacity"]=="Inf" or row["capacity"]=="inf":
-#                    self.capacity.append(inf)
-#                else:
-#                    self.capacity.append(row["capacity"])
-        return
-    
-    def writeToFile(self,filename):
-        print("Saving branch data to file "+str(filename))
-        
-        headers = ["from","to","reactance","capacity"]
-        with openfile(filename,'w') as csvfile:
-            datawriter = csv.DictWriter(csvfile, delimiter=',',\
-                                quotechar='"', quoting=_QUOTINGTYPE,\
-                                fieldnames=headers)
-            datawriter.writerow(dict((fn,fn) for fn in headers))
-            for i in range(self.numBranches()):
-                datarow = {"from":self.node_from[i],"to":self.node_to[i],\
-                        "reactance":self.reactance[i],"capacity":self.capacity[i]}
-                datawriter.writerow(datarow)
-        return
-
-    def numBranches(self):
-        return len(self.node_from)
-        
-    def node_fromIdx(self,nodes):
-        return [nodes.name.index(self.node_from[k]) for k in range(self.numBranches())]
-        #return nodes.name.index(fromnode in self.node_from)
-
-    def node_toIdx(self,nodes):
-        return [nodes.name.index(self.node_to[k]) for k in range(self.numBranches())]
-    
-    def getSusceptancePu(self,baseOhm):
-        return [self._susceptance[i]*baseOhm for i in range(self.numBranches())]
-
-
-
-class _OBSDcBranches(object):
-    '''Private class for grid model HVDC branches'''
-    
-    def __init__(self):
-        self.node_from = []
-        self.node_to = []
-        self.capacity = []
-    
-    def readFromFile(self,filename):
-        with openfile(filename,'r') as csvfile:
-            datareader = csv.DictReader(csvfile,delimiter=',',quoting=_QUOTINGTYPE)           
-            for row in datareader:
-                self.node_from.append(parseId(row["from"]))
-                self.node_to.append(parseId(row["to"]))
-                self.capacity.append(parseNum(row["capacity"]))
-        return
-
-    def writeToFile(self,filename):
-        print("Saving DC branch data to file "+str(filename))
-        
-        headers = ["from","to","capacity"]
-        with openfile(filename,'w') as csvfile:
-            datawriter = csv.DictWriter(csvfile, delimiter=',',\
-                                quotechar='"', quoting=_QUOTINGTYPE,\
-                                fieldnames=headers)
-            datawriter.writerow(dict((fn,fn) for fn in headers))
-            for i in range(self.numBranches()):
-                datarow = {"from":self.node_from[i],"to":self.node_to[i],\
-                        "capacity":self.capacity[i]}
-                datawriter.writerow(datarow)
-        return
-
-    def numBranches(self):
-        return len(self.node_from)
-        
-    def node_fromIdx(self,nodes):
-        return [nodes.name.index(self.node_from[k]) for k in range(self.numBranches())]
-
-    def node_toIdx(self,nodes):
-        return [nodes.name.index(self.node_to[k]) for k in range(self.numBranches())]
-    
-
-
-
-class _OBSGenerators(object):
-    '''Private class for grid model generators'''
-    
-    
-    def __init__(self):
-        self.node = []
-        self.prodMax = []
-        self.prodMin = []
-        self.fuelcost = []
-        self.storage = []
-        self.storagevalue_abs= []
-        self.storagevalue_profile_filling = []
-        self.storagevalue_profile_time = []
-        self.storagelevel_init = []
-        self.inflow_factor = [] 
-        self.inflow_profile = []
-        self.desc = []
-        self.gentype = []
-        self.pump_cap = []
-        self.pump_efficiency = []
-        self.pump_deadband = []
-    
-    def numGenerators(self):
-        return len(self.node)
-
-    #def nodeIdx(self,nodes):
-    #    return [nodes.name.index(self.node[k]) for k in range(self.numGenerators())]
-
-    def readFromFile(self,filename):
-        with openfile(filename,'r') as csvfile:
-            datareader = csv.DictReader(csvfile,delimiter=',',
-                                        quoting=_QUOTINGTYPE)
-            for row in datareader:
-                #print(row)
-                self.gentype.append(parseId(row["type"]))
-                self.desc.append(parseId(row["desc"]))
-                self.node.append(parseId(row["node"]))
-                self.prodMax.append(parseNum(row["pmax"]))
-                self.prodMin.append(parseNum(row["pmin"]))
-                self.fuelcost.append(parseNum(row["fuelcost"]))
-                self.inflow_factor.append(parseNum(row["inflow_fac"]))
-                self.inflow_profile.append(parseId(row["inflow_ref"]))
-                self.storage.append(
-                    parseNum(row["storage_cap"],default=0))
-                self.storagevalue_abs.append(
-                    parseNum(row["storage_price"],default=0))
-                self.storagelevel_init.append(
-                    parseNum(row["storage_ini"],default=0))
-                self.storagevalue_profile_filling.append(
-                    parseId(row["storval_filling_ref"]))
-                self.storagevalue_profile_time.append(
-                    parseId(row["storval_time_ref"]))
-                # Pumping data is optional, so check if it is present in the
-                # input files
-                if "pump_cap" in row.keys():
-                    self.pump_cap.append(parseNum(row["pump_cap"],default=0))
-                    self.pump_efficiency.append(
-                        parseNum(row["pump_efficiency"],default=0))
-                    self.pump_deadband.append(
-                        parseNum(row["pump_deadband"],default=0))
-                else:
-                    # default values are zero
-                    self.pump_cap.append(0)
-                    self.pump_efficiency.append(0)
-                    self.pump_deadband.append(0)
-                
-                
-        self.idxHasProfile = [i for i, j in enumerate(self.inflow_factor) if j != 0]      
-        return
-        
-    def writeToFile(self,filename):
-        print("Saving generator data to file "+str(filename))
-        
-        headers = ["desc","type","node",
-                    "pmax","pmin",
-                    "fuelcost",
-                    "inflow_fac","inflow_ref",
-                    "storage_cap","storage_price",
-                    "storage_ini",
-                    "storval_filling_ref",
-                    "storval_time_ref",
-                    "pump_cap","pump_efficiency","pump_deadband"]
-        with openfile(filename,'w') as csvfile:
-            datawriter = csv.writer(csvfile, delimiter=',',\
-                                quotechar='"', quoting=_QUOTINGTYPE)
-            datawriter.writerow(headers)
-            for i in range(self.numGenerators()):
-                datarow = [
-                    self.desc[i], self.gentype[i], self.node[i],
-                    self.prodMax[i], self.prodMin[i], 
-                    self.fuelcost[i],self.inflow_factor[i], 
-                    self.inflow_profile[i]]
-                if self.storage[i]>0:
-                    datarow = datarow +[
-                        self.storage[i], 
-                        self.storagevalue_abs[i],
-                        self.storagelevel_init[i],
-                        self.storagevalue_profile_filling[i],
-                        self.storagevalue_profile_time[i] ]
-                    if self.pump_cap[i]>0:
-                        datarow = datarow + [
-                            self.pump_cap[i],
-                            self.pump_efficiency[i],
-                            self.pump_deadband[i] ]
-                    
-                datawriter.writerow(datarow)
-        return
-        
-    
-        
-
-class _OBSConsumers(object):
-    '''Private class for consumers'''
-    
-    
-    def __init__(self):
-        self.node = []
-        self.load = []
-        self.load_profile = []
-        self.flex_fraction = []
-        self.flex_on_off =[]
-        self.flex_basevalue = []
-        self.flex_storage = []
-        self.flex_storagevalue_profile_filling = []
-        self.flex_storagevalue_profile_time = []
-        self.flex_storagelevel_init = []
-    
-    def readFromFile(self,filename):
-        with openfile(filename,'r') as csvfile:
-           datareader = csv.DictReader(csvfile,delimiter=',',
-                                       quoting=_QUOTINGTYPE)
-           for row in datareader:
-               self.node.append(parseId(row["node"]))
-               self.load.append(parseNum(row["demand_avg"]))
-               self.load_profile.append(parseId(row["demand_ref"]))
-               if "flex_fraction" in row.keys():
-                   self.flex_fraction.append(
-                       parseNum(row["flex_fraction"],default=0))
-                   self.flex_on_off.append(
-                       parseNum(row["flex_on_off"],default=0))
-                   self.flex_basevalue.append(
-                       parseNum(row["flex_basevalue"],default=0))
-                   self.flex_storage.append(
-                       parseNum(row["flex_storage"],default=0))
-                   self.flex_storagevalue_profile_filling.append(
-                       parseId(row["flex_storval_filling"]))
-                   self.flex_storagevalue_profile_time.append(
-                       parseId(row["flex_storval_time"]))
-               else:
-                   # default values are zero
-                   self.flex_fraction.append(0)
-                   self.flex_on_off.append(0)
-                   self.flex_basevalue.append(0)
-                   self.flex_storage.append(0)
-                   self.flex_storagevalue_profile_filling.append(0)
-                   self.flex_storagevalue_profile_time.append(0)
-                   
-           #Hard-coded initial filling level of storage equal to 50%
-           print("OBS: Initial flexible storage filling set to 0.5")        
-           self.flex_storagelevel_init = [0.5]*len(self.flex_fraction)
-        return
-
-    def writeToFile(self,filename):
-        print("Saving consumer data to file "+str(filename))
-        
-        headers = ["node","demand_avg","demand_ref",
-                   "flex_fraction","flex_on_off",
-                   "flex_basevalue","flex_storage",
-                   "flex_storval_filling"]
-        with openfile(filename,'w') as csvfile:
-            datawriter = csv.writer(csvfile, delimiter=',',\
-                                quotechar='"', quoting=_QUOTINGTYPE)
-            datawriter.writerow(headers)
-            for i in range(self.numConsumers()):
-                datarow = [self.node[i], self.load[i],self.load_profile[i]]
-                if self.flex_fraction[i]>0:
-                    datarow = datarow + [
-                           self.flex_fraction[i],
-                           self.flex_on_off[i],
-                           self.flex_basevalue[i],
-                           self.flex_storage[i],
-                           self.flex_storagevalue_profile_filling[i] 
-                           ] 
-                datawriter.writerow(datarow)
-        return
-        
-    def numConsumers(self):
-        return len(self.node)
-
-    #def nodeIdx(self,nodes):
-    #    # return the list of node indices (rather than names) for all consumers
-    #    return [nodes.name.index(self.node[k]) for k in range(self.numConsumers())]
-
-    def getDemand(self,timeIdx):
-        # return average demand for now.
-        return self.load
-
-    def getFlexibleLoadStorageCapacity(self,indx):
-        ''' flexible load storage capacity in MWh'''
-        cap = (self.load[indx] * self.flex_fraction[indx] 
-                * self.flex_storage[indx] )
-        return cap
-
-
-
-
 
 ##=============================================================================
 
@@ -402,8 +35,8 @@ class GridData(object):
                        'pump_cap':0,'pump_efficiency':0,'pump_deadband':0}
     _keys_consumer = {'node':None, 'demand_avg':None,'demand_ref':None,
                       'flex_fraction':0, 'flex_on_off':0, 'flex_basevalue':0,
-                      'flex_storage':0, 'flex_storval_filling':0,
-                      'flex_storval_time':0, 'flex_storagelevel_init':0.5}
+                      'flex_storage':0, 'flex_storval_filling':'',
+                      'flex_storval_time':'', 'flex_storagelevel_init':0.5}
 
 
     def __init__(self):
@@ -435,13 +68,28 @@ class GridData(object):
             self.dcbranch = pd.read_csv(dc_branches)
         else:
             self.dcbranch = pd.DataFrame(columns=self._keys_dcbranch.keys())
-        self.generator = pd.read_csv(generators).fillna(0)
-        self.consumer = pd.read_csv(consumers).fillna(0)
+        self.generator = pd.read_csv(generators)
+        self.consumer = pd.read_csv(consumers)
 
         self._checkGridData()
         self._addDefaultColumns()
+        self._fillEmptyCells()
 
 
+    def _fillEmptyCells(self):
+        '''Use default data where none is given'''
+        #generators:
+        for col,val in self._keys_generator.items():
+            if val != None:
+                self.generator[col] = self.generator[col].fillna(
+                    self._keys_generator[col])
+        #consumers:
+        for col,val in self._keys_consumer.items():
+            if val != None:
+                self.consumer[col] = self.consumer[col].fillna(
+                    self._keys_consumer[col])
+        
+        
     def _addDefaultColumns(self):
         '''insert optional columns with default values when none
         are provided in input files'''
@@ -527,6 +175,8 @@ class GridData(object):
         file_generators = prefix+"generators.csv"       
         file_hvdc = prefix+"hvdc.csv"       
 
+        print('TODO: Not implemented using pandas yet')
+        # OLD CODE:
         self.node.to_csv(file_nodes,sep=self.CSV_SEPARATOR)
         self.node.writeToFile(file_nodes)
         self.branch.writeToFile(file_branches)
