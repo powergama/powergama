@@ -340,7 +340,7 @@ class LpProblem(object):
             capacity = self._grid.generator['pmax'][i]
             inflow_profile = self._grid.generator['inflow_ref'][i]
             P_inflow =  (capacity * inflow_factor 
-                * self._grid.inflowProfiles[inflow_profile][timestep])
+                * self._grid.profiles[inflow_profile][timestep])
             self._var_generation[i].lowBound = min(
                 P_inflow+P_storage[i],P_min[i])            
             if P_storage[i]==0:
@@ -424,7 +424,7 @@ class LpProblem(object):
                             1-self._grid.consumer['flex_fraction'][i])
                 profile_ref = self._grid.consumer['demand_ref'][i]
                 demOutflow.append(
-                    -self._grid.demandProfiles[profile_ref][timestep]
+                    -self._grid.profiles[profile_ref][timestep]
                     *average/const.baseMVA)
                 
             self._pfPload[idx_node] = demOutflow
@@ -488,7 +488,7 @@ class LpProblem(object):
         inflow_factor = self._grid.generator['inflow_fac']
         capacity= self._grid.generator['pmax']
         genInflow = [capacity[i] * inflow_factor[i] 
-        			 * self._grid.inflowProfiles[inflow_profile_refs[i]][timestep]
+        			 * self._grid.profiles[inflow_profile_refs[i]][timestep]
                         for i in range(len(capacity))]
 
         energyIn = asarray(genInflow)*self.timeDelta

@@ -6,7 +6,6 @@ Grid data and time-dependent profiles
 '''
 
 import pandas as pd
-import sys
 import numpy
 from scipy.sparse import csr_matrix as sparse
 
@@ -38,6 +37,18 @@ class GridData(object):
                       'flex_storage':0, 'flex_storval_filling':'',
                       'flex_storval_time':'', 'flex_storagelevel_init':0.5}
 
+    # Required fields for investment analysis input data    
+    keys_sipdata = {
+        'node': ['id', 'lat', 'lon','offshore'],
+        'branch': ['node_from','node_to','capacity',
+                   'max_new_cap','distance','cost_scaling',
+                   'loss_factor', 'type'],
+        'generator': ['node','pmax','pmin',
+                      'fuelcost','energy',
+                      'inflow_fac','inflow_ref'],
+        'consumer': ['node', 'demand_avg', 'demand_ref']
+        }
+        
 
     def __init__(self):
         '''
@@ -49,8 +60,9 @@ class GridData(object):
         self.dcbranch = None
         self.generator = None
         self.consumer = None
-        self.inflowProfiles = None
-        self.demandProfiles = None
+        #self.inflowProfiles = None
+        #self.demandProfiles = None
+        self.profiles = None
         self.storagevalue_filling = None
         self.storagevalue_time = None
         self.timeDelta = None
@@ -71,9 +83,48 @@ class GridData(object):
         self.generator = pd.read_csv(generators)
         self.consumer = pd.read_csv(consumers)
 
+        for k,v in self._keys_node.items():
+            if v==None and not k in self.node:
+                raise Exception("Node input file must contain %s" %k)
+        for k,v in self._keys_branch.items():
+            if v==None and not k in self.branch:
+                raise Exception("Branch input file must contain %s" %k)
+        for k,v in self._keys_dcbranch.items():
+            if v==None and not k in self.dcbranch:
+                raise Exception("DC branch input file must contain %s" %k)
+        for k,v in self._keys_generator.items():
+            if v==None and not k in self.generator:
+                raise Exception("Generator input file must contain %s" %k)
+        for k,v in self._keys_consumer.items():
+            if v==None and not k in self.consumer:
+                raise Exception("Consumer input file must contain %s" %k)
+        
+
         self._checkGridData()
         self._addDefaultColumns()
         self._fillEmptyCells()
+        
+    def readSipData(self,nodes,branches,generators,consumers):
+        '''Read grid data for investment analysis from files (PowerGIM)
+
+        This is used with the grid investment module (PowerGIM)   
+        
+        time-series data may be used for 
+        consumer demand
+        generator inflow (e.g. solar and wind)
+        generator fuelcost (e.g. one generator with fuelcost = power price)
+        '''
+        self.node = pd.read_csv(nodes,
+                                usecols=self.keys_sipdata['node'])
+        self.branch = pd.read_csv(branches,
+                                  usecols=self.keys_sipdata['branch'])
+        self.generator = pd.read_csv(generators,
+                                     usecols=self.keys_sipdata['generator'])
+        self.consumer = pd.read_csv(consumers,
+                                    usecols=self.keys_sipdata['consumer'])
+    
+        self._checkGridData()
+
 
 
     def _fillEmptyCells(self):
@@ -103,23 +154,7 @@ class GridData(object):
         
     def _checkGridData(self):
         '''Check consistency of grid data'''
-        
-        for k,v in self._keys_node.items():
-            if v==None and not k in self.node:
-                raise Exception("Node input file must contain %s" %k)
-        for k,v in self._keys_branch.items():
-            if v==None and not k in self.branch:
-                raise Exception("Branch input file must contain %s" %k)
-        for k,v in self._keys_dcbranch.items():
-            if v==None and not k in self.dcbranch:
-                raise Exception("DC branch input file must contain %s" %k)
-        for k,v in self._keys_generator.items():
-            if v==None and not k in self.generator:
-                raise Exception("Generator input file must contain %s" %k)
-        for k,v in self._keys_consumer.items():
-            if v==None and not k in self.consumer:
-                raise Exception("Consumer input file must contain %s" %k)
-            
+                    
         #generator nodes
         for g in self.generator['node']:
             if not g in self.node['id'].values:
@@ -133,8 +168,6 @@ class GridData(object):
     def _readProfileFromFile(self,filename,timerange):          
         profiles = pd.read_csv(filename,sep=self.CSV_SEPARATOR)
         profiles = profiles.ix[timerange]
-        #profiles =pd.DataFrame(data=profiles.ix[timerange],
-        #                       index=range(len(timerange)))
         profiles.index = range(len(timerange))
         return profiles
 
@@ -143,12 +176,15 @@ class GridData(object):
         return profiles
         
         
-    def readProfileData(self,inflow,demand,storagevalue_filling,
-                        storagevalue_time,timerange,timedelta=1.0):
+    def readProfileData(self,filename,timerange,
+                        storagevalue_filling=None,
+                        storagevalue_time=None,
+                        timedelta=1.0):
         """Read profile (timeseries) into numpy arrays"""
         
-        self.inflowProfiles = self._readProfileFromFile(inflow,timerange)
-        self.demandProfiles = self._readProfileFromFile(demand,timerange)
+        #self.inflowProfiles = self._readProfileFromFile(inflow,timerange)
+        #self.demandProfiles = self._readProfileFromFile(demand,timerange)
+        self.profiles = self._readProfileFromFile(filename,timerange)
         self.timerange = timerange
         self.timeDelta = timedelta
         
@@ -158,10 +194,11 @@ class GridData(object):
        The dependence is on filling level (0-100%), is given as an array
         with 101 elements
         '''
-        self.storagevalue_time = self._readProfileFromFile(
-            storagevalue_time,timerange)
-        self.storagevalue_filling = self._readStoragevaluesFromFile(
-            storagevalue_filling)        
+        if not storagevalue_filling is None:
+            self.storagevalue_time = self._readProfileFromFile(
+                storagevalue_time,timerange)
+            self.storagevalue_filling = self._readStoragevaluesFromFile(
+                storagevalue_filling)        
         return    
 
     def writeGridDataToFiles(self,prefix):

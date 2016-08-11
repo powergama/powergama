@@ -863,7 +863,7 @@ class Results(object):
             # accumulate demand for all consumers in this area:
             dem = [dem[t-self.timerange[0]] + consumer.demand_avg[i] 
                 * (1 - consumer.flex_fraction[i])
-                * self.grid.demandProfiles[ref_profile][t-self.timerange[0]]
+                * self.grid.profiles[ref_profile][t-self.timerange[0]]
                 for t in timerange]
             flexdemand_i = self.db.getResultFlexloadPower(i,timeMaxMin)
             if len(flexdemand_i)>0:
@@ -990,7 +990,7 @@ class Results(object):
         # Power inflow (if generator has nonzero inflow factor)
         if self.grid.generator['inflow_fac'][generator_index] > 0:
             profile = self.grid.generator['inflow_ref'][generator_index]
-            ax1.plot(timerange,[self.grid.inflowProfiles[profile][t-self.timerange[0]]
+            ax1.plot(timerange,[self.grid.profiles[profile][t-self.timerange[0]]
                 *self.grid.generator['inflow_fac'][generator_index]
                 *self.grid.generator['pmax'][generator_index] 
                 for t in timerange],'-.b', label="inflow")
@@ -1056,7 +1056,7 @@ class Results(object):
 
         # Fixed load 
         profile = self.grid.consumer.load_profile[consumer_index]
-        ax1.plot(timerange,[self.grid.demandProfiles[profile][t-self.timerange[0]]
+        ax1.plot(timerange,[self.grid.profiles[profile][t-self.timerange[0]]
             *self.grid.consumer['demand_avg'][consumer_index]
             *(1 - self.grid.consumer['flex_fraction'][consumer_index]) 
             for t in timerange],'-r', label="fixed load")
@@ -1267,7 +1267,7 @@ class Results(object):
                 # accumulate demand for all consumers in this area:
                 dem = [dem[t-self.timerange[0]] + consumer['demand_avg'][i] 
                     * (1 - consumer['flex_fraction'][i])
-                    * self.grid.demandProfiles[ref_profile][t-self.timerange[0]]
+                    * self.grid.profiles[ref_profile][t-self.timerange[0]]
                     for t in timerange]
                 flexdemand_i = self.db.getResultFlexloadPower(i,timeMaxMin)
                 if len(flexdemand_i)>0:
@@ -1786,7 +1786,7 @@ class Results(object):
             elif value=='demand':
                 #TODO: This is not generally correct. Should use
                 ## weighted average for all loads in area
-                p[a] = self.grid.demandProfiles['load_'+a]
+                p[a] = self.grid.profiles['load_'+a]
             elif value[:3]=='gen':
                 # value is now on form "gen_MA_hydro"
                 strval = value.split('%')
