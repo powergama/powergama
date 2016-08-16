@@ -483,3 +483,28 @@ class SipModel():
                 float(i.attrib['omRate'])}
 
         return {'powergim':di}
+
+        
+    def createStochasticProblem(self,path):
+        '''create input files for solving stochastic problem
+        
+        Generates Referencedata.dat        
+        
+        Parameters
+        ----------
+        path : where to put generated files
+        '''
+        
+        #TODO: Export data dictionary to ReferenceModel.dat
+        '''
+        Idea
+        Export data to
+        
+        loop through dict_data
+            type(key)==pyo.base.sets.SimpleSet / SimpleParam
+            loop through elements            
+                print key value pairs
+        '''
+        
+        raise Exception('Not implemented')
+        return
