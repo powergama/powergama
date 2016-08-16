@@ -39,12 +39,12 @@ class GridData(object):
 
     # Required fields for investment analysis input data    
     keys_sipdata = {
-        'node': ['id', 'lat', 'lon','offshore'],
+        'node': ['id', 'lat', 'lon','offshore','type','existing'],
         'branch': ['node_from','node_to','capacity',
                    'max_new_cap','distance','cost_scaling',
                    'loss_factor', 'type'],
         'generator': ['node','pmax','pmin',
-                      'fuelcost','energy',
+                      'fuelcost','fuelcost_ref','pavg',
                       'inflow_fac','inflow_ref'],
         'consumer': ['node', 'demand_avg', 'demand_ref']
         }
@@ -75,6 +75,7 @@ class GridData(object):
         '''Read grid data from files into data variables'''
         
         self.node = pd.read_csv(nodes)
+        self.node.set_index('id',inplace=True,append=True)
         self.branch = pd.read_csv(ac_branches)
         if not dc_branches is None:
             self.dcbranch = pd.read_csv(dc_branches)
@@ -116,8 +117,12 @@ class GridData(object):
         '''
         self.node = pd.read_csv(nodes,
                                 usecols=self.keys_sipdata['node'])
+        self.node.set_index('id',inplace=True)
+        self.node['id']=self.node.index
         self.branch = pd.read_csv(branches,
                                   usecols=self.keys_sipdata['branch'])
+        # dcbranch variable only needed for powergama.plotMapGrid
+        self.dcbranch = pd.DataFrame()
         self.generator = pd.read_csv(generators,
                                      usecols=self.keys_sipdata['generator'])
         self.consumer = pd.read_csv(consumers,
@@ -244,23 +249,25 @@ class GridData(object):
 
     def branchFromNodeIdx(self):
         """get node indices for branch FROM node"""
-        return [self.node[self.node['id']==self.branch['node_from'][k]]
-                .index.tolist()[0] for k in range(self.numBranches())]
+        #return [self.node[self.node['id']==self.branch['node_from'][k]]
+        #        .index.tolist()[0] for k in range(self.numBranches())]
+        return [self.node[self.node['id']==b['node_from']]['id'].tolist()[0]
+                for i,b in self.branch.iterrows()]
 
     def branchToNodeIdx(self):
         """get node indices for branch FROM node"""
         return [self.node[self.node['id']==self.branch['node_to'][k]] 
-                .index.tolist()[0] for k in range(self.numBranches())]
+                .index.tolist()[0] for k in self.branch.index.tolist()]
     
     def dcBranchFromNodeIdx(self):
         """get node indices for dc branch FROM node"""
         return [self.node[self.node['id']==self.dcbranch['node_from'][k]]
-                .index.tolist()[0] for k in range(self.numDcBranches())]
+                .index.tolist()[0] for k in self.dcbranch.index.tolist()]
 
     def dcBranchToNodeIdx(self):
         """get node indices for dc branch FROM node"""
         return [self.node[self.node['id']==self.dcbranch['node_to'][k]] 
-                .index.tolist()[0] for k in range(self.numDcBranches())]
+                .index.tolist()[0] for k in self.dcbranch.index.tolist()]
     
     
     def getGeneratorsAtNode(self,nodeIdx):
@@ -323,7 +330,7 @@ class GridData(object):
         [index,from area,to area]
         '''
         hvdcBranches = []
-        for idx in range(len(self.dcbranch['capacity'])):
+        for idx in self.dcbranch.index.tolist():
             fromNodeIdx = self.node['id'].index(self.dcbranch['node_from'][idx])
             toNodeIdx = self.node.name.index(self.dcbranch['node_to'][idx])
             areaFrom = self.node['area'][fromNodeIdx]
@@ -376,7 +383,7 @@ class GridData(object):
 
     def _susceptancePu(self,baseOhm):
         return [-1/self.branch['reactance'][i]*baseOhm 
-                for i in range(self.numBranches())]
+                for i in self.branch.index.tolist()]
 
     def computePowerFlowMatrices(self,baseZ):
         """
@@ -445,7 +452,7 @@ class GridData(object):
         '''Returns dictionary with indices of loads within each area'''
         consumers = {}
         consumer_areas = self.getConsumerAreas()
-        for idx_load in range(self.numConsumers()):
+        for idx_load in self.consumer.index.tolist():
             area_name = consumer_areas[idx_load]
             if area_name in consumers:
                 consumers[area_name].append(idx_load)
@@ -457,7 +464,7 @@ class GridData(object):
         '''Returns dictionary with indices of generators within each area'''
         generators = {}
         generator_areas = self.getGeneratorAreas()
-        for idx_gen in range(self.numGenerators()):
+        for idx_gen in self.generator.index.tolist():
             gtype = self.generator['type'][idx_gen]
             area_name = generator_areas[idx_gen]
             if area_name in generators:
@@ -472,7 +479,7 @@ class GridData(object):
     def getGeneratorsPerType(self): 
         '''Returns dictionary with indices of generators per type'''
         generators = {}
-        for idx_gen in range(self.numGenerators()):
+        for idx_gen in self.generator.index.tolist():
             gtype = self.generator['type'][idx_gen]
             if gtype in generators:
                 generators[gtype].append(idx_gen)
