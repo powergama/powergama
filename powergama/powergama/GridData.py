@@ -8,6 +8,7 @@ Grid data and time-dependent profiles
 import pandas as pd
 import numpy
 from scipy.sparse import csr_matrix as sparse
+import math
 
 
 
@@ -39,10 +40,11 @@ class GridData(object):
 
     # Required fields for investment analysis input data    
     keys_sipdata = {
-        'node': ['id', 'lat', 'lon','offshore','type','existing'],
+        'node': ['id', 'lat', 'lon','offshore','type',
+                 'existing','cost_scaling'],
         'branch': ['node_from','node_to','capacity',
-                   'max_new_cap','distance','cost_scaling',
-                   'loss_factor', 'type'],
+                   'expand','distance','cost_scaling',
+                   'type'],
         'generator': ['node','pmax','pmin',
                       'fuelcost','fuelcost_ref','pavg',
                       'inflow_fac','inflow_ref'],
@@ -566,5 +568,36 @@ class GridData(object):
         return dict(branches_pos=branches_pos,
                     branches_neg=branches_neg)   
 
+    def branchDistances(self,R=6373.0):
+        '''computes branch distance from node coordinates, resuls in km
+        
+        Uses haversine formula
+        
+        Parameters
+        ----------
+        R : radius of the Earth
+        '''
+        
+        # approximate radius of earth in km
+        n_from = self.branchFromNodeIdx()
+        n_to = self.branchToNodeIdx()
+        distance = []
+        for i,br in self.branch.iterrows():
+            n_from= br['node_from']
+            n_to=br['node_to']
+            lat1 = math.radians(self.node.ix[n_from]['lat'])
+            lon1 = math.radians(self.node.ix[n_from]['lon'])
+            lat2 = math.radians(self.node.ix[n_to]['lat'])
+            lon2 = math.radians(self.node.ix[n_to]['lon'])
+        
+            dlon = lon2 - lon1
+            dlat = lat2 - lat1
+        
+            a = (math.sin(dlat/2)**2 
+                + math.cos(lat1) * math.cos(lat2) * math.sin(dlon/2)**2 )
+            c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+            #atan2 better than asin: c = 2 * math.asin(math.sqrt(a))
+            distance.append(R * c)
+        return distance
 
   
