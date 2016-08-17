@@ -361,8 +361,6 @@ class SipModel():
         
        
        
-        print('TODO: Compute distances')        
-        #grid_data.branch['distance']=99
         branch_distances = grid_data.branchDistances()
         
         #data = pyo.DataPortal(model=self.abstractmodel)
@@ -485,14 +483,18 @@ class SipModel():
         return {'powergim':di}
 
         
-    def createStochasticProblem(self,path):
+    def createStochasticProblem(self,path,dict_data):
         '''create input files for solving stochastic problem
         
         Generates Referencedata.dat        
         
         Parameters
         ----------
-        path : where to put generated files
+        path : string
+            Where to put generated files
+        dict_data : dictionary
+            Pyomo data model in dictionary format. Output from 
+            createModelData method
         '''
         
         #TODO: Export data dictionary to ReferenceModel.dat
@@ -505,6 +507,22 @@ class SipModel():
             loop through elements            
                 print key value pairs
         '''
+        for key,val in dict_data['powergim'].items():
+            v = getattr(self.abstractmodel,key)
+            if type(v)==pyo.base.sets.SimpleSet:
+                print("SET: ",v)
+                print(val[None])
+            elif type(v)==pyo.base.param.IndexedParam:
+                print("PARAM: ",v)
+                #for k2,v2 in val.items():
+                #    print("  ",k2,v2)
+            elif type(v)==pyo.base.param.SimpleParam:
+                print("SIMPLE PARAM: ",v)
+                print("  ",val[None])
+            else:
+                print("?  ",key,v,type(v))
+            
+            #if type(k)==pyo.base.sets.SimpleSet
         
         raise Exception('Not implemented')
         return
