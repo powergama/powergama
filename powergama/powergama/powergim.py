@@ -13,14 +13,15 @@ class SipModel():
     Power Grid Investment Module - stochastic investment problem
     '''
     
-    def __init__(self, M_const = 1000):
+    def __init__(self, maxNewBranchCap,maxNewBranchNum,M_const = 1000):
         """Create Abstract Pyomo model for PowerGIM"""
-        self.abstractmodel = self._createAbstractModel()
+        self.abstractmodel = self._createAbstractModel(maxNewBranchCap,
+                                                       maxNewBranchNum)
         self.M_const = M_const
         
         
     
-    def _createAbstractModel(self):    
+    def _createAbstractModel(self,maxNewBranchCap,maxNewBranchNum):    
         model = pyo.AbstractModel()
         model.name = 'PowerGIM abstract model'
         
@@ -100,27 +101,47 @@ class SipModel():
         # VARIABLES ##########################################################
     
         # investment: new dcbranch capacity [dcVarInvest]
+        def branchNewCapacity_bounds(model,j):
+            return (0,maxNewBranchCap)
         model.branchNewCapacity = pyo.Var(model.BRANCH, 
-                                          within = pyo.NonNegativeReals)
+                                          within = pyo.NonNegativeReals,
+                                          bounds = branchNewCapacity_bounds)
         # investment: new dcbranch number of cables [dcFixInvest]
+        def branchNewCables_bounds(model,j):
+            return (0,maxNewBranchNum)                                  
         model.branchNewCables = pyo.Var(model.BRANCH, 
-                                        within = pyo.NonNegativeIntegers)
+                                        within = pyo.NonNegativeIntegers,
+                                        bounds = branchNewCables_bounds)
         # investment: new nodes
         model.newNodes = pyo.Var(model.NODE, within = pyo.Binary)
-        # generator output
-        model.generation = pyo.Var(model.GEN, model.TIME, 
-                                   within = pyo.NonNegativeReals)
-        # branch power flow (ac and dc):
-        model.branchFlow12 = pyo.Var(model.BRANCH, model.TIME, 
-                                     within = pyo.NonNegativeReals)
-        model.branchFlow21 = pyo.Var(model.BRANCH, model.TIME, 
-                                     within = pyo.NonNegativeReals)
         
+        # branch power flow (ac and dc):
+        def branchFlow_bounds(model,j,t):
+            ub = (model.branchExistingCapacity[j]
+                    +branchNewCapacity_bounds(model,j)[1])
+            return (0,ub)
+        model.branchFlow12 = pyo.Var(model.BRANCH, model.TIME, 
+                                     within = pyo.NonNegativeReals,
+                                     bounds = branchFlow_bounds)
+        model.branchFlow21 = pyo.Var(model.BRANCH, model.TIME, 
+                                     within = pyo.NonNegativeReals,
+                                     bounds = branchFlow_bounds)
+        
+        # generator output
+        def generation_bounds(model,j,t):
+            # could use available capacity instead of capacity, and get rid
+            # of generation limit constraint
+            ub = model.genCapacity[j]
+            return (0,ub)
+        model.generation = pyo.Var(model.GEN, model.TIME, 
+                                   within = pyo.NonNegativeReals,
+                                   bounds = generation_bounds)
         # load shedding (cf gen)
         #model.loadShed = pyo.Var(model.NODE, model.TIME, 
-        #                         domain = pyo.NonNegativeReals)
+        #                         domain = pyo.NonNegativeReals)       
         model.curtailment = pyo.Var(model.GEN, model.TIME, 
-                                    domain = pyo.NonNegativeReals)
+                                    domain = pyo.NonNegativeReals,
+                                    bounds = generation_bounds)
         
         
         # CONSTRAINTS ########################################################
@@ -354,9 +375,12 @@ class SipModel():
         ----------
         grid_data : powergama.GridData object
             contains grid model
-        datafile : name of XML file containing additional parameters
+        datafile : string
+            name of XML file containing additional parameters
         
         Returns
+        --------
+        dictionary with pyomo data (in pyomo format)
         '''
         
        
@@ -486,8 +510,6 @@ class SipModel():
     def createStochasticProblem(self,path,dict_data):
         '''create input files for solving stochastic problem
         
-        Generates Referencedata.dat        
-        
         Parameters
         ----------
         path : string
@@ -495,34 +517,51 @@ class SipModel():
         dict_data : dictionary
             Pyomo data model in dictionary format. Output from 
             createModelData method
+            
+        Returns
+        -------
+        string that can be written to .dat file (reference model data)
         '''
         
-        #TODO: Export data dictionary to ReferenceModel.dat
-        '''
-        Idea
-        Export data to
+ 
+        NL="\n"
+        TAB="\t"
+        dat_str = "#PowerGIM data file"+NL   
+        str_set=""
+        str_param=""
+        str_sprm=""
         
-        loop through dict_data
-            type(key)==pyo.base.sets.SimpleSet / SimpleParam
-            loop through elements            
-                print key value pairs
-        '''
         for key,val in dict_data['powergim'].items():
             v = getattr(self.abstractmodel,key)
+            
             if type(v)==pyo.base.sets.SimpleSet:
-                print("SET: ",v)
-                print(val[None])
+                str_set += "set " + key + " := "
+                for x in val[None]:
+                    str_set += str(x) + " "
+                str_set += ";" + NL
+                
             elif type(v)==pyo.base.param.IndexedParam:
                 print("PARAM: ",v)
-                #for k2,v2 in val.items():
-                #    print("  ",k2,v2)
+                str_param += "param " + key + ":= " + NL
+                for k2,v2 in val.items():
+                    str_param += TAB
+                    if isinstance(k2,tuple):
+                        #multiple keys (table data)
+                        for ki in k2:
+                            str_param += str(ki) + TAB
+                    else:
+                        #single key (list data)
+                        str_param += str(k2) + TAB
+                    str_param += str(v2) + NL
+                str_param += TAB+";"+NL
+                
             elif type(v)==pyo.base.param.SimpleParam:
-                print("SIMPLE PARAM: ",v)
-                print("  ",val[None])
+                # single value data
+                str_sprm += "param " + key + " := " + str(val[None]) + ";" + NL
+                
             else:
-                print("?  ",key,v,type(v))
+                print("Unknown data  ",key,v,type(v))
+                raise Exception("Unknown data")
             
-            #if type(k)==pyo.base.sets.SimpleSet
-        
-        raise Exception('Not implemented')
-        return
+        dat_str += NL + str_set + NL + str_sprm + NL + str_param       
+        return dat_str
