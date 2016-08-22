@@ -118,17 +118,28 @@ class GridData(object):
         generator fuelcost (e.g. one generator with fuelcost = power price)
         '''
         self.node = pd.read_csv(nodes,
-                                usecols=self.keys_sipdata['node'])
+                                usecols=self.keys_sipdata['node'],
+                                dtype={'id':str})
         self.node.set_index('id',inplace=True)
         self.node['id']=self.node.index
         self.branch = pd.read_csv(branches,
-                                  usecols=self.keys_sipdata['branch'])
+                                  usecols=self.keys_sipdata['branch'],
+                                  dtype={'node_from':str,'node_to':str})
         # dcbranch variable only needed for powergama.plotMapGrid
         self.dcbranch = pd.DataFrame()
         self.generator = pd.read_csv(generators,
-                                     usecols=self.keys_sipdata['generator'])
+                                     usecols=self.keys_sipdata['generator'],
+                                     dtype={'node':str})
         self.consumer = pd.read_csv(consumers,
-                                    usecols=self.keys_sipdata['consumer'])
+                                    usecols=self.keys_sipdata['consumer'],
+                                    dtype={'node':str})
+        
+        # treat node id as string (even if numeric)                            
+        #self.node['id'] = self.node['id'].astype(str)
+        #self.generator['node'] = self.generator['node'].astype(str)
+        #self.branch['node_from'] = self.branch['node_from'].astype(str)
+        #self.branch['node_to'] = self.branch['node_to'].astype(str)
+        #self.consumer['node'] = self.consumer['node'].astype(str)
     
         self._checkGridData()
 

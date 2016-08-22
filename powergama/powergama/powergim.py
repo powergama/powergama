@@ -7,6 +7,7 @@ Created on Tue Aug 16 13:21:21 2016
 
 
 import pyomo.environ as pyo
+import pandas as pd
 
 class SipModel():
     '''
@@ -324,6 +325,7 @@ class SipModel():
             expr = sum(model.generation[i,t]
                         *model.genCostAvg[i]*model.genCostProfile[i,t] 
                         for i in model.GEN for t in model.TIME)
+            #loadshedding=0 by powerbalance constraint
             #expr += sum(model.loadShed[i,t]*model.shedCost[i] 
             #            for i in model.NODE for t in model.TIME)
             expr += sum(model.curtailment[i,t]*model.curtailmentCost 
@@ -344,16 +346,6 @@ class SipModel():
         return model
 
 
-        
-    def createConcreteModel(self,dict_data):
-        """Create Concrete Pyomo model for PowerGIM"""
-
-        concretemodel = self.abstractmodel.create_instance(data=dict_data,
-                               name="PowerGIM Model",
-                               namespace='powergim')
-        return concretemodel
-
-
     def _offshoreBranch(self,grid_data):
         '''find out whether branch endpoints are offshore or onshore
         
@@ -366,6 +358,26 @@ class SipModel():
         d['to'] = [grid_data.node[grid_data.node['id']==n]['offshore']
                     .tolist()[0] for n in grid_data.branch['node_to']]
         return d
+
+        
+    def createConcreteModel(self,dict_data):
+        """Create Concrete Pyomo model for PowerGIM
+        
+        Parameters
+        ----------
+        dict_data : dictionary
+            dictionary containing the model data. This can be created with
+            the createModelData(...) method
+        
+        Returns
+        -------
+            Concrete pyomo model
+        """
+
+        concretemodel = self.abstractmodel.create_instance(data=dict_data,
+                               name="PowerGIM Model",
+                               namespace='powergim')
+        return concretemodel
 
 
     def createModelData(self,grid_data,datafile):
@@ -383,10 +395,9 @@ class SipModel():
         dictionary with pyomo data (in pyomo format)
         '''
         
-       
-       
         branch_distances = grid_data.branchDistances()
         
+        #to see how the data format is:        
         #data = pyo.DataPortal(model=self.abstractmodel)
         #data.load(filename=datafile)
         
@@ -507,7 +518,7 @@ class SipModel():
         return {'powergim':di}
 
         
-    def createStochasticProblem(self,path,dict_data):
+    def writeStochasticProblem(self,path,dict_data):
         '''create input files for solving stochastic problem
         
         Parameters
@@ -563,5 +574,113 @@ class SipModel():
                 print("Unknown data  ",key,v,type(v))
                 raise Exception("Unknown data")
             
-        dat_str += NL + str_set + NL + str_sprm + NL + str_param       
+        dat_str += NL + str_set + NL + str_sprm + NL + str_param    
+        
+        #scenario structure data file:
+        #TODO: export scenario structure data file
+        
+        #root node scenario data:
+        with open("{}/RootNode.dat".format(path), "w") as text_file:
+            text_file.write(dat_str)
+        print("Root node data written to {}/RootNode.dat".format(path))
+        
         return dat_str
+        
+        
+    def createScenarioTreeModel(self,num_scenarios):
+        '''Generate model instance with data. Alternative to .dat files
+        
+        Parameters
+        ----------
+        num_scenarios : int
+            number of scenarios. Each with the same probability
+        
+        Returns
+        -------
+        PySP scenario tree model
+        
+        This method may be called by "pysp_scenario_tree_model_callback()" in
+        the model input file instead of using input .dat files
+        '''
+        from pyomo.pysp.scenariotree.tree_structure_model \
+            import CreateConcreteTwoStageScenarioTreeModel
+    
+        st_model = CreateConcreteTwoStageScenarioTreeModel(num_scenarios)
+    
+        first_stage = st_model.Stages.first()
+        second_stage = st_model.Stages.last()
+    
+        # First Stage
+        st_model.StageCost[first_stage] = 'firstStageCost'
+        st_model.StageVariables[first_stage].add('branchNewCables')
+        st_model.StageVariables[first_stage].add('branchNewCapacity')
+        st_model.StageVariables[first_stage].add('newNodes')
+    
+        # Second Stage
+        st_model.StageCost[second_stage] = 'secondStageCost'
+        st_model.StageVariables[second_stage].add('generation')
+        st_model.StageVariables[second_stage].add('curtailment')
+        st_model.StageVariables[second_stage].add('branchFlow12')
+        st_model.StageVariables[second_stage].add('branchFlow21')
+            
+        st_model.ScenarioBasedData=False
+    
+        # Alternative, using networkx to create scenario tree:
+        if False:
+            from pyomo.pysp.scenariotree.tree_structure_model  \
+               import ScenarioTreeModelFromNetworkX
+            import networkx
+           
+            G = networkx.DiGraph()
+            G.add_node("R")
+            G.add_node("u0")
+            G.add_edge("R", "u0", probability=0.1)
+            G.add_node("u1")
+            G.add_edge("R", "u1", probability=0.5)
+            G.add_node("u2")
+            G.add_edge("R", "u2", probability=0.4)
+    
+            stm = ScenarioTreeModelFromNetworkX(G,
+                             edge_probability_attribute="probability",
+                             stage_names=["T1", "T2"])
+                             
+            # Declare the variables for each node (or stage)
+            stm.StageVariables["T1"].add("x")
+            stm.StageDerivedVariables["T1"].add("z")
+            # for this example, variables in the second and
+            # third time-stage change for each node
+            stm.NodeVariables["u0"].add("y0")
+            stm.NodeDerivedVariables["u0"].add("xu0")
+            
+            # Declare the Var or Expression object that
+            # reports the cost at each time stage
+            stm.StageCost["T1"] = "firstStageCost"
+            stm.StageCost["T2"] = "secondStageCost"
+            
+            st_model = stm
+            
+        return st_model
+        
+        
+    def presentResults(self,csvfile):
+        '''load  results and present plots etc
+        
+        Parameters
+        ----------
+        csvfile : string
+            name of csv file holding RUNPH results (ph.cvs)
+        
+        Returns
+        -------
+        pandas.Dataframe results
+        '''
+        
+        df = pd.read_csv(csvfile,header=None, 
+                         names=['r_stage','r_node','r_var','r_indx','r_val'])
+                         
+        #TODO: present results
+        # Martin's functions...
+                         
+        return df
+        
+        
