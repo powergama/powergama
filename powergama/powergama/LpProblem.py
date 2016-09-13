@@ -341,16 +341,20 @@ class LpProblem(object):
             inflow_profile = self._grid.generator.inflow_profile[i]
             P_inflow =  (capacity * inflow_factor 
                 * self._grid.inflowProfiles[inflow_profile][timestep])
-            self._var_generation[i].lowBound = min(
-                P_inflow+P_storage[i],P_min[i])            
-            if P_storage[i]==0:
+            if i not in self._idx_generatorsWithStorage:
+            #if P_storage[i]==0:
+                #generator has no storage
                 '''
                 Don't let P_max limit the output (e.g. solar PV)
                 This won't affect fuel based generators with zero storage,
                 since these should have inflow=p_max in any case
                 '''
+                self._var_generation[i].lowBound = min(P_inflow,P_min[i])
                 self._var_generation[i].upBound = P_inflow
             else:
+                #generator has storage
+                self._var_generation[i].lowBound = min(P_inflow+P_storage[i],
+                                                       P_min[i])
                 self._var_generation[i].upBound = min(P_inflow+P_storage[i],
                                                       P_max[i])
 
@@ -597,12 +601,21 @@ class LpProblem(object):
         #prob0 = pulp.LpProblem("Grid Market Power - base", pulp.LpMinimize)
         numTimesteps = len(self._grid.timerange)
         for timestep in range(numTimesteps):
+            if timestep>=102:
+                pass
             # update LP problem (inflow, storage, profiles)                     
             self._updateLpProblem(timestep)
           
             # solve the LP problem
             #self.prob.solve(self.solver,use_mps=True)
             self.prob.solve(self.solver)
+            
+            solver_status = self.prob.status            
+            if solver_status != pulp.LpStatusOptimal:
+                print("SOLVE -> status = {}".
+                      format(pulp.LpStatus[solver_status]))
+                raise Exception("t={}: No optimal solution found: {}."
+                                .format(timestep,pulp.LpStatus[solver_status]))
             
             # print result summary            
             #value_costfunction = pulp.value(self.prob.objective)
