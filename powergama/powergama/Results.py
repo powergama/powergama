@@ -144,7 +144,7 @@ class Results(object):
             timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
 
         #branchflow = self.db.getResultBranchFlowAll(timeMaxMin)
-        avgflow = self.db.getResultBranchFlowsMean(timeMaxMin)
+        avgflow = self.db.getResultBranchFlowsMean(timeMaxMin,ac)
         #np.mean(branchflow,axis=1)
         return avgflow
 
@@ -1387,6 +1387,10 @@ class Results(object):
             ""
         show_node_labels : boolean
             whether to show node names (true/false)
+		flow_style : string or list of strings
+			"c" = colour, "t" = thickness
+			if branchtype='flow'; how the flow should be visualised. The two
+			options may be combined.
         dotsize : integer
             set dot size for each plotted node
         latlon: list of four floats
@@ -1432,22 +1436,24 @@ class Results(object):
          
         # Draw coastlines, meridians and parallels.
         m.drawcoastlines()
-        m.drawcountries(zorder=0)
-        m.fillcontinents(color='coral',lake_color='aqua',zorder=0)
-        m.drawmapboundary(fill_color='aqua')
-        
-        if draw_par_mer:
-            m.drawparallels(np.arange(_myround(lat_min,10,'floor'),
-                _myround(lat_max,10,'ceil'),10),
-                labels=[1,1,0,0])
+		#m.drawcountries(zorder=0)
+		m.fillcontinents(color='coral',lake_color='aqua',zorder=0)
+		#m.fillcontinents(zorder=0)
+		m.drawmapboundary(fill_color='aqua')
+		#m.drawmapboundary()
+		
+		if draw_par_mer:
+			m.drawparallels(np.arange(_myround(lat_min,10,'floor'),
+				_myround(lat_max,10,'ceil'),10),
+				labels=[1,1,0,0])
 
-            m.drawmeridians(np.arange(_myround(lon_min,10,'floor'),
-                _myround(lon_max,10,'ceil'),10),
-                labels=[0,0,0,1])
-        
-        num_branches = self.grid.numBranches()
-        num_dcbranches = self.grid.numDcBranches()
-        num_nodes = self.grid.numNodes()
+			m.drawmeridians(np.arange(_myround(lon_min,10,'floor'),
+				_myround(lon_max,10,'ceil'),10),
+				labels=[0,0,0,1])
+		
+		num_branches = self.grid.branch.numBranches()
+		num_dcbranches = self.grid.dcbranch.numBranches()
+		num_nodes = self.grid.node.numNodes()
 
 
         # AC Branches
@@ -1466,8 +1472,9 @@ class Results(object):
                 if area_from == area_to:
                     branch_value[i] = allareas.index(area_from)
                 branch_value = np.asarray(branch_value)
-            branch_colormap = cm.prism
-            branch_colormap.set_under('k')
+			branch_colormap = plt.get_cmap('hsv')
+			#branch_colormap = cm.prism
+			branch_colormap.set_under('k')
             filter_branch = [0,len(allareas)]
             branch_label = 'Branch area'
             branch_plot_colorbar = False
@@ -1487,9 +1494,19 @@ class Results(object):
                 filter_branch = [0,np.round(maxcap,-2)+100]
         elif branchtype=='flow':
             avgflow = self.getAverageBranchFlows(timeMaxMin)[2]
-            branch_value = np.asarray(avgflow)
-            branch_colormap = plt.get_cmap('hot')
-            branch_label = 'Branch flow'
+			if 'c' in flow_style:
+				branch_value = np.asarray(avgflow)
+				branch_colormap = plt.get_cmap('hot')
+			else:
+				branch_value = np.asarray([0.5]*num_branches)
+				branch_colormap = cm.gray
+				branch_plot_colorbar = False
+			if 't' in flow_style:
+				avgavgflow = np.mean(avgflow)
+				lwidths = [2*f/avgavgflow for f in avgflow]        
+			branch_label = 'Branch flow'
+            #branch_value = np.asarray(avgflow)
+            #branch_colormap = plt.get_cmap('hot')
         elif branchtype=='sensitivity':
             branch_value = np.zeros(num_branches)
             avgsense = self.getAverageBranchSensitivity(timeMaxMin)
@@ -1516,6 +1533,7 @@ class Results(object):
         x2, y2 = m(branch_lon2,branch_lat2)
 
         ls = [[(x1[i],y1[i]),(x2[i],y2[i])] for i in range(len(x1))]
+		#ls = [[(x1[i],y1[i]),(x2[i],y2[i])] for i in range(num_branches)]
         line_segments_ac = mpl.collections.LineCollection(
                 ls, linewidths=lwidths,cmap=branch_colormap)
     
@@ -1527,6 +1545,22 @@ class Results(object):
       
 
         # DC Branches
+		lwidths = [2] * num_dcbranches
+		branch_plot_colorbar = False
+		branch_value = np.asarray([0.1] * num_branches)
+		branch_colormap = cm.winter
+		
+		if dcbranchtype == 'flow':
+			avgTot = self.getAverageBranchFlows(timeMaxMin,False)[2]
+			if 'c' in flow_style:
+				branch_value = np.asarray(avgTot)
+				branch_colormap = plt.get_cmap('hot')
+				branch_plot_colorbar = True
+			if 't' in flow_style:
+				avgavgflow = np.mean(avgTot)
+				lwidths = [2*f/avgavgflow for f in avgTot]        
+			branch_label = 'Branch flow'
+			
         idx_from = data.dcBranchFromNodeIdx()
         idx_to = data.dcBranchToNodeIdx()
         branch_lat1 = [data.node.lat[i] for i in idx_from]        
@@ -1537,9 +1571,13 @@ class Results(object):
         x1, y1 = m(branch_lon1,branch_lat1)
         x2, y2 = m(branch_lon2,branch_lat2)
         ls = [[(x1[i],y1[i]),(x2[i],y2[i])] for i in range(len(x1))]
-        line_segments_dc = mpl.collections.LineCollection(
-                ls, linewidths=2,colors='blue')
-    
+		line_segments_dc = mpl.collections.LineCollection(
+                ls, linewidths=lwidths,colors='blue')
+        #line_segments_dc = mpl.collections.LineCollection(
+        #        ls, linewidths=2,colors='blue')
+		if filter_branch is not None:
+			line_segments_dc.set_clim(filter_branch)
+		line_segments_dc.set_array(branch_value)
         ax.add_collection(line_segments_dc)
         
         # Nodes
@@ -1560,6 +1598,10 @@ class Results(object):
             node_label = 'Nodal price'
             node_value = avgprice
             node_colormap = cm.jet
+		elif nodetype=='lmp':
+			node_value = self.getAverageNodalPrices(timeMaxMin)
+			node_label = 'Locational marginal price'
+			node_colormap = cm.jet
         elif nodetype=='energybalance':
             avg_energybalance = self.getAverageEnergyBalance(timeMaxMin)
             node_label = 'Nodal energy balance'
@@ -1577,8 +1619,12 @@ class Results(object):
         
 
         x, y = m(data.node['lon'].tolist(),data.node['lat'].tolist())
-        sc=m.scatter(x,y,marker='o',c=node_value, cmap=node_colormap,
-                     zorder=2,s=dotsize)           
+		if nodetype=='lmp':
+			sc = plt.hexbin(x, y, gridsize=20, C=node_value, 
+							cmap=node_colormap)
+		else:
+			sc=m.scatter(x,y,marker='o',c=node_value, cmap=node_colormap,
+						 zorder=2,s=dotsize)            
         #sc.cmap.set_under('dimgray')
         #sc.cmap.set_over('dimgray')
         if filter_node is not None:

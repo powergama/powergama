@@ -933,7 +933,7 @@ class GridData(object):
 			plt.title('Load distribution')
 			
 
-	 def plotRelativeGenerationCapacity(self,tech,show_node_labels=False,latlon=None,
+	def plotRelativeGenerationCapacity(self,tech,show_node_labels=False,latlon=None,
 									 dotsize=40,draw_par_mer=False,
 									 colours=True,showTitle=True):
 		'''
