@@ -44,12 +44,12 @@ class GridData(object):
 
     # Required fields for investment analysis input data    
     keys_sipdata = {
-        'node': ['id', 'lat', 'lon','offshore','type',
+        'node': ['id','area', 'lat', 'lon','offshore','type',
                  'existing','cost_scaling'],
         'branch': ['node_from','node_to','capacity',
                    'expand','distance','cost_scaling',
                    'type'],
-        'generator': ['node','pmax','pmin',
+        'generator': ['node','type','pmax','pmin',
                       'fuelcost','fuelcost_ref','pavg',
                       'inflow_fac','inflow_ref'],
         'consumer': ['node', 'demand_avg', 'demand_ref']
@@ -637,7 +637,7 @@ class GridData(object):
         
     def getAllGeneratorTypes(self):
         '''Return list of generator types included in the grid model'''
-        gentypes = self.generator['gentype']
+        gentypes = self.generator.type
         alltypes = []
         for ge in gentypes:
             if ge not in alltypes:
@@ -646,14 +646,14 @@ class GridData(object):
     
     def getConsumerAreas(self):
         """List of areas for each consumer"""
-        areas = [self.node['area'][self.node['id']==n].tolist()[0]
+        areas = [self.node.area[self.node['id']==n].tolist()[0]
                     for n in self.consumer['node']]
         return areas
     
     def getGeneratorAreas(self):
         """List of areas for each generator"""
-        areas = [self.node['area'][self.node['id']==n].tolist()[0]
-                    for n in self.generator['node']]
+        areas = [self.node.area[self.node['id']==n].tolist()[0]
+                    for n in self.generator.node]
         return areas
     
     def getConsumersPerArea(self):
@@ -673,7 +673,7 @@ class GridData(object):
         generators = {}
         generator_areas = self.getGeneratorAreas()
         for idx_gen in self.generator.index.tolist():
-            gtype = self.generator['type'][idx_gen]
+            gtype = self.generator.type[idx_gen]
             area_name = generator_areas[idx_gen]
             if area_name in generators:
                 if gtype in generators[area_name]:
@@ -806,348 +806,4 @@ class GridData(object):
             distance.append(R * c)
         return distance
 
-    def plotRelativeLoadDistribution(self,show_node_labels=False,latlon=None,
-                                     dotsize=40,draw_par_mer=False,
-                                     colours=True,showTitle=True):
-        '''
-        Plots the relative input load distribution.
-        
-        Parameters
-        ----------
-        show_node_labels : boolean
-            whether to show node names (true/false)
-        latlon : list of four floats
-            map area [lat_min, lon_min, lat_max, lon_max]
-        draw_par_mer : boolean
-            whether to draw parallels and meridians on map
-        colours : boolean
-            whether to draw the map in colours or black and white
-            
-        '''
-        
-        if latlon is None:
-            lat_max =  max(self.node.lat)+1
-            lat_min =  min(self.node.lat)-1
-            lon_max =  max(self.node.lon)+1
-            lon_min =  min(self.node.lon)-1
-        else:
-            lat_min = latlon[0]
-            lon_min = latlon[1]
-            lat_max = latlon[2]
-            lon_max = latlon[3]
-        
-        # Use the average latitude as latitude of true scale
-        lat_truescale = numpy.mean(self.node.lat)
-                
-        m = Basemap(resolution='l',projection='merc',\
-                      lat_ts=lat_truescale, \
-                      llcrnrlon=lon_min, llcrnrlat=lat_min,\
-                      urcrnrlon=lon_max ,urcrnrlat=lat_max, \
-                      anchor='W')
-        
-        # Draw coastlines, meridians and parallels.
-        m.drawcoastlines()
-        m.drawcountries(zorder=0)
-        if colours:
-            m.fillcontinents(color='coral',lake_color='aqua',zorder=0)
-            m.drawmapboundary(fill_color='aqua')
-        else:
-            m.fillcontinents(zorder=0)
-            m.drawmapboundary()
-        
-        if draw_par_mer:
-            m.drawparallels(numpy.arange(_myround(lat_min,10,'floor'),
-                _myround(lat_max,10,'ceil'),10),
-                labels=[1,1,0,0])
-
-            m.drawmeridians(numpy.arange(_myround(lon_min,10,'floor'),
-                _myround(lon_max,10,'ceil'),10),
-                labels=[0,0,0,1])
-        
-        #AC Branches
-        idx_from = self.branch.node_fromIdx(self.node)
-        idx_to = self.branch.node_toIdx(self.node)
-        branch_lat1 = [self.node.lat[i] for i in idx_from]        
-        branch_lon1 = [self.node.lon[i] for i in idx_from]        
-        branch_lat2 = [self.node.lat[i] for i in idx_to]        
-        branch_lon2 = [self.node.lon[i] for i in idx_to]
-        
-        x1, y1 = m(branch_lon1,branch_lat1)
-        x2, y2 = m(branch_lon2,branch_lat2)
-        
-        ls = [[(x1[i],y1[i]),(x2[i],y2[i])] for i in range(len(x1))]
-        line_segments_ac = mpl.collections.LineCollection(
-                ls, linewidths=2, colors='k')
-        
-        ax=plt.axes()    
-        ax.add_collection(line_segments_ac)
-        
-        #DC Branches
-        idx_from = self.dcbranch.node_fromIdx(self.node)
-        idx_to = self.dcbranch.node_toIdx(self.node)
-        branch_lat1 = [self.node.lat[i] for i in idx_from]        
-        branch_lon1 = [self.node.lon[i] for i in idx_from]        
-        branch_lat2 = [self.node.lat[i] for i in idx_to]        
-        branch_lon2 = [self.node.lon[i] for i in idx_to]
-        
-        x1, y1 = m(branch_lon1,branch_lat1)
-        x2, y2 = m(branch_lon2,branch_lat2)
-        ls = [[(x1[i],y1[i]),(x2[i],y2[i])] for i in range(len(x1))]
-        if colours:
-            dcColour = 'b'
-        else:
-            dcColour = 'k'
-        line_segments_dc = mpl.collections.LineCollection(
-                ls, linewidths=2, colors=dcColour)
-
-        ax.add_collection(line_segments_dc)
-        
-        #Loads
-        x, y = m(self.node.lon,self.node.lat)
-        loadByNode = OrderedDict([(k,0) for k in self.node.name])
-        consNodes = self.consumer.node
-        consValues = self.consumer.load
-        
-        for idx in range(len(consNodes)):
-            loadByNode[consNodes[idx]] += consValues[idx]
-        
-        avgLoad = numpy.mean(consValues)
-        relativeLoads = [dotsize*(l[1]/avgLoad) for l in loadByNode.items()]        
-        
-        if colours:
-            loadColour = 'b'
-        else:
-            loadColour = 'w'
-        m.scatter(x, y, marker='o', c=loadColour, zorder=2, s=relativeLoads)
-        
-        # Show names of nodes
-        if show_node_labels:
-            labels = self.node.name
-            x1,x2,y1,y2 = plt.axis()
-            offset_x = (x2-x1)/50
-            for label, xpt, ypt in zip(labels, x, y):
-                if xpt > x1 and xpt < x2 and ypt > y1 and ypt < y2:
-                    plt.text(xpt+offset_x, ypt, label)
-        
-        if showTitle:
-            plt.title('Load distribution')
-            
-
-    def plotRelativeGenerationCapacity(self,tech,show_node_labels=False,latlon=None,
-                                     dotsize=40,draw_par_mer=False,
-                                     colours=True,showTitle=True):
-        '''
-        Plots the relative input generation capacity.
-        
-        Parameters
-        ----------
-        tech : string
-            production technology to be plotted
-        show_node_labels : boolean
-            whether to show node names (true/false)
-        latlon : list of four floats
-            map area [lat_min, lon_min, lat_max, lon_max]
-        draw_par_mer : boolean
-            whether to draw parallels and meridians on map
-        colours : boolean
-            whether to draw the map in colours or black and white
-            
-        '''
-        
-        
-        genTypes = self.getAllGeneratorTypes()
-        if tech not in genTypes:
-            raise Exception('No generators classified as ' + tech + '.\n'
-                            'Generator classifications: ' + 
-                            str(genTypes)[1:-1])
-        
-        if latlon is None:
-            lat_max =  max(self.node.lat)+1
-            lat_min =  min(self.node.lat)-1
-            lon_max =  max(self.node.lon)+1
-            lon_min =  min(self.node.lon)-1
-        else:
-            lat_min = latlon[0]
-            lon_min = latlon[1]
-            lat_max = latlon[2]
-            lon_max = latlon[3]
-        
-        # Use the average latitude as latitude of true scale
-        lat_truescale = numpy.mean(self.node.lat)
-                
-        m = Basemap(resolution='l',projection='merc',\
-                      lat_ts=lat_truescale, \
-                      llcrnrlon=lon_min, llcrnrlat=lat_min,\
-                      urcrnrlon=lon_max ,urcrnrlat=lat_max, \
-                      anchor='W')
-        
-        # Draw coastlines, meridians and parallels.
-        m.drawcoastlines()
-        m.drawcountries(zorder=0)
-        if colours:
-            m.fillcontinents(color='coral',lake_color='aqua',zorder=0)
-            m.drawmapboundary(fill_color='aqua')
-        else:
-            m.fillcontinents(zorder=0)
-            m.drawmapboundary()
-        
-        if draw_par_mer:
-            m.drawparallels(numpy.arange(_myround(lat_min,10,'floor'),
-                _myround(lat_max,10,'ceil'),10),
-                labels=[1,1,0,0])
-
-            m.drawmeridians(numpy.arange(_myround(lon_min,10,'floor'),
-                _myround(lon_max,10,'ceil'),10),
-                labels=[0,0,0,1])        
-        
-        num_branches = self.branch.numBranches()
-        lwidths = [2]*num_branches
-        
-        #AC Branches
-        idx_from = self.branch.node_fromIdx(self.node)
-        idx_to = self.branch.node_toIdx(self.node)
-        branch_lat1 = [self.node.lat[i] for i in idx_from]        
-        branch_lon1 = [self.node.lon[i] for i in idx_from]        
-        branch_lat2 = [self.node.lat[i] for i in idx_to]        
-        branch_lon2 = [self.node.lon[i] for i in idx_to]
-        
-        x1, y1 = m(branch_lon1,branch_lat1)
-        x2, y2 = m(branch_lon2,branch_lat2)
-        
-        ls = [[(x1[i],y1[i]),(x2[i],y2[i])] for i in range(len(x1))]
-        line_segments_ac = mpl.collections.LineCollection(
-                ls, linewidths=lwidths, colors='k')
-        
-        ax=plt.axes()    
-        ax.add_collection(line_segments_ac)
-        
-        #DC Branches
-        idx_from = self.dcbranch.node_fromIdx(self.node)
-        idx_to = self.dcbranch.node_toIdx(self.node)
-        branch_lat1 = [self.node.lat[i] for i in idx_from]        
-        branch_lon1 = [self.node.lon[i] for i in idx_from]        
-        branch_lat2 = [self.node.lat[i] for i in idx_to]        
-        branch_lon2 = [self.node.lon[i] for i in idx_to]
-        
-        x1, y1 = m(branch_lon1,branch_lat1)
-        x2, y2 = m(branch_lon2,branch_lat2)
-        ls = [[(x1[i],y1[i]),(x2[i],y2[i])] for i in range(len(x1))]
-        if colours:
-            dcColour = 'b'
-        else:
-            dcColour = 'k'
-        line_segments_dc = mpl.collections.LineCollection(
-                ls, linewidths=2, colors=dcColour)
-
-        ax.add_collection(line_segments_dc)
-        
-        #Generators
-        x, y = m(self.node.lon,self.node.lat)
-        generators = self.getGeneratorsPerType()[tech]
-        genNode = self.generator.node
-        genCapacity = self.generator.prodMax
-        capByNode = OrderedDict([(k,0) for k in self.node.name])
-        totCap = 0
-        
-        for gen in generators:
-            capByNode[genNode[gen]] += genCapacity[gen]
-            totCap += genCapacity[gen]
-        
-        
-        avgCap = totCap/len(generators)
-        relativeCap = [dotsize*(g[1]/avgCap) for g in capByNode.items()]        
-        
-        if colours:
-            loadColour = 'b'
-        else:
-            loadColour = 'w'
-        m.scatter(x, y, marker='o', c=loadColour, zorder=2, s=relativeCap)
-        
-        # Show names of nodes
-        if show_node_labels:
-            labels = self.node.name
-            x1,x2,y1,y2 = plt.axis()
-            offset_x = (x2-x1)/50
-            for label, xpt, ypt in zip(labels, x, y):
-                if xpt > x1 and xpt < x2 and ypt > y1 and ypt < y2:
-                    plt.text(xpt+offset_x, ypt, label)
-        
-        if showTitle:
-            plt.title(tech + ' capacity distribution') 
-            
-            
-    def plotGenerationScatter(self,area,tech=[],annotations=True):
-        '''
-        Scatter plot of generation capacity and correlation of inflow
-        with load.
-        
-        Parameters
-        ----------
-        area : string
-            area to plot
-        tech : list of strings
-            production technologies to plot. Empty list = all
-        annotations: boolean
-            whether to plot annotations
-        '''
-        
-        if len(tech) > 0:
-            genTypes = self.getAllGeneratorTypes()
-            for gt in tech:
-                if gt not in genTypes:
-                    raise Exception('No generators classified as ' + gt + 
-                                    '.\n Generator classifications: ' + 
-                                    str(genTypes)[1:-1])
-        else:
-            tech = self.getAllGeneratorTypes()
-        
-        genByType = self.getGeneratorsPerAreaAndType()[area]
-        detailedGen = {}
-        for gt in genByType.keys():
-            if gt in tech:
-                detailedGen[gt] = {}
-                genIdx = genByType[gt]
-                for i in genIdx:
-                    capacity = self.generator.prodMax[i]
-                    infProfile = self.generator.inflow_profile[i]
-                    if infProfile in detailedGen[gt]:
-                        detailedGen[gt][infProfile] += capacity
-                    else:
-                        detailedGen[gt][infProfile] = capacity
-        
-        cons = self.consumer.load_profile[self.getConsumersPerArea()[area][0]]
-        demandProfile = self.demandProfiles[cons]
-        x, y, label, size, colCoor, tickLabel = [], [], [], [], [], []
-        mainCount = 0
-        for gt in detailedGen.keys():
-            tickLabel.append(gt)
-            subCount = 0
-            for infProf in detailedGen[gt].keys():
-                if infProf == 'const':
-                    y.append(1)
-                else:
-                    y.append(numpy.corrcoef(self.inflowProfiles[infProf],
-                                            demandProfile)[0,1])
-                x.append(mainCount)
-                label.append(infProf)
-                size.append(detailedGen[gt][infProf])
-                subCount += 1
-            mainCount += 1
-        
-        avgSize = numpy.mean(size)
-        size = [300*s/avgSize for s in size]
-        colCoor = [c/mainCount for c in x]
-        colours = mpl.cm.hsv(colCoor)
-        plt.scatter(x,y,s=size,c=colours,alpha=0.5)
-        if annotations:        
-            for label, x, y in zip(label, x, y):
-                plt.annotate(label, xy = (x, y), xytext = (20, 0),
-                             textcoords = 'offset points', ha = 'left', 
-                             va = 'bottom',
-                             arrowprops = dict(arrowstyle = '-', 
-                                               connectionstyle = 'arc3,rad=0'))
-                                          
-        plt.ylabel('Correlation coefficient of inflow to load')
-        plt.xlim(xmin = -0.5, xmax = mainCount + 0.5)
-        plt.xticks(range(mainCount + 1), tickLabel)
         

@@ -1371,7 +1371,7 @@ class Results(object):
 
         
     def plotMapGrid(self,nodetype='',branchtype='',dcbranchtype='',
-                    show_node_labels=False,latlon=None,timeMaxMin=None,
+                    show_node_labels=False,flow_style='c',latlon=None,timeMaxMin=None,
                     dotsize=40, filter_node=None, filter_branch=None,
                     draw_par_mer=False,showTitle=True):
         '''
@@ -1410,7 +1410,7 @@ class Results(object):
         if timeMaxMin is None:
             timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
 
-        fig = plt.figure()
+        plt.figure()
         data = self.grid
         #res = self
         
@@ -1451,9 +1451,9 @@ class Results(object):
                 _myround(lon_max,10,'ceil'),10),
                 labels=[0,0,0,1])
         
-        num_branches = self.grid.branch.numBranches()
-        num_dcbranches = self.grid.dcbranch.numBranches()
-        num_nodes = self.grid.node.numNodes()
+        num_branches = len(self.grid.branch)
+        num_dcbranches = len(self.grid.dcbranch)
+        num_nodes = len(self.grid.node)
 
 
         # AC Branches
@@ -1545,7 +1545,8 @@ class Results(object):
       
 
         # DC Branches
-        lwidths = [2] * num_dcbranches
+        lwidths = [2] * 1
+        #lwidths = [2] * num_dcbranches
         branch_plot_colorbar = False
         branch_value = np.asarray([0.1] * num_branches)
         branch_colormap = cm.winter
@@ -1864,7 +1865,378 @@ class Results(object):
         plt.colorbar(cax=cbar_ax)
         plt.show()
         
+    def plotRelativeLoadDistribution(self,show_node_labels=False,latlon=None,
+                                     dotsize=40,draw_par_mer=False,
+                                     colours=True,showTitle=True):
+        '''
+        Plots the relative input load distribution.
         
+        Parameters
+        ----------
+        show_node_labels : boolean
+            whether to show node names (true/false)
+        latlon : list of four floats
+            map area [lat_min, lon_min, lat_max, lon_max]
+        draw_par_mer : boolean
+            whether to draw parallels and meridians on map
+        colours : boolean
+            whether to draw the map in colours or black and white
+            
+        '''
+        # basemap is only used here, so to allow using powergama without
+        # basemap installed, it is best to put import statement here.
+        from mpl_toolkits.basemap import Basemap
+        from collections import OrderedDict
+        
+        plt.figure()
+        
+        data = self.grid
+        
+        num_branches = len(self.grid.branch)
+        num_dcbranches = len(self.grid.dcbranch)
+        num_nodes = len(self.grid.node)
+        
+        if latlon is None:
+            lat_max =  max(data.node.lat)+1
+            lat_min =  min(data.node.lat)-1
+            lon_max =  max(data.node.lon)+1
+            lon_min =  min(data.node.lon)-1
+        else:
+            lat_min = latlon[0]
+            lon_min = latlon[1]
+            lat_max = latlon[2]
+            lon_max = latlon[3]
+        
+        # Use the average latitude as latitude of true scale
+        lat_truescale = np.mean(data.node.lat)
+                
+        m = Basemap(resolution='l',projection='merc',\
+                      lat_ts=lat_truescale, \
+                      llcrnrlon=lon_min, llcrnrlat=lat_min,\
+                      urcrnrlon=lon_max ,urcrnrlat=lat_max, \
+                      anchor='W')
+        
+        # Draw coastlines, meridians and parallels.
+        m.drawcoastlines()
+        m.drawcountries(zorder=0)
+        if colours:
+            m.fillcontinents(color='coral',lake_color='aqua',zorder=0)
+            m.drawmapboundary(fill_color='aqua')
+        else:
+            m.fillcontinents(zorder=0)
+            m.drawmapboundary()
+        
+        if draw_par_mer:
+            m.drawparallels(np.arange(_myround(lat_min,10,'floor'),
+                _myround(lat_max,10,'ceil'),10),
+                labels=[1,1,0,0])
+
+            m.drawmeridians(np.arange(_myround(lon_min,10,'floor'),
+                _myround(lon_max,10,'ceil'),10),
+                labels=[0,0,0,1])
+        
+        #AC Branches
+        idx_from = data.branchFromNodeIdx()
+        idx_to = data.branchToNodeIdx()
+        branch_lat1 = [data.node.lat[i] for i in idx_from]        
+        branch_lon1 = [data.node.lon[i] for i in idx_from]        
+        branch_lat2 = [data.node.lat[i] for i in idx_to]        
+        branch_lon2 = [data.node.lon[i] for i in idx_to]
+        
+        x1, y1 = m(branch_lon1,branch_lat1)
+        x2, y2 = m(branch_lon2,branch_lat2)
+        
+        ls = [[(x1[i],y1[i]),(x2[i],y2[i])] for i in range(len(x1))]
+        line_segments_ac = mpl.collections.LineCollection(
+                ls, linewidths=2, colors='k')
+        
+        ax=plt.axes()    
+        ax.add_collection(line_segments_ac)
+        
+        #DC Branches
+        idx_from = data.dcBranchFromNodeIdx()
+        idx_to = data.dcBranchToNodeIdx()
+        branch_lat1 = [data.node.lat[i] for i in idx_from]        
+        branch_lon1 = [data.node.lon[i] for i in idx_from]        
+        branch_lat2 = [data.node.lat[i] for i in idx_to]        
+        branch_lon2 = [data.node.lon[i] for i in idx_to]
+        
+        x1, y1 = m(branch_lon1,branch_lat1)
+        x2, y2 = m(branch_lon2,branch_lat2)
+        ls = [[(x1[i],y1[i]),(x2[i],y2[i])] for i in range(len(x1))]
+        if colours:
+            dcColour = 'b'
+        else:
+            dcColour = 'k'
+        line_segments_dc = mpl.collections.LineCollection(
+                ls, linewidths=2, colors=dcColour)
+
+        ax.add_collection(line_segments_dc)
+        
+        #Loads
+        x, y = m(data.node['lon'].tolist(),data.node['lat'].tolist())
+        loadByNode = OrderedDict([(k,0) for k in data.node['id']])
+        consNodes = data.consumer.node
+        consValues = data.consumer.demand_avg
+        
+        for idx in range(len(consNodes)):
+            loadByNode[consNodes[idx]] += consValues[idx]
+        
+        avgLoad = np.mean(consValues)
+        relativeLoads = [dotsize*(l[1]/avgLoad) for l in loadByNode.items()]        
+        
+        if colours:
+            loadColour = 'b'
+        else:
+            loadColour = 'w'
+        m.scatter(x, y, marker='o', c=loadColour, zorder=2, s=relativeLoads)
+        
+        # Show names of nodes
+        if show_node_labels:
+            labels = data.node['id']
+            x1,x2,y1,y2 = plt.axis()
+            offset_x = (x2-x1)/50
+            for label, xpt, ypt in zip(labels, x, y):
+                if xpt > x1 and xpt < x2 and ypt > y1 and ypt < y2:
+                    plt.text(xpt+offset_x, ypt, label)
+        
+        if showTitle:
+            plt.title('Load distribution')
+    
+    def plotRelativeGenerationCapacity(self,tech,show_node_labels=False,latlon=None,
+                                     dotsize=40,draw_par_mer=False,
+                                     colours=True,showTitle=True):
+        '''
+        Plots the relative input generation capacity.
+        
+        Parameters
+        ----------
+        tech : string
+            production technology to be plotted
+        show_node_labels : boolean
+            whether to show node names (true/false)
+        latlon : list of four floats
+            map area [lat_min, lon_min, lat_max, lon_max]
+        draw_par_mer : boolean
+            whether to draw parallels and meridians on map
+        colours : boolean
+            whether to draw the map in colours or black and white
+            
+        '''
+        
+        # basemap is only used here, so to allow using powergama without
+        # basemap installed, it is best to put import statement here.
+        from mpl_toolkits.basemap import Basemap
+        from collections import OrderedDict
+        
+        data = self.grid
+        
+        plt.figure()
+        
+        num_branches = len(self.grid.branch)
+        num_dcbranches = len(self.grid.dcbranch)
+        num_nodes = len(self.grid.node)    
+        
+        genTypes = data.getAllGeneratorTypes()
+        if tech not in genTypes:
+            raise Exception('No generators classified as ' + tech + '.\n'
+                            'Generator classifications: ' + 
+                            str(genTypes)[1:-1])
+        
+        if latlon is None:
+            lat_max =  max(data.node.lat)+1
+            lat_min =  min(data.node.lat)-1
+            lon_max =  max(data.node.lon)+1
+            lon_min =  min(data.node.lon)-1
+        else:
+            lat_min = latlon[0]
+            lon_min = latlon[1]
+            lat_max = latlon[2]
+            lon_max = latlon[3]
+        
+        # Use the average latitude as latitude of true scale
+        lat_truescale = np.mean(data.node.lat)
+                
+        m = Basemap(resolution='l',projection='merc',\
+                      lat_ts=lat_truescale, \
+                      llcrnrlon=lon_min, llcrnrlat=lat_min,\
+                      urcrnrlon=lon_max ,urcrnrlat=lat_max, \
+                      anchor='W')
+        
+        # Draw coastlines, meridians and parallels.
+        m.drawcoastlines()
+        m.drawcountries(zorder=0)
+        if colours:
+            m.fillcontinents(color='coral',lake_color='aqua',zorder=0)
+            m.drawmapboundary(fill_color='aqua')
+        else:
+            m.fillcontinents(zorder=0)
+            m.drawmapboundary()
+        
+        if draw_par_mer:
+            m.drawparallels(np.arange(_myround(lat_min,10,'floor'),
+                _myround(lat_max,10,'ceil'),10),
+                labels=[1,1,0,0])
+
+            m.drawmeridians(np.arange(_myround(lon_min,10,'floor'),
+                _myround(lon_max,10,'ceil'),10),
+                labels=[0,0,0,1])        
+        
+        lwidths = [2]*num_branches
+        
+        #AC Branches
+        idx_from = data.branchFromNodeIdx()
+        idx_to = data.branchToNodeIdx()
+        branch_lat1 = [data.node.lat[i] for i in idx_from]        
+        branch_lon1 = [data.node.lon[i] for i in idx_from]        
+        branch_lat2 = [data.node.lat[i] for i in idx_to]        
+        branch_lon2 = [data.node.lon[i] for i in idx_to]
+        
+        x1, y1 = m(branch_lon1,branch_lat1)
+        x2, y2 = m(branch_lon2,branch_lat2)
+        
+        ls = [[(x1[i],y1[i]),(x2[i],y2[i])] for i in range(len(x1))]
+        line_segments_ac = mpl.collections.LineCollection(
+                ls, linewidths=lwidths, colors='k')
+        
+        ax=plt.axes()    
+        ax.add_collection(line_segments_ac)
+        
+        #DC Branches
+        idx_from = data.dcBranchFromNodeIdx()
+        idx_to = data.dcBranchToNodeIdx()
+        branch_lat1 = [data.node.lat[i] for i in idx_from]        
+        branch_lon1 = [data.node.lon[i] for i in idx_from]        
+        branch_lat2 = [data.node.lat[i] for i in idx_to]        
+        branch_lon2 = [data.node.lon[i] for i in idx_to]
+        
+        x1, y1 = m(branch_lon1,branch_lat1)
+        x2, y2 = m(branch_lon2,branch_lat2)
+        ls = [[(x1[i],y1[i]),(x2[i],y2[i])] for i in range(len(x1))]
+        if colours:
+            dcColour = 'b'
+        else:
+            dcColour = 'k'
+        line_segments_dc = mpl.collections.LineCollection(
+                ls, linewidths=2, colors=dcColour)
+
+        ax.add_collection(line_segments_dc)
+        
+        #Generators
+        x, y = m(data.node['lon'].tolist(),data.node['lat'].tolist())
+        generators = data.getGeneratorsPerType()[tech]
+        genNode = data.generator.node
+        genCapacity = data.generator.pmax
+        capByNode = OrderedDict([(k,0) for k in data.node.id])
+        totCap = 0
+        
+        for gen in generators:
+            capByNode[genNode[gen]] += genCapacity[gen]
+            totCap += genCapacity[gen]
+        
+        
+        avgCap = totCap/len(generators)
+        relativeCap = [dotsize*(g[1]/avgCap) for g in capByNode.items()]        
+        
+        if colours:
+            loadColour = 'b'
+        else:
+            loadColour = 'w'
+        m.scatter(x, y, marker='o', c=loadColour, zorder=2, s=relativeCap)
+        
+        # Show names of nodes
+        if show_node_labels:
+            labels = data.node.id
+            x1,x2,y1,y2 = plt.axis()
+            offset_x = (x2-x1)/50
+            for label, xpt, ypt in zip(labels, x, y):
+                if xpt > x1 and xpt < x2 and ypt > y1 and ypt < y2:
+                    plt.text(xpt+offset_x, ypt, label)
+        
+        if showTitle:
+            plt.title(tech + ' capacity distribution') 
+            
+            
+    def plotGenerationScatter(self,area,tech=[],dotsize=300, annotations=True):
+        '''
+        Scatter plot of generation capacity and correlation of inflow
+        with load.
+        
+        Parameters
+        ----------
+        area : string
+            area to plot
+        tech : list of strings
+            production technologies to plot. Empty list = all
+        dotsize : integer
+            adjust the size of scatterplots
+        annotations: boolean
+            whether to plot annotations
+        '''
+        data = self.grid
+        
+        plt.figure()
+        
+        if len(tech) > 0:
+            genTypes = data.getAllGeneratorTypes()
+            for gt in tech:
+                if gt not in genTypes:
+                    raise Exception('No generators classified as ' + gt + 
+                                    '.\n Generator classifications: ' + 
+                                    str(genTypes)[1:-1])
+        else:
+            tech = data.getAllGeneratorTypes()
+        
+        genByType = data.getGeneratorsPerAreaAndType()[area]
+        detailedGen = {}
+        for gt in genByType.keys():
+            if gt in tech:
+                detailedGen[gt] = {}
+                genIdx = genByType[gt]
+                for i in genIdx:
+                    capacity = data.generator.pmax[i]
+                    infProfile = data.generator.inflow_ref[i]
+                    if infProfile in detailedGen[gt]:
+                        detailedGen[gt][infProfile] += capacity
+                    else:
+                        detailedGen[gt][infProfile] = capacity
+        
+        cons = data.consumer.demand_ref[data.getConsumersPerArea()[area][0]]
+        demandProfile = data.profiles[cons]
+        x, y, label, size, colCoor, tickLabel = [], [], [], [], [], []
+        mainCount = 0
+        for gt in detailedGen.keys():
+            tickLabel.append(gt)
+            subCount = 0
+            for infProf in detailedGen[gt].keys():
+                if infProf == 'const':
+                    y.append(1)
+                else:
+                    y.append(np.corrcoef(data.profiles[infProf],
+                                            demandProfile)[0,1])
+                x.append(mainCount)
+                label.append(infProf)
+                size.append(detailedGen[gt][infProf])
+                subCount += 1
+            mainCount += 1
+        
+        avgSize = np.mean(size)
+        size = [dotsize*s/avgSize for s in size]
+        colCoor = [c/mainCount for c in x]
+        colours = mpl.cm.hsv(colCoor)
+        plt.scatter(x,y,s=size,c=colours,alpha=0.5)
+        if annotations:        
+            for label, x, y in zip(label, x, y):
+                plt.annotate(label, xy = (x, y), xytext = (20, 0),
+                             textcoords = 'offset points', ha = 'left', 
+                             va = 'bottom',
+                             arrowprops = dict(arrowstyle = '-', 
+                                               connectionstyle = 'arc3,rad=0'))
+                                          
+        plt.ylabel('Correlation coefficient of inflow to load')
+        plt.xlim(xmin = -0.5, xmax = mainCount + 0.5)
+        plt.xticks(range(mainCount + 1), tickLabel)
+   
         
     def _gentypes_ordered_by_fuelcost(self):
         '''Return a list of generator types ordered by their mean fuel cost'''
