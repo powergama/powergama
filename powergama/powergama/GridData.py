@@ -8,7 +8,11 @@ Grid data and time-dependent profiles
 import pandas as pd
 import numpy
 from scipy.sparse import csr_matrix as sparse
-import math
+import math                                 # Used in myround
+import matplotlib.pyplot as plt             
+import matplotlib as mpl                    
+from mpl_toolkits.basemap import Basemap    
+from collections import OrderedDict         #plotRelativeLoadDistribution
 
 
 
@@ -72,7 +76,17 @@ class GridData(object):
         
         self.CSV_SEPARATOR = None
 
-
+	def _myround(x, base=1,method='round'):
+		'''Round to nearest multiple of base'''
+		if method=='round':
+			return int(base * round(float(x)/base))
+		elif method=='floor':
+			return int(base * math.floor(float(x)/base))
+		elif method=='ceil':
+			return int(base * math.ceil(float(x)/base))
+		else:
+			raise
+			
     def readGridData(self,nodes,ac_branches,dc_branches,generators,consumers):
         '''Read grid data from files into data variables'''
         
