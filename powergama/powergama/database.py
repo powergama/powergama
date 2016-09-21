@@ -353,14 +353,18 @@ class Database(object):
         '''Get branch flow at specified branch'''
         con = db.connect(self.filename)
         with con:        
-            cur = con.cursor()
-            cur.execute("SELECT flow FROM Res_Branches "
-                +"WHERE timestep>=? AND timestep<? AND indx=?"
-                +" ORDER BY timestep",
-                (timeMaxMin[0],timeMaxMin[-1],branchindx))
-            rows = cur.fetchall()
-        values = [row[0] for row in rows]        
-        return values
+			cur = con.cursor()
+			if ac:
+				table = "Res_Branches"
+			else:
+				table = "Res_Dcbranches"
+			cur.execute("SELECT flow FROM " + table
+				+" WHERE timestep>=? AND timestep<? AND indx=?"
+				+" ORDER BY timestep",
+				(timeMaxMin[0],timeMaxMin[-1],branchindx))
+			rows = cur.fetchall()
+		values = [row[0] for row in rows]        
+		return values
 
     def getResultBranchFlowAll(self,timeMaxMin):
         '''
