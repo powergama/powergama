@@ -217,7 +217,188 @@ class GridData(object):
                 storagevalue_time,timerange)
             self.storagevalue_filling = self._readStoragevaluesFromFile(
                 storagevalue_filling)        
-        return    
+        return  
+    
+    
+    def _sample_kmeans(self, X, samplesize):
+        """
+        K-means is a centroid based algorithm. It clusters datapoints
+        into N centroids. The importance/weight of each time series is 
+        curretly only based on its absoulute values.
+        
+        Input:
+        Weighted time series wrt max capacity.
+        
+        Output:
+        New clustered time series with e.g. N=200 time steps
+        (OR time step index to closest original?)
+        """
+        import time
+        import numpy as np
+        import pandas as pd
+        from sklearn.cluster import KMeans
+        
+        k_means = KMeans(init='k-means++', n_clusters=samplesize, n_init=10)
+        t0 = time.time()
+        k_means.fit(X)
+        t_batch = time.time() - t0
+        print("\n Calculation time for kmeans: ", t_batch, " seconds \n")
+        k_means_labels = k_means.labels_    # which cluster nr it belongs to
+        k_means_cluster_centers = pd.DataFrame(k_means.cluster_centers_)
+        k_means_cluster_centers.columns = X.columns.copy()
+        k_means_labels_unique, X_idx = np.unique(k_means_labels, return_index=True)        
+
+        return k_means_cluster_centers, X_idx
+        
+    def _sample_mmatching(self, X, samplesize):
+        """
+        The idea is to make e.g. 10000 randomsample-sets of size=samplesize 
+        from the originial datasat X. 
+        
+        Choose the sampleset with the lowest objective:
+        MINIMIZE [(meanSample - meanX)^2 + (stdvSample - stdvX)^2...]
+        
+        in terms of stitistical measures
+        
+        TODO: finish this algorithm
+        """
+        
+        return
+    
+    def _sample_meanshift(self, X, samplesize):
+        """
+        It is a centroid-based algorithm, which works by updating candidates 
+        for centroids to be the mean of the points within a given region. 
+        These candidates are then filtered in a post-processing stage to 
+        eliminate near-duplicates to form the final set of centroids.
+        
+        TODO: finish this algorithm
+        """
+        import numpy as np
+        from sklearn.cluster import MeanShift, estimate_bandwidth
+    
+        # The following bandwidth can be automatically detected using
+        bandwidth = estimate_bandwidth(X, quantile=0.2, n_samples=samplesize)
+        
+        ms = MeanShift(bandwidth=bandwidth, bin_seeding=True)
+        ms.fit(X)
+        labels = ms.labels_
+        cluster_centers = ms.cluster_centers_
+        
+        labels_unique = np.unique(labels)
+        n_clusters_ = len(labels_unique)
+        
+        print("number of estimated clusters : %d" % n_clusters_)
+        
+        return cluster_centers
+    
+    def _sample_latinhypercube(self, X, samplesize):
+        """
+        lhs(n, [samples, criterion, iterations])
+    
+        n:          an integer that designates the number of factors (required)
+        samples:    an integer that designates the number of sample points to generate 
+                    for each factor (default: n) 
+        criterion:  a string that tells lhs how to sample the points (default: None,  
+                    which simply randomizes the points within the intervals):
+                    “center” or “c”: center the points within the sampling intervals
+                    “maximin” or “m”: maximize the minimum distance between points, but place 
+                              the point in a randomized location within its interval
+                    “centermaximin” or “cm”: same as “maximin”, but centered within the intervals
+                    “correlation” or “corr”: minimize the maximum correlation coefficient
+                    
+        TODO: finish this algorithm. May be necessary to fit Kernel Density and not normal distr?
+        """
+        from pyDOE import lhs
+        from scipy.stats.distributions import norm
+        X_rows = X.shape[0]; X_cols = X.shape[1]
+        X_mean = X.mean(); X_std = X.std()
+        lhX = lhs( X_cols , samples=samplesize , criterion='center' )
+        kernelDensity=False
+        if kernelDensity:
+            # Fit data with kernel density
+            from sklearn.neighbors.kde import KernelDensity
+            kde = KernelDensity(kernel='gaussian', bandwidth=0.2).fit(X)
+            kde.score_samples(X)
+            kde_sample = kde.sample(samplesize)     # random sampling (TODO: fit to latin hypercube sample)
+        else:
+            # Fit data with normal distribution
+            for i in range(X_rows):
+                lhX[:,i] = norm(loc=X_mean[i] , scale=X_std[i]).ppf(lhX[:,i])
+        return lhX
+
+
+    def sampleProfileData(self, sampling_method, samplesize ):
+        """
+        Collect time series in absoulute values/magnitude and use
+        a proper sampling/clustering technique.
+        
+        kmeans, mmatching, latinhypercube
+        
+        Returns:
+        grid_data.timerange (or grid_data.profiles?)
+        """
+        
+        # Multiply time series for load and VRES with their respective 
+        # maximum capacities in order to get the correct clusters/samples
+        
+        X = self.profiles.copy()
+        for k,row in self.generator.iterrows():
+            pmax = row['pmax']
+            ref = row['inflow_ref']
+            X[ref] = self.profiles[ref] * pmax
+        
+        for k,row in self.consumer.iterrows():
+            pmax = row['demand_avg']
+            ref = row['demand_ref']
+            X[ref] = self.profiles[ref] * pmax
+    
+        
+        # Sampling and clustering methods.         
+        if sampling_method == "kmeans":
+            print("Using k-means...")
+            centroids, X_idx = self._sample_kmeans(X, samplesize)
+            self.timerange = list(X_idx)    # OBS: more or less random
+            timedelta = 1.0
+            # convert back to relative values
+            for k,row in self.generator.iterrows():
+                pmax = row['pmax']
+                ref = row['inflow_ref']
+                if pmax == 0:
+                    centroids[ref] = 0
+                else:
+                    centroids[ref] = centroids[ref] / pmax
+            for k,row in self.consumer.iterrows():
+                pmax = row['demand_avg']
+                ref = row['demand_ref']
+                if pmax == 0:
+                    centroids[ref] = 0
+                else:
+                    centroids[ref] = centroids[ref] / pmax
+            self.profiles = centroids
+            self.profiles['const'] = 1
+            #self.readProfileData(filename = "data/profiles.csv",
+            #                 timerange = timerange,
+            #                 timedelta = timedelta)
+        elif sampling_method == "mmatching":
+            print("Using moment matching...")
+        elif sampling_method == "meanshift":
+            print("Using Mean-Shift...")
+            X_sample = self._sample_meanshift(X, samplesize)
+        elif sampling_method == "latinhyper":
+            print("Using Latin-Hypercube...")
+            X_sample = self._sample_latinhypercube(X, samplesize)
+        else:
+            print("Using random sampling (consider changing sampling method!)...")
+            import random
+            random.seed('irpwind')
+            timerange = random.sample(range(8760),samplesize)
+            timedelta = 1.0
+            self.readProfileData(filename = "data/profiles.csv",
+                             timerange = timerange,
+                             timedelta = timedelta)
+                             
+        return
 
     def writeGridDataToFiles(self,prefix):
         '''
