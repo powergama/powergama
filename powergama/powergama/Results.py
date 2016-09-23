@@ -1371,9 +1371,9 @@ class Results(object):
 
         
     def plotMapGrid(self,nodetype='',branchtype='',dcbranchtype='',
-                    show_node_labels=False,flow_style='c',latlon=None,timeMaxMin=None,
+                    show_node_labels=False,flow_style=None,latlon=None,timeMaxMin=None,
                     dotsize=40, filter_node=None, filter_branch=None,
-                    draw_par_mer=False,showTitle=True):
+                    draw_par_mer=False,showTitle=True, colors=True):
         '''
         Plot results to map
         
@@ -1384,7 +1384,7 @@ class Results(object):
         branchtype : string
             "", "capacity", "area", "utilisation", "flow", "sensitivity"
         dcbranchtype : string
-            ""
+            "", "capacity"
         show_node_labels : boolean
             whether to show node names (true/false)
         flow_style : string or list of strings
@@ -1437,10 +1437,13 @@ class Results(object):
         # Draw coastlines, meridians and parallels.
         m.drawcoastlines()
         #m.drawcountries(zorder=0)
-        m.fillcontinents(color='coral',lake_color='aqua',zorder=0)
-        #m.fillcontinents(zorder=0)
-        m.drawmapboundary(fill_color='aqua')
-        #m.drawmapboundary()
+        
+        if colors:
+            m.fillcontinents(color='coral',lake_color='aqua',zorder=0)
+            m.drawmapboundary(fill_color='aqua')
+        else:
+            m.fillcontinents(zorder=0)
+            m.drawmapboundary()
         
         if draw_par_mer:
             m.drawparallels(np.arange(_myround(lat_min,10,'floor'),
@@ -1450,10 +1453,11 @@ class Results(object):
             m.drawmeridians(np.arange(_myround(lon_min,10,'floor'),
                 _myround(lon_max,10,'ceil'),10),
                 labels=[0,0,0,1])
+                
         
-        num_branches = len(self.grid.branch)
-        num_dcbranches = len(self.grid.dcbranch)
-        num_nodes = len(self.grid.node)
+        num_branches = len(data.branch)
+        num_dcbranches = len(data.dcbranch)
+        num_nodes = len(data.node)
 
 
         # AC Branches
@@ -1472,8 +1476,8 @@ class Results(object):
                 if area_from == area_to:
                     branch_value[i] = allareas.index(area_from)
                 branch_value = np.asarray(branch_value)
-            branch_colormap = plt.get_cmap('hsv')
-            #branch_colormap = cm.prism
+#            branch_colormap = plt.get_cmap('hsv')
+            branch_colormap = cm.prism
             branch_colormap.set_under('k')
             filter_branch = [0,len(allareas)]
             branch_label = 'Branch area'
@@ -1484,14 +1488,24 @@ class Results(object):
             branch_colormap = plt.get_cmap('hot')
             branch_label = 'Branch utilisation'
         elif branchtype=='capacity':
-            cap = self.grid.branch.capacity
-            branch_value = np.asarray(cap)
+            cap = data.branch.capacity
+            branch_value = np.asarray([0.5]*num_branches)
+#            branch_value = np.asarray(cap)
             maxcap = np.nanmax(branch_value)
-            branch_colormap = plt.get_cmap('hot')
+            branch_colormap = cm.gray
+            branch_plot_colorbar = False
             branch_label = 'Branch capacity'
             if filter_branch is None:
                 # need an upper limit to avoid crash due to inf capacity
                 filter_branch = [0,np.round(maxcap,-2)+100]
+            if 'c' in flow_style:
+                branch_colormap = plt.get_cmap('hot')
+#            else:
+#                branch_colormap = cm.gray
+#                branch_plot_colorbar = False
+            if 't' in flow_style:
+                avgcap = np.mean(cap)
+                lwidths = [2*f/avgcap for f in cap]     
         elif branchtype=='flow':
             avgflow = self.getAverageBranchFlows(timeMaxMin)[2]
             if 'c' in flow_style:
@@ -1561,9 +1575,21 @@ class Results(object):
                 avgavgflow = np.mean(avgTot)
                 lwidths = [2*f/avgavgflow for f in avgTot]        
             branch_label = 'Branch flow'
+        elif dcbranchtype == 'capacity':
+            cap = [data.branch.capacity[i] for i in range(len(data.branch.capacity)) if data.branch.type[i] == 'dc']
+            branch_value = np.asarray(cap)
+            maxcap = np.nanmax(branch_value)
+            branch_colormap = plt.get_cmap('hot')
+            branch_label = 'Branch capacity'
+            if filter_branch is None:
+                # need an upper limit to avoid crash due to inf capacity
+                filter_branch = [0,np.round(maxcap,-2)+100]
+            if 't' in flow_style:
+                avgcap = np.mean(cap)
+                lwidths = [2*f/avgcap for f in cap]  
             
-        idx_from = data.dcBranchFromNodeIdx()
-        idx_to = data.dcBranchToNodeIdx()
+        idx_from = data.dcBranchFromNodeIdx()   # empty
+        idx_to = data.dcBranchToNodeIdx()       # empty
         branch_lat1 = [data.node.lat[i] for i in idx_from]        
         branch_lon1 = [data.node.lon[i] for i in idx_from]        
         branch_lat2 = [data.node.lat[i] for i in idx_to]        
@@ -1573,7 +1599,7 @@ class Results(object):
         x2, y2 = m(branch_lon2,branch_lat2)
         ls = [[(x1[i],y1[i]),(x2[i],y2[i])] for i in range(len(x1))]
         line_segments_dc = mpl.collections.LineCollection(
-                ls, linewidths=lwidths,colors='blue')
+                ls, linewidths=lwidths,colors='black')
         #line_segments_dc = mpl.collections.LineCollection(
         #        ls, linewidths=2,colors='blue')
         if filter_branch is not None:
@@ -1661,7 +1687,7 @@ class Results(object):
                     plt.text(xpt+offset_x, ypt, label)
         
         if showTitle:
-            plt.title('Nodes (%s) and branches (%s)' %(nodetype,branchtype))
+            plt.title('Nodes %s and branches %s' %(nodetype,branchtype))
         plt.show()
                 
         return

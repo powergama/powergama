@@ -406,10 +406,10 @@ class GridData(object):
             print("Using random sampling (consider changing sampling method!)...")
             import random
             random.seed('irpwind')
-            timerange = random.sample(range(8760),samplesize)
+            self.timerange = random.sample(range(8760),samplesize)
             timedelta = 1.0
             self.readProfileData(filename = "data/profiles.csv",
-                             timerange = timerange,
+                             timerange = self.timerange,
                              timedelta = timedelta)
                              
         return
