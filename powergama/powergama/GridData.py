@@ -659,14 +659,29 @@ class GridData(object):
                 allareas.append(co)
         return allareas
         
-    def getAllGeneratorTypes(self):
+    def getAllGeneratorTypes(self,sort=None):
         '''Return list of generator types included in the grid model'''
-        gentypes = self.generator.gentype
-        alltypes = []
-        for ge in gentypes:
-            if ge not in alltypes:
-                alltypes.append(ge)
-        return alltypes
+        if sort==None:
+            gentypes = self.generator.gentype
+            alltypes = []
+            for ge in gentypes:
+                if ge not in alltypes:
+                    alltypes.append(ge)
+            return alltypes
+        elif sort=='fuelcost':
+            generators = self.getGeneratorsPerType()
+            gentypes = generators.keys()
+            fuelcosts = []
+            for ge in gentypes:
+                gen_this_type = generators[ge]
+                fuelcosts.append(numpy.mean([self.generator.fuelcost[i] 
+                                         for i in gen_this_type]) )
+            sorted_list = [x for (y,x) in 
+                           sorted(zip(fuelcosts,gentypes))]    
+            return sorted_list
+        else:
+            raise Exception("sort must be None (default) or 'fuelcost'")
+            
         
     def getConsumersPerArea(self):
         '''Returns dictionary with indices of loads within each area'''
@@ -787,6 +802,7 @@ class GridData(object):
                                     if b in toArea_branches_pos ]
         return dict(branches_pos=branches_pos,
                     branches_neg=branches_neg)   
+
     
 #data.writeGridDataToFiles("test")
   
