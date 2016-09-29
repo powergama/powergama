@@ -47,7 +47,19 @@ class LpProblem(object):
     solver = None
 
 
-    def __init__(self,grid):
+    def __init__(self,grid,solver='cbc', solver_path=None):
+        '''LP problem formulation
+        
+        Parameters
+        ==========
+        grid : GridData
+            grid data object
+        solver : string (optional)
+            name of solver to use ("cbc" or "gurobi")
+        solver_path :string (optional)
+            path for solver executable
+        '''
+        
         #def lpProblemInitialise(self,grid):
 
         self._grid = grid
@@ -100,6 +112,7 @@ class LpProblem(object):
         self.prob = pulp.LpProblem(
             "PowerGAMA_"+datetime.now().strftime("%Y-%m-%dT%H%M%S"), 
             pulp.LpMinimize)
+        self.initialiseSolver(solver,solver_path)
 
         # Define (and keep track of) LP problem variables
         self._var_generation = [
@@ -306,7 +319,7 @@ class LpProblem(object):
 
 
 
-    def initialiseSolver(self,cbcpath):
+    def initialiseSolver(self,solver='cbc', solver_path=None):
         '''
         Initialise solver - normally not necessary
 		
@@ -315,7 +328,14 @@ class LpProblem(object):
 		cbcpath : string
 		   Path to location of CBC solver
         '''
-        solver = pulp.solvers.COIN_CMD(path=cbcpath)
+        if solver=='cbc':
+            solver = pulp.solvers.COIN_CMD(path=solver_path)
+        elif solver=='gurobi':
+            solver = pulp.solvers.GUROBI_CMD(path=solver_path)
+        else:
+            print("Only CBC and Gurobi solvers. Returning.")
+            raise Exception("Solver must be 'cbc' or 'gurobi'")
+            
         if solver.available():
             print (":) Found solver here: ", solver.available())
             self.solver = solver
@@ -586,7 +606,7 @@ class LpProblem(object):
         Parameters
         ----------
         results : Results
-            PowerGAMA Results object reference (optional)
+            PowerGAMA Results object reference
             
         Returns
         -------
