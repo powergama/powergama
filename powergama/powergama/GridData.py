@@ -70,7 +70,7 @@ class GridData(object):
         self.timeDelta = None
         self.timerange = None
         
-        self.CSV_SEPARATOR = None
+        self.CSV_SEPARATOR = None #automatically detect
 
 
     def readGridData(self,nodes,ac_branches,dc_branches,generators,consumers):
@@ -184,13 +184,13 @@ class GridData(object):
                 
 
     def _readProfileFromFile(self,filename,timerange):          
-        profiles = pd.read_csv(filename,sep=self.CSV_SEPARATOR)
+        profiles = pd.read_csv(filename,sep=self.CSV_SEPARATOR,engine='python')
         profiles = profiles.ix[timerange]
         profiles.index = range(len(timerange))
         return profiles
 
     def _readStoragevaluesFromFile(self,filename):  
-        profiles = pd.read_csv(filename,sep=self.CSV_SEPARATOR)
+        profiles = pd.read_csv(filename,sep=self.CSV_SEPARATOR,engine='python')
         return profiles
         
         

@@ -619,8 +619,6 @@ class LpProblem(object):
         #prob0 = pulp.LpProblem("Grid Market Power - base", pulp.LpMinimize)
         numTimesteps = len(self._grid.timerange)
         for timestep in range(numTimesteps):
-            if timestep>=102:
-                pass
             # update LP problem (inflow, storage, profiles)                     
             self._updateLpProblem(timestep)
           
