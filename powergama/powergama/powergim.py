@@ -665,6 +665,72 @@ class SipModel():
 
         
         
+    def saveDeterministicResults(self,model,excel_file):
+        '''export results to excel file
+        
+        Parameters
+        ==========
+        model : Pyomo model
+            concrete instance of optimisation model
+        excel_file : string
+            name of Excel file to create
+        
+        '''
+        df_branches = pd.DataFrame(columns=['num','from','to',
+                                           'newCables','newCapacity',
+                                           'existingCapacity',
+                                           'type',
+                                           'flow12avg','flow21avg'])
+        df_nodes = pd.DataFrame(columns=['num','newNodes'])
+        df_gen = pd.DataFrame(columns=['num','node','Pavg','curtailed_avg'])
+    
+        for j in model.BRANCH:
+            df_branches.loc[j,'num'] = j
+            df_branches.loc[j,'from'] = model.branchNodeFrom[j]
+            df_branches.loc[j,'to'] = model.branchNodeTo[j]
+            df_branches.loc[j,'newCables'] = model.branchNewCables[j].value
+            df_branches.loc[j,'newCapacity'] = model.branchNewCapacity[j].value
+            df_branches.loc[j,'existingCapacity'] = model.branchExistingCapacity[j]
+            df_branches.loc[j,'type'] = model.branchType[j]
+            df_branches.loc[j,'flow12avg'] = np.mean([
+                model.branchFlow12[(j,t)].value for t in model.TIME])
+            df_branches.loc[j,'flow21avg'] = np.mean([
+                model.branchFlow21[(j,t)].value for t in model.TIME])
+                                    
+    #    for j in model.newNodes:
+        for j in model.NODE:
+            df_nodes.loc[j,'num'] = j
+            df_nodes.loc[j,'newNodes'] = model.newNodes[j].value
+            
+        for j in model.GEN:
+            df_gen.loc[j,'num'] = j
+            df_gen.loc[j,'node'] = model.genNode[j]
+            df_gen.loc[j,'Pavg'] = np.mean([
+                model.generation[(j,t)].value for t in model.TIME])
+            df_gen.loc[j,'curtailed_avg'] = np.mean([
+                model.curtailment[(j,t)].value for t in model.TIME])
+                
+        df_cost = pd.DataFrame(columns=['value','unit'])
+        df_cost.loc['firstStageCost','value'] = (
+            pyo.value(model.firstStageCost)/10**9)
+        df_cost.loc['secondStageCost','value'] = (
+            pyo.value(model.secondStageCost)/10**9)
+        df_cost.loc['firstStageCost','unit'] = '10^9 EUR'
+        df_cost.loc['secondStageCost','unit'] = '10^9 EUR'
+            
+        #model.solutions.load_from(results)
+        print('First stage costs: ', 
+              pyo.value(model.firstStageCost)/10**9, 'bnEUR')
+        print('Second stage costs: ', 
+              pyo.value(model.secondStageCost)/10**9, 'bnEUR')
+
+        writer = pd.ExcelWriter('deterministic_results.xlsx') 
+        df_cost.to_excel(excel_writer=writer,sheet_name="cost") 
+        df_branches.to_excel(excel_writer=writer,sheet_name="branches")     
+        df_nodes.to_excel(excel_writer=writer,sheet_name="nodes") 
+        df_gen.to_excel(excel_writer=writer,sheet_name="generation") 
+
+
     def presentResults(self,csvfile):
         '''load  results and present plots etc
         
@@ -686,6 +752,8 @@ class SipModel():
                          
         return df
         
+        
+            
 
 def sample_kmeans(X, samplesize):
     """K-means sampling

@@ -45,7 +45,7 @@ class GridData(object):
         'branch': ['node_from','node_to','capacity',
                    'expand','distance','cost_scaling',
                    'type'],
-        'generator': ['node','pmax','pmin',
+        'generator': ['desc','node','pmax','pmin',
                       'fuelcost','fuelcost_ref','pavg',
                       'inflow_fac','inflow_ref'],
         'consumer': ['node', 'demand_avg', 'demand_ref']
