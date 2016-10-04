@@ -440,15 +440,30 @@ class GridData(object):
                 allareas.append(co)
         return allareas
         
-    def getAllGeneratorTypes(self):
+    def getAllGeneratorTypes(self,sort=None):
         '''Return list of generator types included in the grid model'''
-        gentypes = self.generator['gentype']
-        alltypes = []
-        for ge in gentypes:
-            if ge not in alltypes:
-                alltypes.append(ge)
-        return alltypes
-    
+        if sort==None:
+            gentypes = self.generator.gentype
+            alltypes = []
+            for ge in gentypes:
+                if ge not in alltypes:
+                    alltypes.append(ge)
+            return alltypes
+        elif sort=='fuelcost':
+            generators = self.getGeneratorsPerType()
+            gentypes = generators.keys()
+            fuelcosts = []
+            for ge in gentypes:
+                gen_this_type = generators[ge]
+                fuelcosts.append(numpy.mean([self.generator.fuelcost[i] 
+                                         for i in gen_this_type]) )
+            sorted_list = [x for (y,x) in 
+                           sorted(zip(fuelcosts,gentypes))]    
+            return sorted_list
+        else:
+            raise Exception("sort must be None (default) or 'fuelcost'")
+
+			
     def getConsumerAreas(self):
         """List of areas for each consumer"""
         areas = [self.node['area'][self.node['id']==n].tolist()[0]
@@ -579,6 +594,7 @@ class GridData(object):
         return dict(branches_pos=branches_pos,
                     branches_neg=branches_neg)   
 
+
     def branchDistances(self,R=6373.0):
         '''computes branch distance from node coordinates, resuls in km
         
@@ -610,5 +626,4 @@ class GridData(object):
             #atan2 better than asin: c = 2 * math.asin(math.sqrt(a))
             distance.append(R * c)
         return distance
-
   

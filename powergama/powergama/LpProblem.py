@@ -47,7 +47,19 @@ class LpProblem(object):
     solver = None
 
 
-    def __init__(self,grid):
+    def __init__(self,grid,solver='cbc', solver_path=None):
+        '''LP problem formulation
+        
+        Parameters
+        ==========
+        grid : GridData
+            grid data object
+        solver : string (optional)
+            name of solver to use ("cbc" or "gurobi")
+        solver_path :string (optional)
+            path for solver executable
+        '''
+        
         #def lpProblemInitialise(self,grid):
 
         self._grid = grid
@@ -100,6 +112,7 @@ class LpProblem(object):
         self.prob = pulp.LpProblem(
             "PowerGAMA_"+datetime.now().strftime("%Y-%m-%dT%H%M%S"), 
             pulp.LpMinimize)
+        self.initialiseSolver(solver,solver_path)
 
         # Define (and keep track of) LP problem variables
         self._var_generation = [
@@ -306,7 +319,7 @@ class LpProblem(object):
 
 
 
-    def initialiseSolver(self,cbcpath):
+    def initialiseSolver(self,solver='cbc', solver_path=None):
         '''
         Initialise solver - normally not necessary
 		
@@ -315,7 +328,14 @@ class LpProblem(object):
 		cbcpath : string
 		   Path to location of CBC solver
         '''
-        solver = pulp.solvers.COIN_CMD(path=cbcpath)
+        if solver=='cbc':
+            solver = pulp.solvers.COIN_CMD(path=solver_path)
+        elif solver=='gurobi':
+            solver = pulp.solvers.GUROBI_CMD(path=solver_path)
+        else:
+            print("Only CBC and Gurobi solvers. Returning.")
+            raise Exception("Solver must be 'cbc' or 'gurobi'")
+            
         if solver.available():
             print (":) Found solver here: ", solver.available())
             self.solver = solver
@@ -341,16 +361,18 @@ class LpProblem(object):
             inflow_profile = self._grid.generator['inflow_ref'][i]
             P_inflow =  (capacity * inflow_factor 
                 * self._grid.profiles[inflow_profile][timestep])
-            self._var_generation[i].lowBound = min(
-                P_inflow+P_storage[i],P_min[i])            
-            if P_storage[i]==0:
+            if i not in self._idx_generatorsWithStorage:
                 '''
                 Don't let P_max limit the output (e.g. solar PV)
                 This won't affect fuel based generators with zero storage,
                 since these should have inflow=p_max in any case
                 '''
+                self._var_generation[i].lowBound = min(P_inflow,P_min[i])
                 self._var_generation[i].upBound = P_inflow
             else:
+                #generator has storage
+                self._var_generation[i].lowBound = min(P_inflow+P_storage[i],
+                                                       P_min[i])
                 self._var_generation[i].upBound = min(P_inflow+P_storage[i],
                                                       P_max[i])
 
@@ -582,7 +604,7 @@ class LpProblem(object):
         Parameters
         ----------
         results : Results
-            PowerGAMA Results object reference (optional)
+            PowerGAMA Results object reference
             
         Returns
         -------
@@ -597,12 +619,21 @@ class LpProblem(object):
         #prob0 = pulp.LpProblem("Grid Market Power - base", pulp.LpMinimize)
         numTimesteps = len(self._grid.timerange)
         for timestep in range(numTimesteps):
+            if timestep>=102:
+                pass
             # update LP problem (inflow, storage, profiles)                     
             self._updateLpProblem(timestep)
           
             # solve the LP problem
             #self.prob.solve(self.solver,use_mps=True)
             self.prob.solve(self.solver)
+            
+            solver_status = self.prob.status            
+            if solver_status != pulp.LpStatusOptimal:
+                print("SOLVE -> status = {}".
+                      format(pulp.LpStatus[solver_status]))
+                raise Exception("t={}: No optimal solution found: {}."
+                                .format(timestep,pulp.LpStatus[solver_status]))
             
             # print result summary            
             #value_costfunction = pulp.value(self.prob.objective)

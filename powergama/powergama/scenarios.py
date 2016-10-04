@@ -69,13 +69,13 @@ def saveScenario(base_grid_data, scenario_file):
                 if len(inflow_this_area)>0:
                     inflow_avg = float(sum(inflow_this_area))/len(inflow_this_area)
                 else:
-                    inflow_avg = ''
+                    inflow_avg = None
 
                 storagelevel_this_area = [base_grid_data.generator.storagelevel_init[i] for i in generators[co][gentype]]
                 if len(storagelevel_this_area)>0:
                     storagelevel_avg = float(sum(storagelevel_this_area))/len(storagelevel_this_area)
                 else:
-                    storagelevel_avg = ''
+                    storagelevel_avg = None
 					
                 storval_filling_refs = [base_grid_data.generator.storagevalue_profile_filling[i] 
                     for i in generators[co][gentype]]
@@ -102,10 +102,33 @@ def saveScenario(base_grid_data, scenario_file):
                     for i in generators[co][gentype]
                     if base_grid_data.generator.storagevalue_abs[i] != 0]
                 if not storval_this_area:
-                    storval_avg = ''
+                    storval_avg = None
                 else:
-                    storval_avg = float(sum(storval_this_area))/len(storval_this_area)
-                
+                    storval_avg = (float(sum(storval_this_area))
+                                    /len(storval_this_area))
+
+                deadband_this_area = [
+                    base_grid_data.generator.pump_deadband[i]
+                    for i in generators[co][gentype]
+                    if base_grid_data.generator.pump_deadband[i] != 0]
+                if not deadband_this_area:
+                    pump_deadband = None
+                else:
+                    pump_deadband = (float(sum(deadband_this_area))
+                                        /len(deadband_this_area))
+                pumpcap_this_area = [base_grid_data.generator.pump_cap[i] 
+                    for i in generators[co][gentype]]
+                pump_capacity = float(sum(pumpcap_this_area))                
+
+                pumpeff_this_area = [base_grid_data.generator.pump_efficiency[i] 
+                    for i in generators[co][gentype]
+                    if base_grid_data.generator.pump_efficiency[i] != 0]
+                if not pumpeff_this_area:
+                    pump_efficiency = None
+                else:
+                    pump_efficiency = (float(sum(pumpeff_this_area))
+                                        /len(pumpeff_this_area))
+                    
                 print (("  {0:1s}: cap={1:6.0f}, storage={2:1.0f}"+
                         ", fuelcost_avg={3:6.2f},\n    storval_avg={4:1s}"+
                         ", inflow_fac={5:6.2f}, inflow_ref={6:1s}"+
@@ -135,6 +158,12 @@ def saveScenario(base_grid_data, scenario_file):
                     data["storval_filling_ref_%s"%gentype]={}
                 if not ("storval_time_ref_%s"%gentype) in data:
                     data["storval_time_ref_%s"%gentype]={}
+                if not ("pump_deadband_%s"%gentype) in data:
+                    data["pump_deadband_%s"%gentype]={}
+                if not ("pump_capacity_%s"%gentype) in data:
+                    data["pump_capacity_%s"%gentype]={}
+                if not ("pump_efficiency_%s"%gentype) in data:
+                    data["pump_efficiency_%s"%gentype]={}
                     
                 data["gencap_%s"%gentype][co] = gencap_MW
                 data["fuelcost_%s"%gentype][co] = gencost_avg
@@ -145,17 +174,31 @@ def saveScenario(base_grid_data, scenario_file):
                 data["storage_price_%s"%gentype][co] = storval_avg
                 data["storval_filling_ref_%s"%gentype][co] = storval_filling_ref
                 data["storval_time_ref_%s"%gentype][co] =  storval_time_ref
+                data["pump_deadband_%s"%gentype][co] = pump_deadband
+                data["pump_capacity_%s"%gentype][co] = pump_capacity
+                data["pump_efficiency_%s"%gentype][co] = pump_efficiency
             else:
                 print("  {0:1s}:None".format(gentype))
 				
         # end collecting data
                 
-    # print to file
-    
+    # remove empty lines
+    keys_delete=[]
+    for k in data:
+        #isPresent = bool([a for a in data[k].values() if a != None])
+        isPresent = any(data[k].values())
+        if not isPresent:
+            print("DOES NOT HAVE ",k)
+            keys_delete.append(k)
+    for k in keys_delete:
+        print("ignoring ",k)
+        del(data[k])
+
+    # print to file   
     df = pd.DataFrame.from_dict(data,orient='index')
     df.to_csv(scenario_file,sep=',')
     
-    return
+    return data
 
 
 
