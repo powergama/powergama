@@ -43,6 +43,7 @@ class SipModel():
         model.NODECOSTITEM = pyo.Set(initialize=['L','S'])
         model.LINEAR = pyo.Set(initialize=['fix','slope'])
         
+
         # PARAMETERS #########################################################
         
         model.financeInterestrate = pyo.Param(within=pyo.Reals)
@@ -100,7 +101,7 @@ class SipModel():
         model.demandAvg = pyo.Param(model.LOAD,within=pyo.Reals)
         model.demandProfile = pyo.Param(model.LOAD,model.TIME,
                                         within=pyo.Reals)
-    
+
         # VARIABLES ##########################################################
     
         # investment: new dcbranch capacity [dcVarInvest]
@@ -217,6 +218,7 @@ class SipModel():
 
 
         def curtailment_rule(model,g,t):
+            # Only consider curtailment cost for zero cost generators
             if model.genCostAvg[g] == 0:
                 expr =  (model.curtailment[g,t] 
                     == model.genCapacity[g]*model.genCapacityProfile[g,t] 
@@ -246,10 +248,10 @@ class SipModel():
                     # branch into node
                     typ = model.branchType[j]
                     dist = model.branchDistance[j]
-                    expr += model.branchFlow12[j,t]
-                    expr += -model.branchFlow21[j,t] * (1-(
+                    expr += model.branchFlow12[j,t] * (1-(
                                 model.branchLossfactor[typ,'fix']
                                 +model.branchLossfactor[typ,'slope']*dist))
+                    expr += -model.branchFlow21[j,t] 
 
             # generated power 
             for g in model.GEN:
@@ -268,10 +270,50 @@ class SipModel():
         model.cPowerbalance = pyo.Constraint(model.NODE,model.TIME,
                                              rule=powerbalance_rule)
         
+        # COST PARAMETERS ############
+        def costBranch(model,b):
+            b_cost = 0
+            typ = model.branchType[b]
+            b_cost += (model.branchtypeCost[typ,'B']
+                        *model.branchNewCables[b])
+            b_cost += (model.branchtypeCost[typ,'Bd']
+                        *model.branchDistance[b]
+                        *model.branchNewCables[b])
+            b_cost += (model.branchtypeCost[typ,'Bdp']
+                    *model.branchDistance[b]*model.branchNewCapacity[b])
+            
+            #endpoints offshore (N=1) or onshore (N=0) ?
+            N1 = model.branchOffshoreFrom[b]
+            N2 = model.branchOffshoreTo[b]
+            for N in [N1,N2]:
+                b_cost += N*(model.branchtypeCost[typ,'CS']
+                            *model.branchNewCables[b]
+                        +model.branchtypeCost[typ,'CSp']
+                        *model.branchNewCapacity[b])            
+                b_cost += (1-N)*(model.branchtypeCost[typ,'CL']
+                            *model.branchNewCables[b]
+                        +model.branchtypeCost[typ,'CLp']
+                        *model.branchNewCapacity[b])
+            
+            return model.branchCostScale[b]*b_cost
+
+        def costNode(model,n):
+            n_cost = 0
+            N = model.nodeOffshore[n]
+            n_cost += N*(model.nodetypeCost[model.nodeType[n],'S']
+                        *model.newNodes[n])
+            n_cost += (1-N)*(model.nodetypeCost[model.nodeType[n],'L']
+                        *model.newNodes[n])
+            return model.nodeCostScale[n]*n_cost
+
+        #model.branchCost = pyo.Param(model.BRANCH, 
+        #                                 within=pyo.NonNegativeReals,
+        #                                 initialize=costBranch)                                             
+        #model.nodeCost = pyo.Param(model.NODE, within=pyo.NonNegativeReals,
+        #                           initialize=costNode)
+
         # OBJECTIVE ##############################################################
-        def annuityfactor(rate,years):
-            annuity = (1-1/((1+rate)**years))/rate
-            return annuity
+            
         
         def firstStageCost_rule(model):
             """Investment cost, including lifetime O&M costs"""
@@ -279,41 +321,13 @@ class SipModel():
 
             # add branch costs:
             for b in model.BRANCH:
-                b_cost = 0
-                typ = model.branchType[b]
-                b_cost += (model.branchtypeCost[typ,'B']
-                            *model.branchNewCables[b])
-                b_cost += (model.branchtypeCost[typ,'Bd']
-                            *model.branchDistance[b]
-                            *model.branchNewCables[b])
-                b_cost += (model.branchtypeCost[typ,'Bdp']
-                        *model.branchDistance[b]*model.branchNewCapacity[b])
-                
-                #endpoints offshore (N=1) or onshore (N=0) ?
-                N1 = model.branchOffshoreFrom[b]
-                N2 = model.branchOffshoreTo[b]
-                for N in [N1,N2]:
-                    b_cost += N*(model.branchtypeCost[typ,'CS']
-                                *model.branchNewCables[b]
-                            +model.branchtypeCost[typ,'CSp']
-                            *model.branchNewCapacity[b])            
-                    b_cost += (1-N)*(model.branchtypeCost[typ,'CL']
-                                *model.branchNewCables[b]
-                            +model.branchtypeCost[typ,'CLp']
-                            *model.branchNewCapacity[b])
-                
-                expr += model.branchCostScale[b]*b_cost
+                #expr += model.branchCost[b]
+                expr += costBranch(model,b)
                         
             # add node costs:
             for n in model.NODE:
-                n_cost = 0
-                typ = model.nodeType[n]
-                N = model.nodeOffshore[n]
-                n_cost += N*(model.nodetypeCost[model.nodeType[n],'S']
-                            *model.newNodes[n])
-                n_cost += (1-N)*(model.nodetypeCost[model.nodeType[n],'L']
-                            *model.newNodes[n])
-                expr += model.nodeCostScale[n]*n_cost
+                #expr += model.nodeCost
+                expr += costNode(model,n)
             
             # add O&M costs:
             expr = expr*(1 + model.omRate*annuityfactor(
@@ -347,6 +361,33 @@ class SipModel():
     
         return model
 
+    def _costBranch(self,model,b):
+        '''compute branch cost'''
+        b_cost = 0
+        typ = model.branchType[b]
+        b_cost += (model.branchtypeCost[typ,'B']
+                    *model.branchNewCables[b])
+        b_cost += (model.branchtypeCost[typ,'Bd']
+                    *model.branchDistance[b]
+                    *model.branchNewCables[b])
+        b_cost += (model.branchtypeCost[typ,'Bdp']
+                *model.branchDistance[b]*model.branchNewCapacity[b])
+        
+        #endpoints offshore (N=1) or onshore (N=0) ?
+        N1 = model.branchOffshoreFrom[b]
+        N2 = model.branchOffshoreTo[b]
+        for N in [N1,N2]:
+            b_cost += N*(model.branchtypeCost[typ,'CS']
+                        *model.branchNewCables[b]
+                    +model.branchtypeCost[typ,'CSp']
+                    *model.branchNewCapacity[b])            
+            b_cost += (1-N)*(model.branchtypeCost[typ,'CL']
+                        *model.branchNewCables[b]
+                    +model.branchtypeCost[typ,'CLp']
+                    *model.branchNewCapacity[b])
+        
+        return model.branchCostScale[b]*b_cost
+        
 
     def _offshoreBranch(self,grid_data):
         '''find out whether branch endpoints are offshore or onshore
@@ -663,6 +704,77 @@ class SipModel():
             
         return st_model
 
+    def computeCostBranch(self,model,b,include_om=False):
+        '''Investment cost of single branch
+        
+        corresponds to  firstStageCost in abstract model'''
+        b_cost = 0
+        typ = model.branchType[b]
+        b_cost += (model.branchtypeCost[typ,'B']
+                    *model.branchNewCables[b].value)
+        b_cost += (model.branchtypeCost[typ,'Bd']
+                    *model.branchDistance[b]
+                    *model.branchNewCables[b].value)
+        b_cost += (model.branchtypeCost[typ,'Bdp']
+                *model.branchDistance[b]*model.branchNewCapacity[b].value)
+        
+        #endpoints offshore (N=1) or onshore (N=0) ?
+        N1 = model.branchOffshoreFrom[b]
+        N2 = model.branchOffshoreTo[b]
+        for N in [N1,N2]:
+            b_cost += N*(model.branchtypeCost[typ,'CS']
+                        *model.branchNewCables[b].value
+                    +model.branchtypeCost[typ,'CSp']
+                    *model.branchNewCapacity[b].value)            
+            b_cost += (1-N)*(model.branchtypeCost[typ,'CL']
+                        *model.branchNewCables[b].value
+                    +model.branchtypeCost[typ,'CLp']
+                    *model.branchNewCapacity[b].value)
+        
+        cost =  model.branchCostScale[b]*b_cost
+        if include_om:
+            cost = cost*(1 + model.omRate*annuityfactor(
+                            model.financeInterestrate,
+                            model.financeYears))
+        return cost
+
+    def computeCostNode(self,model,n,include_om=False):
+        '''Investment cost of single node
+        
+        corresponds to firstStageCost in abstract model'''
+        
+        n_cost = 0
+        N = model.nodeOffshore[n]
+        n_cost += N*(model.nodetypeCost[model.nodeType[n],'S']
+                    *model.newNodes[n].value)
+        n_cost += (1-N)*(model.nodetypeCost[model.nodeType[n],'L']
+                    *model.newNodes[n].value)
+        cost = model.nodeCostScale[n]*n_cost
+        if include_om:
+            cost = cost*(1 + model.omRate*annuityfactor(
+                            model.financeInterestrate,
+                            model.financeYears))
+        return cost
+
+    def computeGenerationCost(self,model,g):
+        '''compute cost of generation (and curtailment)
+        
+        This corresponds to secondStageCost in abstract model        
+        '''
+        expr = sum(model.generation[g,t].value
+                    *model.genCostAvg[g]*model.genCostProfile[g,t] 
+                     for t in model.TIME)
+        expr += sum(model.curtailment[g,t].value*model.curtailmentCost 
+                     for t in model.TIME)
+        # lifetime cost
+        samplefactor = 8760/len(model.TIME)
+        expr = samplefactor*expr*annuityfactor(model.financeInterestrate,
+                                               model.financeYears)
+        return expr
+        
+    def computeDemand(self,model,c,t):
+        '''compute demand at specified load ant time'''
+        return model.demandAvg[c]*model.demandProfile[c,t]
         
         
     def saveDeterministicResults(self,model,excel_file):
@@ -680,9 +792,13 @@ class SipModel():
                                            'newCables','newCapacity',
                                            'existingCapacity',
                                            'type',
-                                           'flow12avg','flow21avg'])
-        df_nodes = pd.DataFrame(columns=['num','newNodes'])
-        df_gen = pd.DataFrame(columns=['num','node','Pavg','curtailed_avg'])
+                                           'flow12avg','flow21avg',
+                                           'cost','cost_withOM'])
+        df_nodes = pd.DataFrame(columns=['num','newNodes',
+                                         'cost','cost_withOM'])
+        df_gen = pd.DataFrame(columns=['num','node','Pavg','Pmin','Pmax',
+                                       'curtailed_avg','cost_NPV'])
+        df_load = pd.DataFrame(columns=['num','node','Pavg','Pmin','Pmax',])
     
         for j in model.BRANCH:
             df_branches.loc[j,'num'] = j
@@ -696,20 +812,42 @@ class SipModel():
                 model.branchFlow12[(j,t)].value for t in model.TIME])
             df_branches.loc[j,'flow21avg'] = np.mean([
                 model.branchFlow21[(j,t)].value for t in model.TIME])
+            df_branches.loc[j,'cost'] = self.computeCostBranch(model,j)
+            df_branches.loc[j,'cost_withOM'] = self.computeCostBranch(model,j,
+                    include_om=True)
                                     
     #    for j in model.newNodes:
         for j in model.NODE:
             df_nodes.loc[j,'num'] = j
             df_nodes.loc[j,'newNodes'] = model.newNodes[j].value
+            df_nodes.loc[j,'cost'] = self.computeCostNode(model,j)
+            df_nodes.loc[j,'cost_withOM'] = self.computeCostNode(model,j,
+                    include_om=True)
+            
             
         for j in model.GEN:
             df_gen.loc[j,'num'] = j
             df_gen.loc[j,'node'] = model.genNode[j]
             df_gen.loc[j,'Pavg'] = np.mean([
                 model.generation[(j,t)].value for t in model.TIME])
+            df_gen.loc[j,'Pmin'] = np.min([
+                model.generation[(j,t)].value for t in model.TIME])
+            df_gen.loc[j,'Pmax'] = np.max([
+                model.generation[(j,t)].value for t in model.TIME])
             df_gen.loc[j,'curtailed_avg'] = np.mean([
                 model.curtailment[(j,t)].value for t in model.TIME])
-                
+            df_gen.loc[j,'cost_NPV'] = self.computeGenerationCost(model,j)
+
+        for j in model.LOAD:
+            df_load.loc[j,'num'] = j
+            df_load.loc[j,'node'] = model.demNode[j]
+            df_load.loc[j,'Pavg'] = np.mean([self.computeDemand(model,j,t)
+                for t in model.TIME])
+            df_load.loc[j,'Pmin'] = np.min([self.computeDemand(model,j,t)
+                for t in model.TIME])
+            df_load.loc[j,'Pmax'] = np.max([self.computeDemand(model,j,t)
+                for t in model.TIME])
+
         df_cost = pd.DataFrame(columns=['value','unit'])
         df_cost.loc['firstStageCost','value'] = (
             pyo.value(model.firstStageCost)/10**9)
@@ -729,6 +867,7 @@ class SipModel():
         df_branches.to_excel(excel_writer=writer,sheet_name="branches")     
         df_nodes.to_excel(excel_writer=writer,sheet_name="nodes") 
         df_gen.to_excel(excel_writer=writer,sheet_name="generation") 
+        df_load.to_excel(excel_writer=writer,sheet_name="demand") 
 
 
     def presentResults(self,csvfile):
@@ -752,6 +891,11 @@ class SipModel():
                          
         return df
         
+        
+def annuityfactor(rate,years):
+    '''Net present value factor for fixed payments per year at fixed rate'''
+    annuity = (1-1/((1+rate)**years))/rate
+    return annuity
         
             
 
