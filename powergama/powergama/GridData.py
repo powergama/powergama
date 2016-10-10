@@ -45,7 +45,7 @@ class GridData(object):
         'branch': ['node_from','node_to','capacity',
                    'expand','distance','cost_scaling',
                    'type'],
-        'generator': ['desc','node','pmax','pmin',
+        'generator': ['type','desc','node','pmax','pmin',
                       'fuelcost','fuelcost_ref','pavg',
                       'inflow_fac','inflow_ref'],
         'consumer': ['node', 'demand_avg', 'demand_ref']
@@ -443,7 +443,7 @@ class GridData(object):
     def getAllGeneratorTypes(self,sort=None):
         '''Return list of generator types included in the grid model'''
         if sort==None:
-            gentypes = self.generator.gentype
+            gentypes = self.generator.type
             alltypes = []
             for ge in gentypes:
                 if ge not in alltypes:

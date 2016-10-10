@@ -16,6 +16,8 @@ class SipModel():
     Power Grid Investment Module - stochastic investment problem
     '''
     
+    _NUMERICAL_THRESHOLD_ZERO = 1e-6
+    
     def __init__(self, maxNewBranchCap,maxNewBranchNum,M_const = 1000):
         """Create Abstract Pyomo model for PowerGIM"""
         self.abstractmodel = self._createAbstractModel(maxNewBranchCap,
@@ -857,18 +859,52 @@ class SipModel():
         df_cost.loc['secondStageCost','unit'] = '10^9 EUR'
             
         #model.solutions.load_from(results)
-        print('First stage costs: ', 
-              pyo.value(model.firstStageCost)/10**9, 'bnEUR')
-        print('Second stage costs: ', 
-              pyo.value(model.secondStageCost)/10**9, 'bnEUR')
+        #print('First stage costs: ', 
+        #      pyo.value(model.firstStageCost)/10**9, 'bnEUR')
+        #print('Second stage costs: ', 
+        #      pyo.value(model.secondStageCost)/10**9, 'bnEUR')
 
-        writer = pd.ExcelWriter('deterministic_results.xlsx') 
+        writer = pd.ExcelWriter(excel_file) 
         df_cost.to_excel(excel_writer=writer,sheet_name="cost") 
         df_branches.to_excel(excel_writer=writer,sheet_name="branches")     
         df_nodes.to_excel(excel_writer=writer,sheet_name="nodes") 
         df_gen.to_excel(excel_writer=writer,sheet_name="generation") 
         df_load.to_excel(excel_writer=writer,sheet_name="demand") 
 
+
+    def extractResultingGridData(self,model,grid_data):
+        '''Extract resulting optimal grid layout for deterministic simulation
+        
+        Parameters
+        ==========
+        model : Pyomo model
+            concrete instance of optimisation model
+        grid_data : powergama.GridData
+            grid data class
+        
+        Returns
+        =======
+        GridData object reflecting optimal solution
+        '''
+        import copy
+
+        grid_res = copy.deepcopy(grid_data)
+        res_brC = []    
+        for j in model.BRANCH:
+            res_brC.append(model.branchNewCapacity[j].value)
+        res_N = []
+        #for j in model.NODE:
+        for j in grid_res.node.index:
+            res_N.append(int(model.newNodes[j].value))
+            
+        grid_res.branch['capacity'] = grid_res.branch['capacity'] + res_brC
+        grid_res.node['existing'] = grid_res.node['existing'] + res_N
+        grid_res.branch = grid_res.branch[grid_res.branch['capacity'] 
+            > self._NUMERICAL_THRESHOLD_ZERO]
+        grid_res.node = grid_res.node[grid_res.node['existing'] 
+            > self._NUMERICAL_THRESHOLD_ZERO]
+        return grid_res
+        
 
     def presentResults(self,csvfile):
         '''load  results and present plots etc
