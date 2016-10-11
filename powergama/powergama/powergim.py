@@ -671,6 +671,7 @@ class SipModel():
         st_model.ScenarioBasedData=False
     
         # Alternative, using networkx to create scenario tree:
+        # TODO: implement this alternative
         if False:
             from pyomo.pysp.scenariotree.tree_structure_model  \
                import ScenarioTreeModelFromNetworkX
@@ -872,15 +873,20 @@ class SipModel():
         df_load.to_excel(excel_writer=writer,sheet_name="demand") 
 
 
-    def extractResultingGridData(self,model,grid_data):
-        '''Extract resulting optimal grid layout for deterministic simulation
+    def extractResultingGridData(self,grid_data,
+                                 model=None,file_ph=None):
+        '''Extract resulting optimal grid layout from simulation results
         
         Parameters
         ==========
-        model : Pyomo model
-            concrete instance of optimisation model
         grid_data : powergama.GridData
             grid data class
+        model : Pyomo model
+            concrete instance of optimisation model containing det. results
+        file_ph : string
+            CSV file containing results from stochastic solution
+
+        Use either model or file_ph parameter        
         
         Returns
         =======
@@ -890,12 +896,31 @@ class SipModel():
 
         grid_res = copy.deepcopy(grid_data)
         res_brC = []    
-        for j in model.BRANCH:
-            res_brC.append(model.branchNewCapacity[j].value)
         res_N = []
-        #for j in model.NODE:
-        for j in grid_res.node.index:
-            res_N.append(int(model.newNodes[j].value))
+        if model is not None:
+            for j in grid_res.branch.index:
+                res_brC.append(model.branchNewCapacity[j].value)
+            for j in grid_res.node.index:
+                res_N.append(int(model.newNodes[j].value))
+        elif file_ph is not None:
+            df_ph = pd.read_csv(file_ph,header=None,skipinitialspace=True,
+                                names=['stage','node',
+                                       'var','var_indx','value']);
+            df_branchNewCables = df_ph.loc[df_ph['var']=='branchNewCables']
+            df_branchNewCapacity = df_ph.loc[df_ph['var']=='branchNewCapacity']
+            df_newNodes = df_ph.loc[df_ph['var']=='newNodes']
+
+            for j in grid_res.branch.index:
+                # need to convert to string, because ph.csv indx_var is treated as
+                # string:
+                ind = df_branchNewCapacity['var_indx']==str(j)
+                res_brC.append(float(df_branchNewCapacity[ind]['value']))
+            res_N = []
+            for j in grid_res.node.index:
+                ind = df_newNodes['var_indx']==str(j)
+                res_N.append(int(df_newNodes[ind]['value']))
+        else:
+            raise Exception('Missing input parameter')
             
         grid_res.branch['capacity'] = grid_res.branch['capacity'] + res_brC
         grid_res.node['existing'] = grid_res.node['existing'] + res_N
