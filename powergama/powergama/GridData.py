@@ -342,7 +342,7 @@ class GridData(object):
         return lhX
 
 
-    def sampleProfileData(self, sampling_method, samplesize ):
+    def sampleProfileData(self, filename, sampling_method, samplesize ):
         """
         Collect time series in absoulute values/magnitude and use
         a proper sampling/clustering technique.
@@ -357,10 +357,17 @@ class GridData(object):
         # maximum capacities in order to get the correct clusters/samples
         
         X = self.profiles.copy()
-        for k,row in self.generator.iterrows():
-            pmax = row['pmax']
-            ref = row['inflow_ref']
-            X[ref] = self.profiles[ref] * pmax
+        for k in self.profiles.columns.values.tolist():
+            ref = k
+            pmax = sum(self.generator.pmax[g] for g in range(len(self.generator)) if self.generator.inflow_ref[g] == ref)
+            if pmax > 0:
+                X[ref] = self.profiles[ref] * pmax
+#        for k,row in self.generator.iterrows():
+#            pmax = row['pmax']
+#            ref = row['inflow_ref']
+#            if X[ref].mean()<1:
+#                X[ref] = self.profiles[ref] * pmax
+        X['const'] = 1
         
         for k,row in self.consumer.iterrows():
             pmax = row['demand_avg']
@@ -375,13 +382,19 @@ class GridData(object):
             self.timerange = list(X_idx)    # OBS: more or less random
             timedelta = 1.0
             # convert back to relative values
-            for k,row in self.generator.iterrows():
-                pmax = row['pmax']
-                ref = row['inflow_ref']
-                if pmax == 0:
-                    centroids[ref] = 0
-                else:
+            for k in self.profiles.columns.values.tolist():
+                ref = k
+                pmax = sum(self.generator.pmax[g] for g in range(len(self.generator)) if self.generator.inflow_ref[g] == ref)
+                if pmax > 0:
                     centroids[ref] = centroids[ref] / pmax
+#            for k,row in self.generator.iterrows():
+#                pmax = row['pmax']
+#                ref = row['inflow_ref']
+#                if pmax == 0:
+#                    centroids[ref] = 0
+#                else:
+#                    if X[ref].mean()>1:
+#                        centroids[ref] = centroids[ref] / pmax
             for k,row in self.consumer.iterrows():
                 pmax = row['demand_avg']
                 ref = row['demand_ref']
@@ -408,7 +421,7 @@ class GridData(object):
             random.seed('irpwind')
             self.timerange = random.sample(range(8760),samplesize)
             timedelta = 1.0
-            self.readProfileData(filename = "data/profiles.csv",
+            self.readProfileData(filename = filename,
                              timerange = self.timerange,
                              timedelta = timedelta)
                              

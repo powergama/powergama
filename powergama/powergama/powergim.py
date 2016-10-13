@@ -349,7 +349,7 @@ class SipModel():
     def _offshoreBranch(self,grid_data):
         '''find out whether branch endpoints are offshore or onshore
         
-        Returns 1 for offshore and 1 for onsore from/to endpoints
+        Returns 1 for offshore and 0 for onsore from/to endpoints
         '''
         d={'from':[],'to':[]}
         
