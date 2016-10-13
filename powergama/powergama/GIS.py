@@ -7,44 +7,126 @@ import simplekml
 import math
 import numpy
 
-def makekml(res,kmlfile, timeMaxMin=None):
+def makekml(kmlfile, grid_data,nodetype=None, branchtype=None, 
+            res=None,timeMaxMin=None,title='PowerGAMA Results'):
+    '''Export KML file for Google Earth plot of data
+    
+    Parameters
+    ==========
+    kmlfile : string
+        name of KLM file to create
+    grid_data : powergama.GridData
+        grid data object
+    nodetype : string
+        how to plot nodes - 'areaprice','powergim_type'
+    branchtype : string
+        how to plot branches - 'flow','powergim_type'
+    res : powergama.Results (optional)
+        result object (result from powergama simulation)
+    timeMaxMin : [min,max]
+        time range used when plotting results from simulation
+    title : string
+        title of KML document
+    
+    '''
     kml = simplekml.Kml()
-    kml.document.name = "PowerGAMA Results"
+    kml.document.name = title
     circle = "http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png"
     
     # Colours, 5 categories + NaN category
-    colorbgr = ["ffff6666","ffffff66","ff66ff66","ff66ffff","f6666fff","ffaaaaaa"] 
+    colorbgr = ["ffff6666","ffffff66","ff66ff66","ff66ffff","f6666fff",
+                "ffaaaaaa"] 
     numCat = len(colorbgr)-1
     
-    gentypeList = res.grid.getAllGeneratorTypes()  
     
-    ## Show node
+    # NODES ##################################################################   
     nodefolder = kml.newfolder(name="Node")
-    nodecount = len(res.grid.node.name)
-    for i in range(nodecount):
-        name = res.grid.node.name[i]
-        lon = res.grid.node.lon[i]
-        lat = res.grid.node.lat[i]
-        pnt = nodefolder.newpoint(name=name,coords=[(lon,lat)])
+    #nodecount = len(grid_data.node.id)
+    if nodetype=='nodalprice':
+        ## Show nodal price
+        meannodalprices = res.getAverageNodalPrices(timeMaxMin)
+        # Obs: some values may be numpy.nan
+        maxnodalprice = numpy.nanmax(meannodalprices)
+        minnodalprice = numpy.nanmin(meannodalprices)
+        steprange = (maxnodalprice - minnodalprice) / numCat
+        categoryMax = [math.ceil(minnodalprice+steprange*(n+1)) 
+            for n in range(numCat)]        
+        nodalpricelevelfolder=[]
+        for level in range(numCat):
+            nodalpricelevelfolder.append(nodefolder.newfolder(
+                name="Price <= %s" % (str(categoryMax[level]))))
+        #nodalpricelevelfolder.append(nodalpricefolder.newfolder(
+        #    name="Price > %s" % (str(categoryMax[numCat-2]))))
+        nodalpricelevelfolder.append(nodefolder.newfolder(
+                name="Price NaN" ))
+    elif nodetype=='powergim_type':  
+        nodetypes = grid_data.node.type.unique().tolist()
+        nodetypefolder=dict()
+        for typ in nodetypes:
+            nodetypefolder[typ] = nodefolder.newfolder(
+                name="Type = {}".format(typ))
+        
+                
+    #for i in range(nodecount):
+    for i in grid_data.node.index:
+        name = grid_data.node.id[i]
+        lon = grid_data.node.lon[i]
+        lat = grid_data.node.lat[i]
+        color = None
+        description="ID: {}".format(name)
+        if nodetype==None:
+            pnt = nodefolder.newpoint(name=name,coords=[(lon,lat)],
+                                      description=description)
+        elif nodetype=='nodalprice':
+            nodalprice = meannodalprices[i]
+            # Determine category        
+            node_category=numCat
+            for category in range(numCat):        
+                if nodalprice <= categoryMax[category]:
+                    node_category=category
+                    break
+            
+            color = colorbgr[node_category]
+            description = """
+            Busname .. %s           <br/>
+            Lon .. %s, Lat .. %s    <br/>
+            Price .. %s             <br/>
+            """%(name,lon,lat,nodalprice)
+            pnt = nodalpricelevelfolder[node_category].newpoint(
+                name=name,
+                description=description,
+                coords=[(lon,lat)])
+        elif nodetype=='powergim_type':
+            typ = grid_data.node.type[i]
+            description="ID: {}</br>Type: {}".format(name,typ)
+            node_category = nodetypes.index(typ)
+            color = colorbgr[node_category]
+            pnt = nodetypefolder[typ].newpoint(name=name,
+                                            description=description,
+                                            coords=[(lon,lat)])
+        pnt.style.iconstyle.color = color
         pnt.style.iconstyle.icon.href = circle
         pnt.style.labelstyle.color = "00000000"
+            
 
-    ## Show generator
-    # Create folder for generator
+    # GENERATORS #############################################################
     genfolder = kml.newfolder(name="Generator")
-    gencount = len(res.grid.generator.node)
+    gentypeList = grid_data.getAllGeneratorTypes()  
     # Create sub-folders according to generator sub-types
-    gentypefolders = {typ: genfolder.newfolder(name=typ) for typ in gentypeList}
+    gentypefolders = {typ: genfolder.newfolder(name=typ) 
+                        for typ in gentypeList}
 
     # Get generators
-    for i in range(gencount):
-        typ = res.grid.generator.gentype[i]
-        cap = res.grid.generator.prodMax[i]
-        name = simplekml.makeunicode.u("GENERATOR %s" % res.grid.generator.desc[i])
-        node = res.grid.generator.node[i]
-        nodeIndx = res.grid.node.name.index(node)
-        lon = res.grid.node.lon[nodeIndx]
-        lat = res.grid.node.lat[nodeIndx]
+    #for i in range(gencount):
+    for i in grid_data.generator.index:
+        typ = grid_data.generator.type[i]
+        cap = grid_data.generator.pmax[i]
+        name = simplekml.makeunicode.u("GENERATOR {}"
+                    .format(grid_data.generator.desc[i]))
+        node = grid_data.generator.node[i]
+        nodeIndx = node
+        lon = grid_data.node.lon[nodeIndx]
+        lat = grid_data.node.lat[nodeIndx]
         description = """ 
             Busname .. %s           <br/>
             Fuel .. %s         <br/>
@@ -58,112 +140,86 @@ def makekml(res,kmlfile, timeMaxMin=None):
         pnt.style.labelstyle.color = "00000000"
         
 
-    ## Show line
-    # Find range of branch flow
-    meanflows = res.getAverageBranchFlows(timeMaxMin)
-    absbranchflow = meanflows[2]
-    #absbranchflow = [abs(foo) for foo in res.branchFlow[timestep]]
-    maxabsbranchflow =  max(absbranchflow)
-    minabsbranchflow =  min(absbranchflow)
-    steprange = (maxabsbranchflow - minabsbranchflow) / float(numCat)
-    categoryMax = [math.ceil(minabsbranchflow+steprange*(n+1) )
-        for n in range(numCat)]        
-    # Create folder for line
+    # BRANCHES ###############################################################
     branchfolder = kml.newfolder(name="Branch")
-    branchcount = len(res.grid.branch.node_from)
-    ## Create sub-folder according to branch flow level
-    #branchrange = ranges[0]
-    branchlevelfolder=[]
-    for level in range(numCat):
+
+    if branchtype=='flow':
+        meanflows = res.getAverageBranchFlows(timeMaxMin)
+        absbranchflow = meanflows[2]
+        maxabsbranchflow =  max(absbranchflow)
+        minabsbranchflow =  min(absbranchflow)
+        steprange = (maxabsbranchflow - minabsbranchflow) / float(numCat)
+        categoryMax = [math.ceil(minabsbranchflow+steprange*(n+1) )
+            for n in range(numCat)]        
+        branchlevelfolder=[]
+        for level in range(numCat):
+            branchlevelfolder.append(branchfolder.newfolder(
+                name="Flow <= %s" % (str(categoryMax[level]))))
         branchlevelfolder.append(branchfolder.newfolder(
-            name="Flow <= %s" % (str(categoryMax[level]))))
-    #branchlevelfolder.append(branchfolder.newfolder(
-    #    name="Flow > %s" % (str(categoryMax[numCat-2]))))
-    branchlevelfolder.append(branchfolder.newfolder(
-            name="Flow NaN" ))
+                name="Flow NaN" ))
+    elif branchtype=="powergim_type":
+        branchtypes = grid_data.branch.type.unique().tolist()
+        branchlevelfolder=dict()
+        for typ in branchtypes:
+            branchlevelfolder[typ] = branchfolder.newfolder(
+                name="Type = {}".format(typ))
 
-    # Get and arrange branch flow
-    for i in range(branchcount):
-
-        # Determine category        
-        branch_category=numCat        
-        for category in range(numCat):        
-            if absbranchflow[i] <= categoryMax[category]:
-                branch_category=category
-                break
         
-        color = colorbgr[branch_category]
-        capacity = res.grid.branch.capacity[i]
-        reactance = res.grid.branch.reactance[i]
-        startbus = res.grid.branch.node_from[i]
-        endbus = res.grid.branch.node_to[i]
-        startbusIndx = res.grid.node.name.index(startbus)
-        endbusIndx = res.grid.node.name.index(endbus)
-        startbuslon = res.grid.node.lon[startbusIndx]
-        startbuslat = res.grid.node.lat[startbusIndx]
-        endbuslon = res.grid.node.lon[endbusIndx]
-        endbuslat = res.grid.node.lat[endbusIndx]
-        name = "%s==%s"%(startbus,endbus)
-        description = """
-        Startbus .. %s          <br/>
-        Endbus .. %s            <br/>
-        Capacity .. %s          <br/>
-        Reactance .. %s         <br/>
-        Mean flow .. %s         <br/>
-        """ % (startbus,endbus,capacity,reactance,absbranchflow[i])
-        lin = branchlevelfolder[branch_category].newlinestring(name=name,
-              description = description,
-              coords=[(startbuslon,startbuslat),(endbuslon,endbuslat)])
+    for i in grid_data.branch.index:
+        startbus = grid_data.branch.node_from[i]
+        endbus = grid_data.branch.node_to[i]
+        #startbusIndx = (grid_data.node.id == startbus)[0]
+        startbusIndx = startbus
+        endbusIndx = (grid_data.node.id == endbus)[0]
+        endbusIndx = endbus
+        startbuslon = grid_data.node.lon[startbusIndx]
+        startbuslat = grid_data.node.lat[startbusIndx]
+        endbuslon = grid_data.node.lon[endbusIndx]
+        endbuslat = grid_data.node.lat[endbusIndx]
+        capacity = grid_data.branch.capacity[i]
+        name = "{}=={}".format(startbus,endbus)
+        description = name
+        color = None
+        
+        if branchtype==None:
+            lin = branchfolder.newlinestring(name=name,
+                  description = description,
+                  coords=[(startbuslon,startbuslat),(endbuslon,endbuslat)])
+        elif branchtype=='flow':
+            # Determine category        
+            branch_category=numCat        
+            for category in range(numCat):        
+                if absbranchflow[i] <= categoryMax[category]:
+                    branch_category=category
+                    break
+            
+            color = colorbgr[branch_category]
+            reactance = grid_data.branch.reactance[i]
+            description = """
+            Startbus .. %s          <br/>
+            Endbus .. %s            <br/>
+            Capacity .. %s          <br/>
+            Reactance .. %s         <br/>
+            Mean flow .. %s         <br/>
+            """ % (startbus,endbus,capacity,reactance,absbranchflow[i])
+            lin = branchlevelfolder[branch_category].newlinestring(name=name,
+                  description = description,
+                  coords=[(startbuslon,startbuslat),(endbuslon,endbuslat)])
+        elif branchtype=='powergim_type':
+            typ = grid_data.branch.type[i]
+            branch_category = branchtypes.index(typ)
+            color = colorbgr[branch_category]
+            description= """
+            {}=={} </br>
+            Branch type: {} </br>
+            Capacity :   {}
+            """.format(startbus,endbus,typ,capacity)
+            lin = branchlevelfolder[typ].newlinestring(name=name,
+                  description = description,
+                  coords=[(startbuslon,startbuslat),(endbuslon,endbuslat)])
+            pass
         lin.style.linestyle.color = color
         lin.style.linestyle.width = 1.5    
         
-    ## Show nodal price
-    meannodalprices = res.getAverageNodalPrices(timeMaxMin)
-    # Obs: some values may be numpy.nan
-    maxnodalprice = numpy.nanmax(meannodalprices)
-    minnodalprice = numpy.nanmin(meannodalprices)
-    steprange = (maxnodalprice - minnodalprice) / numCat
-    categoryMax = [math.ceil(minnodalprice+steprange*(n+1)) 
-        for n in range(numCat)]        
-    # Create folder for nodal price
-    nodalpricefolder = kml.newfolder(name="Nodal price")
-    nodalpricelevelfolder=[]
-    for level in range(numCat):
-        nodalpricelevelfolder.append(nodalpricefolder.newfolder(
-            name="Price <= %s" % (str(categoryMax[level]))))
-    #nodalpricelevelfolder.append(nodalpricefolder.newfolder(
-    #    name="Price > %s" % (str(categoryMax[numCat-2]))))
-    nodalpricelevelfolder.append(nodalpricefolder.newfolder(
-            name="Price NaN" ))
-    # Get and arrange nodal price
-    for i in range(nodecount):
-        nodalprice = meannodalprices[i]
-        
-        # Determine category        
-        node_category=numCat
-        for category in range(numCat):        
-            if nodalprice <= categoryMax[category]:
-                node_category=category
-                break
-            
-        color = colorbgr[node_category]
-        name = res.grid.node.name[i]
-        lon = res.grid.node.lon[i]
-        lat = res.grid.node.lat[i]
-        description = """
-        Busname .. %s           <br/>
-        Lon .. %s, Lat .. %s    <br/>
-        Price .. %s             <br/>
-        """%(name,lon,lat,nodalprice)
-        pnt = nodalpricelevelfolder[node_category].newpoint(
-            name=name,
-            description=description,
-            coords=[(lon,lat)])
-        pnt.style.labelstyle.color = "00000000"
-        pnt.style.iconstyle.icon.href = circle
-        pnt.style.iconstyle.color = color
-
-
-    # Save kml file
     kml.save(kmlfile)
 

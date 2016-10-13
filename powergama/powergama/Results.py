@@ -28,17 +28,15 @@ class Results(object):
     '''    
     
     
-    def __init__(self,grid,databasefile,replace=True,sip=False):
+    def __init__(self,grid,databasefile,replace=True):
         '''
         Create a PowerGAMA Results object
         
-        sip=True for grid investment problem
+        
             
         '''
         self.grid = grid
         self.timerange = grid.timerange
-        if sip:
-            return
         self.storage_idx_generators = grid.getIdxGeneratorsWithStorage()
         self.pump_idx_generators = grid.getIdxGeneratorsWithPumping()
         self.flex_idx_consumers = grid.getIdxConsumersWithFlexibleLoad()

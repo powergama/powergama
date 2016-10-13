@@ -49,7 +49,7 @@ class GridData(object):
         'branch': ['node_from','node_to','capacity',
                    'expand','distance','cost_scaling',
                    'type'],
-        'generator': ['node','type','pmax','pmin',
+        'generator': ['type','desc','node','pmax','pmin',
                       'fuelcost','fuelcost_ref','pavg',
                       'inflow_fac','inflow_ref'],
         'consumer': ['node', 'demand_avg', 'demand_ref']
@@ -74,7 +74,7 @@ class GridData(object):
         self.timeDelta = None
         self.timerange = None
         
-        self.CSV_SEPARATOR = None
+        self.CSV_SEPARATOR = None #automatically detect
 
     def _myround(x, base=1,method='round'):
         '''Round to nearest multiple of base'''
@@ -198,13 +198,13 @@ class GridData(object):
                 
 
     def _readProfileFromFile(self,filename,timerange):          
-        profiles = pd.read_csv(filename,sep=self.CSV_SEPARATOR)
+        profiles = pd.read_csv(filename,sep=self.CSV_SEPARATOR,engine='python')
         profiles = profiles.ix[timerange]
         profiles.index = range(len(timerange))
         return profiles
 
     def _readStoragevaluesFromFile(self,filename):  
-        profiles = pd.read_csv(filename,sep=self.CSV_SEPARATOR)
+        profiles = pd.read_csv(filename,sep=self.CSV_SEPARATOR,engine='python')
         return profiles
         
         
@@ -648,15 +648,32 @@ class GridData(object):
                 allareas.append(co)
         return allareas
         
-    def getAllGeneratorTypes(self):
+    def getAllGeneratorTypes(self,sort=None):
         '''Return list of generator types included in the grid model'''
         gentypes = self.generator.type
         alltypes = []
-        for ge in gentypes:
-            if ge not in alltypes:
-                alltypes.append(ge)
-        return alltypes
-    
+        if sort==None:
+            gentypes = self.generator.type
+            alltypes = []
+            for ge in gentypes:
+                if ge not in alltypes:
+                    alltypes.append(ge)
+            return alltypes
+        elif sort=='fuelcost':
+            generators = self.getGeneratorsPerType()
+            gentypes = generators.keys()
+            fuelcosts = []
+            for ge in gentypes:
+                gen_this_type = generators[ge]
+                fuelcosts.append(numpy.mean([self.generator.fuelcost[i] 
+                                         for i in gen_this_type]) )
+            sorted_list = [x for (y,x) in 
+                           sorted(zip(fuelcosts,gentypes))]    
+            return sorted_list
+        else:
+            raise Exception("sort must be None (default) or 'fuelcost'")
+
+			
     def getConsumerAreas(self):
         """List of areas for each consumer"""
         areas = [self.node.area[self.node['id']==n].tolist()[0]
@@ -787,6 +804,7 @@ class GridData(object):
         return dict(branches_pos=branches_pos,
                     branches_neg=branches_neg)   
 
+
     def branchDistances(self,R=6373.0):
         '''computes branch distance from node coordinates, resuls in km
         
@@ -818,5 +836,3 @@ class GridData(object):
             #atan2 better than asin: c = 2 * math.asin(math.sqrt(a))
             distance.append(R * c)
         return distance
-
-        
