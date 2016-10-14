@@ -1,6 +1,6 @@
 desc,type,node,pmax,pmin,fuelcost,inflow_fac,inflow_ref,storage_cap,storage_price,storage_ini,storval_filling_ref,storval_time_ref
-gen1,gas,bus1,200,10,20,0,const,inf,0,1,const,const
-gen2,nuclear,bus2,50,10,5,0,const,inf,0,1,const,const
-gen3,coal,bus3,300,10,10,0,const,inf,0,1,const,const
-wind,wind,bus4,60,0,0,0.3,wind,,,,,
-csp,csp,bus5,60,0,0,0.25,solar,,,,,
+gen1,gas,bus1,200,10,20,1,const,,,,,
+gen2,nuclear,bus2,150,10,5,1,const,,,,,
+gen3,coal,bus3,300,10,10,1,const,,,,,
+wind,wind,bus4,100,0,0,0.3,wind,,,,,
+csp,csp,bus5,600,0,0,0.25,solar,3600,9,0.5,csp2,const
