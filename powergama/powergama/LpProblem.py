@@ -21,7 +21,7 @@ Module containing PowerGAMA LpProblem class
 '''
 
 import pulp
-from numpy import pi, asarray, vstack, zeros
+from numpy import pi, array, asarray, vstack, zeros
 from datetime import datetime as datetime
 from . import constants as const
 import scipy.sparse
@@ -85,7 +85,7 @@ class LpProblem(object):
         self._storage = (
             asarray(grid.generator['storage_ini'])
             *asarray(grid.generator['storage_cap']) )
-        self._marginalcosts = asarray(grid.generator['fuelcost'])        
+        self._marginalcosts = array(grid.generator['fuelcost'])        
         
         self._storage_flexload = (
                 asarray(grid.consumer['flex_storagelevel_init'])
