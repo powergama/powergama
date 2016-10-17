@@ -9,11 +9,6 @@ import pandas as pd
 import numpy
 from scipy.sparse import csr_matrix as sparse
 import math                                 # Used in myround
-import matplotlib.pyplot as plt             
-import matplotlib as mpl                    
-from mpl_toolkits.basemap import Basemap    
-from collections import OrderedDict         #plotRelativeLoadDistribution
-
 
 
 ##=============================================================================
@@ -91,7 +86,6 @@ class GridData(object):
         '''Read grid data from files into data variables'''
         
         self.node = pd.read_csv(nodes)
-        self.node.set_index('id',inplace=True,append=True)
         self.branch = pd.read_csv(ac_branches)
         if not dc_branches is None:
             self.dcbranch = pd.read_csv(dc_branches)
@@ -117,6 +111,11 @@ class GridData(object):
                 raise Exception("Consumer input file must contain %s" %k)
         
 
+        #TODO: fix difference in node index between powergama and powergim        
+        # numerical index is needed in method computePowerFlowMatrices
+        # (and maybe elsewhere)         
+        #self.node.set_index('id',inplace=True,append=False)
+        #self.node['id']=self.node.index
         self._checkGridData()
         self._addDefaultColumns()
         self._fillEmptyCells()
@@ -248,8 +247,6 @@ class GridData(object):
         (OR time step index to closest original?)
         """
         import time
-        import numpy as np
-        import pandas as pd
         from sklearn.cluster import KMeans
         
         k_means = KMeans(init='k-means++', n_clusters=samplesize, n_init=10)
@@ -260,7 +257,8 @@ class GridData(object):
         k_means_labels = k_means.labels_    # which cluster nr it belongs to
         k_means_cluster_centers = pd.DataFrame(k_means.cluster_centers_)
         k_means_cluster_centers.columns = X.columns.copy()
-        k_means_labels_unique, X_idx = np.unique(k_means_labels, return_index=True)        
+        k_means_labels_unique, X_idx = numpy.unique(k_means_labels, 
+                                                    return_index=True)        
 
         return k_means_cluster_centers, X_idx
         
@@ -288,7 +286,6 @@ class GridData(object):
         
         TODO: finish this algorithm
         """
-        import numpy as np
         from sklearn.cluster import MeanShift, estimate_bandwidth
     
         # The following bandwidth can be automatically detected using
@@ -299,7 +296,7 @@ class GridData(object):
         labels = ms.labels_
         cluster_centers = ms.cluster_centers_
         
-        labels_unique = np.unique(labels)
+        labels_unique = numpy.unique(labels)
         n_clusters_ = len(labels_unique)
         
         print("number of estimated clusters : %d" % n_clusters_)
@@ -325,6 +322,7 @@ class GridData(object):
         """
         from pyDOE import lhs
         from scipy.stats.distributions import norm
+        
         X_rows = X.shape[0]; X_cols = X.shape[1]
         X_mean = X.mean(); X_std = X.std()
         lhX = lhs( X_cols , samples=samplesize , criterion='center' )
@@ -436,17 +434,18 @@ class GridData(object):
         file_branches = prefix+"branches.csv"
         file_consumers = prefix+"consumers.csv"     
         file_generators = prefix+"generators.csv"       
-        file_hvdc = prefix+"hvdc.csv"       
+        file_dcbranch = prefix+"hvdc.csv"       
 
-        print('TODO: Not implemented using pandas yet')
-        # OLD CODE:
-        self.node.to_csv(file_nodes,sep=self.CSV_SEPARATOR)
-        self.node.writeToFile(file_nodes)
-        self.branch.writeToFile(file_branches)
-        self.consumer.writeToFile(file_consumers)
-        self.generator.writeToFile(file_generators)
-        self.dcbranch.writeToFile(file_hvdc)
-        
+        sep = self.CSV_SEPARATOR        
+        if sep is None:
+            sep=','
+
+                
+        self.node.to_csv(file_nodes,sep=sep)
+        self.branch.to_csv(file_branches,sep=sep)
+        self.consumer.to_csv(file_consumers,sep=sep)
+        self.generator.to_csv(file_generators,sep=sep)
+        self.dcbranch.to_csv(file_dcbranch,sep=sep)
         return
         
         
@@ -472,11 +471,11 @@ class GridData(object):
         """get node indices for branch FROM node"""
         #return [self.node[self.node['id']==self.branch['node_from'][k]]
         #        .index.tolist()[0] for k in range(self.numBranches())]
-        return [self.node[self.node['id']==b['node_from']]['id'].tolist()[0]
+        return [self.node[self.node['id']==b['node_from']].index.tolist()[0]
                 for i,b in self.branch.iterrows()]
 
     def branchToNodeIdx(self):
-        """get node indices for branch FROM node"""
+        """get node indices for branch TO node"""
         return [self.node[self.node['id']==self.branch['node_to'][k]] 
                 .index.tolist()[0] for k in self.branch.index.tolist()]
     
@@ -486,7 +485,7 @@ class GridData(object):
                 .index.tolist()[0] for k in self.dcbranch.index.tolist()]
 
     def dcBranchToNodeIdx(self):
-        """get node indices for dc branch FROM node"""
+        """get node indices for dc branch TO node"""
         return [self.node[self.node['id']==self.dcbranch['node_to'][k]] 
                 .index.tolist()[0] for k in self.dcbranch.index.tolist()]
     
@@ -648,7 +647,7 @@ class GridData(object):
                 allareas.append(co)
         return allareas
         
-    def getAllGeneratorTypes(self,sort=None):
+    def getAllGeneratorTypes(self,sort='fuelcost'):
         '''Return list of generator types included in the grid model'''
         gentypes = self.generator.type
         alltypes = []
@@ -661,17 +660,21 @@ class GridData(object):
             return alltypes
         elif sort=='fuelcost':
             generators = self.getGeneratorsPerType()
-            gentypes = generators.keys()
-            fuelcosts = []
-            for ge in gentypes:
-                gen_this_type = generators[ge]
-                fuelcosts.append(numpy.mean([self.generator.fuelcost[i] 
-                                         for i in gen_this_type]) )
-            sorted_list = [x for (y,x) in 
-                           sorted(zip(fuelcosts,gentypes))]    
+            avg = {ge_k : numpy.mean(self.generator.fuelcost[ge_v]) 
+                   for ge_k,ge_v in generators.items()}
+            sorted_list = [k for k in sorted(avg, key=avg.get, reverse=False)]
+
+#            gentypes = generators.keys()
+#            fuelcosts = []
+#            for ge in gentypes:
+#                gen_this_type = generators[ge]
+#                fuelcosts.append(numpy.mean([self.generator.fuelcost[i] 
+#                                         for i in gen_this_type]) )
+#            sorted_list = [x for (y,x) in 
+#                           sorted(zip(fuelcosts,gentypes))]    
             return sorted_list
         else:
-            raise Exception("sort must be None (default) or 'fuelcost'")
+            raise Exception("sort must be None or 'fuelcost'")
 
 			
     def getConsumerAreas(self):

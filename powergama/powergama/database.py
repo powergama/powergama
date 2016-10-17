@@ -19,29 +19,33 @@ class Database(object):
         """
         Create database for PowerGAMA results
         """    
-        
+        num_nodes = data.numNodes()
+        num_branches = data.numBranches()
+        num_generators = data.numGenerators()
+        num_consumers = data.numConsumers()
+        num_dcbranches = data.numDcBranches()
         # convert from lists to tuple of tuples
         nodes = tuple((
             i,
             data.node['id'][i],
             data.node['area'][i],
-            data.node['lat'][i],
-            data.node['lon'][i]
-            ) for i in range(len(data.node['id'])))
+            1.0*data.node['lat'][i],
+            1.0*data.node['lon'][i]
+            ) for i in range(num_nodes))
         generators = tuple((
             i,            
             data.generator['node'][i],
             data.generator['type'][i],
-            ) for i in range(len(data.generator['node'])))
+            ) for i in range(num_generators))
         br_from = data.branchFromNodeIdx()
         br_to = data.branchToNodeIdx()
         branches = tuple((
             i,
-            br_from[i],
-            br_to[i],
-            data.branch['capacity'][i],
-            data.branch['reactance'][i]
-            ) for i in range(len(data.branch['capacity'])))
+            int(br_from[i]),
+            int(br_to[i]),
+            1.0*data.branch['capacity'][i],
+            1.0*data.branch['reactance'][i]
+            ) for i in range(num_branches))
         
         if os.path.isfile(self.filename):
             #delete existing file

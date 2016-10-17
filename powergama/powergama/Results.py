@@ -126,14 +126,16 @@ class Results(object):
         '''
         # self.storageGeneratorsIdx.append(idx_generatorsWithStorage)
 
-    def getAverageBranchFlows(self,timeMaxMin=None):
+    def getAverageBranchFlows(self,timeMaxMin=None,branchtype='ac'):
         '''
         Average flow on branches over a given time period
         
         Parameters
-        ----------
-        timeMaxMin (list) (default = None)
+        ==========
+        timeMaxMin : list (default = None)
             [min, max] - lower and upper time interval
+        branchtype : string
+            'ac' (default) or 'dc'
             
         Returns
         =======
@@ -144,6 +146,13 @@ class Results(object):
             timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
 
         #branchflow = self.db.getResultBranchFlowAll(timeMaxMin)
+        if branchtype=='ac':
+            ac=True
+        elif branchtype=='dc':
+            ac=False
+        else:
+            raise Exception('Branch type must be "ac" or "dc"')
+            
         avgflow = self.db.getResultBranchFlowsMean(timeMaxMin,ac)
         #np.mean(branchflow,axis=1)
         return avgflow
@@ -536,7 +545,7 @@ class Results(object):
         
         for genNumber in range(0, self.grid.generator.numGenerators()):
             genNode = self.grid.generator.node[genNumber]
-            genType = self.grid.generator.gentype[genNumber]
+            genType = self.grid.generator.type[genNumber]
             genArea = self._node2area(genNode)
             #print str(genNumber) + ", " + genName + ", " + genNode + ", " + genType + ", " + genArea
             if (genType == generatorType) and (genArea == area):
@@ -778,7 +787,7 @@ class Results(object):
         if timeMaxMin == None:
             timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
         storageGen = self.grid.getIdxGeneratorsWithStorage()
-        storageTypes = self.grid.generator.gentype
+        storageTypes = self.grid.generator.type
         nodeNames = self.grid.generator.node
         nodeAreas = self.grid.node.area
         storCapacities = self.grid.generator.storage
@@ -1175,7 +1184,8 @@ class Results(object):
         plt.figure()
         ax = plt.subplot(111)
         generators = self.grid.getGeneratorsPerAreaAndType()
-        gentypes_ordered = self._gentypes_ordered_by_fuelcost()
+        #gentypes_ordered = self._gentypes_ordered_by_fuelcost()
+        gentypes_ordered = self.grid.getAllGeneratorTypes(sort='fuelcost')
         if reversed_order:
             gentypes_ordered.reverse()
         numCurves = len(gentypes_ordered)+1
@@ -1323,7 +1333,7 @@ class Results(object):
             if showTitle:
                 plt.title("Storage value  for generator %d (%s) in %s"
                     % (genindx,
-                       self.grid.generator.gentype[genindx],
+                       self.grid.generator.type[genindx],
                    self.grid.generator.node[genindx]))
             plt.show()
         else:
@@ -1370,8 +1380,9 @@ class Results(object):
 
 
         
-    def plotMapGrid(self,nodetype='',branchtype='',dcbranchtype='',
-                    show_node_labels=False,flow_style=None,latlon=None,timeMaxMin=None,
+    def plotMapGrid(self,nodetype=None,branchtype=None,dcbranchtype=None,
+                    show_node_labels=False,branch_style='c',latlon=None,
+                    timeMaxMin=None,
                     dotsize=40, filter_node=None, filter_branch=None,
                     draw_par_mer=False,showTitle=True, colors=True):
         '''
@@ -1387,20 +1398,22 @@ class Results(object):
             "", "capacity"
         show_node_labels : boolean
             whether to show node names (true/false)
-        flow_style : string or list of strings
-            "c" = colour, "t" = thickness
-            if branchtype='flow'; how the flow should be visualised. The two
-            options may be combined.
-        dotsize : integer
+        branch_style : string or list of strings (optional)
+            How branch capacity and flow should be visualised. 
+            "c" = colour, "t" = thickness. The two options may be combined.
+        dotsize : integer (optional)
             set dot size for each plotted node
-        latlon: list of four floats
+        latlon: list of four floats (optional)
             map area [lat_min, lon_min, lat_max, lon_max]
-        filter_node : list of two floats
+        filter_node : list of two floats (optional)
             [min,max] - lower and upper cutoff for node value
         filter_branch : list of two floats
             [min,max] - lower and upper cutoff for branch value
         draw_par_mer : boolean
-            whether to draw parallels and meridians on map    
+            whether to draw parallels and meridians on map 
+        showTitle : boolean
+        colors : boolean
+            Whether to use colours or not 
         '''
         
         # basemap is only used here, so to allow using powergama without
@@ -1455,24 +1468,29 @@ class Results(object):
                 labels=[0,0,0,1])
                 
         
-        num_branches = len(data.branch)
-        num_dcbranches = len(data.dcbranch)
-        num_nodes = len(data.node)
 
 
         # AC Branches
+        num_branches = data.branch.shape[0]
         
         lwidths = [2]*num_branches
+        
+        # default values:
+        branch_value = np.asarray([0.5]*num_branches)
+        branch_colormap = cm.gray
         branch_plot_colorbar = True
+        
         if branchtype=='area':
             areas = data.node.area
             allareas = data.getAllAreas()
             branch_value = [-1]*num_branches
+            nodes_from = data.branchFromNodeIdx()
+            nodes_to = data.branchToNodeIdx()
             for i in range(num_branches):
-                node_indx_from = data.node.name.index(data.branch.node_from[i])
-                node_indx_to = data.node.name.index(data.branch.node_to[i])
-                area_from = areas[node_indx_from]
-                area_to = areas[node_indx_to]
+                #node_indx_from = data.node.name.index(data.branch.node_from[i])
+                #node_indx_to = data.node.name.index(data.branch.node_to[i])
+                area_from = areas[nodes_from[i]]
+                area_to = areas[nodes_to[i]]
                 if area_from == area_to:
                     branch_value[i] = allareas.index(area_from)
                 branch_value = np.asarray(branch_value)
@@ -1489,33 +1507,27 @@ class Results(object):
             branch_label = 'Branch utilisation'
         elif branchtype=='capacity':
             cap = data.branch.capacity
-            branch_value = np.asarray([0.5]*num_branches)
-#            branch_value = np.asarray(cap)
-            maxcap = np.nanmax(branch_value)
-            branch_colormap = cm.gray
             branch_plot_colorbar = False
             branch_label = 'Branch capacity'
-            if filter_branch is None:
-                # need an upper limit to avoid crash due to inf capacity
-                filter_branch = [0,np.round(maxcap,-2)+100]
-            if 'c' in flow_style:
+            if 'c' in branch_style:
+                branch_value = np.asarray(cap)
                 branch_colormap = plt.get_cmap('hot')
-#            else:
-#                branch_colormap = cm.gray
-#                branch_plot_colorbar = False
-            if 't' in flow_style:
+                branch_plot_colorbar = True
+                if filter_branch is None:
+                    # need an upper limit to avoid crash due to inf capacity
+                    maxcap = np.nanmax(branch_value)
+                    filter_branch = [0,np.round(maxcap,-2)+100]
+            if 't' in branch_style:
                 avgcap = np.mean(cap)
                 lwidths = [2*f/avgcap for f in cap]     
         elif branchtype=='flow':
             avgflow = self.getAverageBranchFlows(timeMaxMin)[2]
-            if 'c' in flow_style:
+            if 'c' in branch_style:
                 branch_value = np.asarray(avgflow)
                 branch_colormap = plt.get_cmap('hot')
             else:
-                branch_value = np.asarray([0.5]*num_branches)
-                branch_colormap = cm.gray
                 branch_plot_colorbar = False
-            if 't' in flow_style:
+            if 't' in branch_style:
                 avgavgflow = np.mean(avgflow)
                 lwidths = [2*f/avgavgflow for f in avgflow]        
             branch_label = 'Branch flow'
@@ -1561,17 +1573,18 @@ class Results(object):
         # DC Branches
         lwidths = [2] * 1
         #lwidths = [2] * num_dcbranches
-        branch_plot_colorbar = False
-        branch_value = np.asarray([0.1] * num_branches)
-        branch_colormap = cm.winter
+        if dcbranchtype is not None:
+            branch_plot_colorbar = False
+            branch_value = np.asarray([0.1] * num_branches)
+            branch_colormap = cm.winter
         
         if dcbranchtype == 'flow':
             avgTot = self.getAverageBranchFlows(timeMaxMin,False)[2]
-            if 'c' in flow_style:
+            if 'c' in branch_style:
                 branch_value = np.asarray(avgTot)
                 branch_colormap = plt.get_cmap('hot')
                 branch_plot_colorbar = True
-            if 't' in flow_style:
+            if 't' in branch_style:
                 avgavgflow = np.mean(avgTot)
                 lwidths = [2*f/avgavgflow for f in avgTot]        
             branch_label = 'Branch flow'
@@ -1584,7 +1597,7 @@ class Results(object):
             if filter_branch is None:
                 # need an upper limit to avoid crash due to inf capacity
                 filter_branch = [0,np.round(maxcap,-2)+100]
-            if 't' in flow_style:
+            if 't' in branch_style:
                 avgcap = np.mean(cap)
                 lwidths = [2*f/avgcap for f in cap]  
             
@@ -1719,8 +1732,8 @@ class Results(object):
         if areas is None:
             areas = all_generators.keys()
         #gentypes_ordered = self._gentypes_ordered_by_fuelcost(area)
-        #gentypes = self.grid.getAllGeneratorTypes()
-        gentypes = self._gentypes_ordered_by_fuelcost()
+        gentypes = self.grid.getAllGeneratorTypes()
+        #gentypes = self._gentypes_ordered_by_fuelcost()
         if relative:
             prodsum={}
             for ar in areas:
@@ -1789,7 +1802,8 @@ class Results(object):
         if areas is None:
             areas = all_generators.keys()
         if gentypes is None:
-            gentypes = self._gentypes_ordered_by_fuelcost()
+            #gentypes = self._gentypes_ordered_by_fuelcost()
+            gentypes = self.grid.getAllGeneratorTypes(sort='fuelcost')
         if relative:
             prodsum={}
             for ar in areas:
@@ -1917,11 +1931,7 @@ class Results(object):
         plt.figure()
         
         data = self.grid
-        
-        num_branches = len(self.grid.branch)
-        num_dcbranches = len(self.grid.dcbranch)
-        num_nodes = len(self.grid.node)
-        
+               
         if latlon is None:
             lat_max =  max(data.node.lat)+1
             lat_min =  min(data.node.lat)-1
@@ -2059,9 +2069,7 @@ class Results(object):
         
         plt.figure()
         
-        num_branches = len(self.grid.branch)
-        num_dcbranches = len(self.grid.dcbranch)
-        num_nodes = len(self.grid.node)    
+        num_branches = data.branch.shape[0]
         
         genTypes = data.getAllGeneratorTypes()
         if tech not in genTypes:
@@ -2264,7 +2272,7 @@ class Results(object):
         plt.xticks(range(mainCount + 1), tickLabel)
    
         
-    def _gentypes_ordered_by_fuelcost(self):
+    def OBSOLETE_gentypes_ordered_by_fuelcost(self):
         '''Return a list of generator types ordered by their mean fuel cost'''
         generators = self.grid.getGeneratorsPerType()
         gentypes = generators.keys()
