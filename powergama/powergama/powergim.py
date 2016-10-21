@@ -1090,3 +1090,84 @@ def sample_latinhypercube(X, samplesize):
             lhX[:,i] = norm(loc=X_mean[i] , scale=X_std[i]).ppf(lhX[:,i])
     return lhX
   
+def sampleProfileData(data, samplesize, sampling_method):
+        """
+        Collect time series in absoulute values/magnitude and use
+        a proper sampling/clustering technique.
+        
+        kmeans, mmatching, latinhypercube
+        
+        Returns:
+        grid_data.timerange (or grid_data.profiles?)
+        """
+        
+        # Multiply time series for load and VRES with their respective 
+        # maximum capacities in order to get the correct clusters/samples
+        
+        X = data.profiles.copy()
+        for k in data.profiles.columns.values.tolist():
+            ref = k
+            pmax = sum(data.generator.pmax[g] for g in range(len(data.generator)) if data.generator.inflow_ref[g] == ref)
+            if pmax > 0:
+                X[ref] = data.profiles[ref] * pmax
+#        for k,row in self.generator.iterrows():
+#            pmax = row['pmax']
+#            ref = row['inflow_ref']
+#            if X[ref].mean()<1:
+#                X[ref] = self.profiles[ref] * pmax
+        X['const'] = 1
+        
+        for k,row in data.consumer.iterrows():
+            pmax = row['demand_avg']
+            ref = row['demand_ref']
+            X[ref] = data.profiles[ref] * pmax
+    
+        
+        # Sampling and clustering methods.         
+        if sampling_method == 'kmeans':
+            print("Using k-means...")
+            X_sample = sample_kmeans(X, samplesize)
+            X_sample = pd.DataFrame(data=X_sample,
+                        columns=X.columns)
+
+            # convert back to relative values
+            for k in data.profiles.columns.values.tolist():
+                ref = k
+                pmax = sum(data.generator.pmax[g] for g in range(len(data.generator)) if data.generator.inflow_ref[g] == ref)
+                if pmax > 0:
+                    X_sample[ref] = X_sample[ref] / pmax
+#            for k,row in self.generator.iterrows():
+#                pmax = row['pmax']
+#                ref = row['inflow_ref']
+#                if pmax == 0:
+#                    centroids[ref] = 0
+#                else:
+#                    if X[ref].mean()>1:
+#                        centroids[ref] = centroids[ref] / pmax
+            for k,row in data.consumer.iterrows():
+                pmax = row['demand_avg']
+                ref = row['demand_ref']
+                if pmax == 0:
+                    X_sample[ref] = 0
+                else:
+                    X_sample[ref] = X_sample[ref] / pmax
+            return X_sample
+
+        elif sampling_method == 'mmatching':
+            print("Using moment matching...")
+        elif sampling_method == 'meanshift':
+            print("Using Mean-Shift...")
+            X_sample = sample_meanshift(X, samplesize)
+            return X_sample
+        elif sampling_method == 'lhs':
+            print("Using Latin-Hypercube...")
+            X_sample = sample_latinhypercube(X, samplesize)
+            return X_sample
+        elif sampling_method == 'uniform':
+            print("Using uniform sampling (consider changing sampling method!)...")
+            import random
+            timerange = random.sample(range(8760),samplesize)
+            X_sample = data.profiles.loc[timerange, :]
+            return X_sample
+                             
+        return
