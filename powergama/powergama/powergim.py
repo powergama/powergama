@@ -54,6 +54,7 @@ class SipModel():
         model.financeYears = pyo.Param(within=pyo.Reals)
         model.omRate = pyo.Param(within=pyo.Reals)
         model.curtailmentCost = pyo.Param(within=pyo.NonNegativeReals)
+        model.CO2price = pyo.Param(within=pyo.NonNegativeReals)
         
         #investment costs and limits:        
         model.branchtypeMaxCapacity = pyo.Param(model.BRANCHTYPE,
@@ -87,6 +88,9 @@ class SipModel():
         model.nodeOffshore = pyo.Param(model.NODE, within=pyo.Binary)
         model.nodeType = pyo.Param(model.NODE, within=model.NODETYPE)
         
+        #loads:
+        model.emissionCap = pyo.Param(model.LOAD, within=pyo.NonNegativeReals)
+        
         #generators
         model.genCostAvg = pyo.Param(model.GEN, within=pyo.Reals)
         model.genCostProfile = pyo.Param(model.GEN,model.TIME,
@@ -97,6 +101,7 @@ class SipModel():
         model.genPAvg = pyo.Param(model.GEN,within=pyo.Reals)
         model.genType = pyo.Param(model.GEN, within=model.GENTYPE)
         model.genExpand = pyo.Param(model.GEN, within=pyo.Reals)
+        model.genTypeEmissionRate = pyo.Param(model.GENTYPE, within=pyo.Reals)
         
         #helpers:
         model.genNode = pyo.Param(model.GEN,within=model.NODE)
@@ -241,6 +246,17 @@ class SipModel():
             return expr
         model.cMaxPavg = pyo.Constraint(model.GEN,rule=maxPavg_rule)
 
+        # Emissions restriction per country/load
+        def emissionCap_rule(model,c):
+            samplefactor = 8760/len(model.TIME)
+            expr = sum(model.generation[g,t]*model.genTypeEmissionRate[model.genType[g]] 
+                        for t in model.TIME for g in model.GEN 
+                        if model.genNode[g]==model.demNode[c])
+            expr = (expr*samplefactor <= model.emissionCap[c])
+            return expr
+        model.cEmissionCap = pyo.Constraint(model.LOAD, rule=emissionCap_rule)
+            
+
 
         def curtailment_rule(model,g,t):
             # Only consider curtailment cost for zero cost generators
@@ -369,14 +385,15 @@ class SipModel():
     
         def secondStageCost_rule(model):
             """Operational costs: cost of gen, load shed and curtailment"""
-            expr = sum(model.generation[i,t]
-                        *model.genCostAvg[i]*model.genCostProfile[i,t] 
+            expr = sum(model.generation[i,t]*(
+                        model.genCostAvg[i]*model.genCostProfile[i,t]
+                        +model.genTypeEmissionRate[model.genType[i]]*model.CO2price)
                         for i in model.GEN for t in model.TIME)
             #loadshedding=0 by powerbalance constraint
             #expr += sum(model.loadShed[i,t]*model.shedCost[i] 
             #            for i in model.NODE for t in model.TIME)
             expr += sum(model.curtailment[i,t]*model.curtailmentCost 
-                        for i in model.GEN for t in model.TIME)
+                        for i in model.GEN for t in model.TIME)           
             # annual costs of operation
             samplefactor = 8760/len(model.TIME)
             expr = samplefactor*expr
@@ -554,9 +571,11 @@ class SipModel():
         di['demandAvg'] = {}
         di['demandProfile'] ={}
         di['demNode'] = {}
+        di['emissionCap'] = {}
         for k,row in grid_data.consumer.iterrows():
             di['demNode'][k] = row['node']
             di['demandAvg'][k] = row['demand_avg']
+            di['emissionCap'][k] = row['emission_cap']
             ref = row['demand_ref']
             for i,t in enumerate(grid_data.timerange):
                 di['demandProfile'][(k,t)] = grid_data.profiles[ref][i]
@@ -594,11 +613,13 @@ class SipModel():
             di['branchLossfactor'][(name,'slope')] = float(i.attrib['lossSlope'])
                                                         
         di['GENTYPE'] = {None:[]}
-        di['genTypeCost'] = {}    
+        di['genTypeCost'] = {}
+        di['genTypeEmissionRate'] = {}
         for i in root.findall('./gentype/item'):
             name = i.attrib['name']
             di['GENTYPE'][None].append(name)
-            di['genTypeCost'][name] = float(i.attrib['CX'])                                                
+            di['genTypeCost'][name] = float(i.attrib['CX']) 
+            di['genTypeEmissionRate'][name] = float(i.attrib['CO2'])                                               
         
         for i in root.findall('./parameters'):
             di['curtailmentCost'] = {None: 
@@ -611,6 +632,8 @@ class SipModel():
                 float(i.attrib['omRate'])}
             di['genNewCapMax'] = {None: 
                 float(i.attrib['genNewCapMax'])}
+            di['CO2price'] = {None: 
+                float(i.attrib['CO2price'])}
 
         return {'powergim':di}
 
@@ -854,6 +877,7 @@ class SipModel():
                                          'cost','cost_withOM'])
         df_gen = pd.DataFrame(columns=['num','node','Pavg','Pmin','Pmax',
                                        'type','newCapacity',
+                                       'emission_rate','emission',
                                        'curtailed_avg','cost_NPV'])
         df_load = pd.DataFrame(columns=['num','node','Pavg','Pmin','Pmax',])
     
@@ -886,6 +910,9 @@ class SipModel():
             df_gen.loc[j,'num'] = j
             df_gen.loc[j,'node'] = model.genNode[j]
             df_gen.loc[j,'type'] = model.genType[j]
+            df_gen.loc[j,'emission_rate'] = model.genTypeEmissionRate[model.genType[j]]
+            df_gen.loc[j,'emission'] = model.genTypeEmissionRate[model.genType[j]]*sum(
+                                        model.generation[(j,t)].value for t in model.TIME)
             df_gen.loc[j,'newCapacity'] = model.genNewCapacity[j].value
             df_gen.loc[j,'Pavg'] = np.mean([
                 model.generation[(j,t)].value for t in model.TIME])
@@ -906,6 +933,8 @@ class SipModel():
                 for t in model.TIME])
             df_load.loc[j,'Pmax'] = np.max([self.computeDemand(model,j,t)
                 for t in model.TIME])
+#            df_load.loc[j,'emissions'] = j
+            df_load.loc[j,'emissionCap'] = model.emissionCap[j]
 
         df_cost = pd.DataFrame(columns=['value','unit'])
         df_cost.loc['firstStageCost','value'] = (

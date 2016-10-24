@@ -48,7 +48,7 @@ class GridData(object):
                       'expand', 'cost_scaling',
                       'fuelcost','fuelcost_ref','pavg',
                       'inflow_fac','inflow_ref'],
-        'consumer': ['node', 'demand_avg', 'demand_ref']
+        'consumer': ['node', 'demand_avg','emission_cap', 'demand_ref']
         }
         
 
