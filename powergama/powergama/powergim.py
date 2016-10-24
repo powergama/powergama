@@ -18,15 +18,19 @@ class SipModel():
     
     _NUMERICAL_THRESHOLD_ZERO = 1e-6
     
-    def __init__(self, maxNewBranchCap,maxNewBranchNum,M_const = 1000):
+    def __init__(self, maxNewBranchCap,maxNewBranchNum,M_const = 1000,
+                 genExpansion=False, CO2price=False):
         """Create Abstract Pyomo model for PowerGIM"""
         self.abstractmodel = self._createAbstractModel(maxNewBranchCap,
-                                                       maxNewBranchNum)
+                                                       maxNewBranchNum,
+                                                       genExpansion,
+                                                       CO2price)
         self.M_const = M_const
         
         
     
-    def _createAbstractModel(self,maxNewBranchCap,maxNewBranchNum):    
+    def _createAbstractModel(self,maxNewBranchCap,maxNewBranchNum,
+                             genExpansion, CO2price):    
         model = pyo.AbstractModel()
         model.name = 'PowerGIM abstract model'
         
@@ -134,11 +138,12 @@ class SipModel():
         model.newNodes = pyo.Var(model.NODE, within = pyo.Binary)
         
         # 2nd stage investment:
-        def genNewCapacity_bounds(model,g):
-            return (0,model.genNewCapMax)
-        model.genNewCapacity = pyo.Var(model.GEN,
-                                       within = pyo.NonNegativeReals,
-                                       bounds = genNewCapacity_bounds)
+        if genExpansion:
+            def genNewCapacity_bounds(model,g):
+                return (0,model.genNewCapMax)
+            model.genNewCapacity = pyo.Var(model.GEN,
+                                           within = pyo.NonNegativeReals,
+                                           bounds = genNewCapacity_bounds)
         
         # branch power flow (ac and dc):
         def branchFlow_bounds(model,j,t):
@@ -155,11 +160,16 @@ class SipModel():
         # generator output
         # Martin: had to remove this as we can not have genNewCapacity (variable)
         # as an upper bound
-        def generation_bounds(model,j,t):
-            ub = model.genCapacity[j] 
-            return (0,ub)
-        model.generation = pyo.Var(model.GEN, model.TIME, 
-                                   within = pyo.NonNegativeReals)
+        if genExpansion: 
+            model.generation = pyo.Var(model.GEN, model.TIME, 
+                                       within = pyo.NonNegativeReals)
+        else:
+            def generation_bounds(model,j,t):
+                ub = model.genCapacity[j] 
+                return (0,ub)
+            model.generation = pyo.Var(model.GEN, model.TIME, 
+                                       within = pyo.NonNegativeReals,
+                                       bounds = generation_bounds)
 
         # load shedding (cf gen)
         #model.loadShed = pyo.Var(model.NODE, model.TIME, 
@@ -217,22 +227,32 @@ class SipModel():
             return expr
         model.cNewNodes = pyo.Constraint(model.NODE,rule=newNodes_rule)
         
-        def newGenCapacity_rule(model,g):
-            if model.genExpand[g] == 0:
-                expr = model.genNewCapacity[g] == 0
-            else:
-                expr = pyo.Constraint.Skip
-            return expr
-        model.cNewGenCapacity = pyo.Constraint(model.GEN, 
-                                               rule=newGenCapacity_rule)
+        if genExpansion:
+            def newGenCapacity_rule(model,g):
+                if model.genExpand[g] == 0:
+                    expr = model.genNewCapacity[g] == 0
+                else:
+                    expr = pyo.Constraint.Skip
+                return expr
+            model.cNewGenCapacity = pyo.Constraint(model.GEN, 
+                                                   rule=newGenCapacity_rule)
+                            
         
         # Generator output limitations
-        def maxPgen_rule(model,g,t):
-            expr = model.generation[g,t] <= (model.genCapacityProfile[g,t]*
-                        (model.genCapacity[g] + model.genNewCapacity[g]))
-            return expr
-        model.cMaxPgen = pyo.Constraint(model.GEN,model.TIME,
-                                        rule=maxPgen_rule)
+        if genExpansion:
+            def maxPgen_rule(model,g,t):
+                expr = model.generation[g,t] <= (model.genCapacityProfile[g,t]*
+                            (model.genCapacity[g] + model.genNewCapacity[g]))
+                return expr
+            model.cMaxPgen = pyo.Constraint(model.GEN,model.TIME,
+                                            rule=maxPgen_rule)
+        else:
+            def maxPgen_rule(model,g,t):
+                expr = model.generation[g,t] <= (model.genCapacityProfile[g,t]*
+                            model.genCapacity[g])
+                return expr
+            model.cMaxPgen = pyo.Constraint(model.GEN,model.TIME,
+                                            rule=maxPgen_rule)
         
         
         # Generator maximum average output (energy sum) 
@@ -247,29 +267,41 @@ class SipModel():
         model.cMaxPavg = pyo.Constraint(model.GEN,rule=maxPavg_rule)
 
         # Emissions restriction per country/load
-        def emissionCap_rule(model,c):
-            samplefactor = 8760/len(model.TIME)
-            expr = sum(model.generation[g,t]*model.genTypeEmissionRate[model.genType[g]] 
-                        for t in model.TIME for g in model.GEN 
-                        if model.genNode[g]==model.demNode[c])
-            expr = (expr*samplefactor <= model.emissionCap[c])
-            return expr
-        model.cEmissionCap = pyo.Constraint(model.LOAD, rule=emissionCap_rule)
+        if CO2price:
+            def emissionCap_rule(model,c):
+                samplefactor = 8760/len(model.TIME)
+                expr = sum(model.generation[g,t]*model.genTypeEmissionRate[model.genType[g]] 
+                            for t in model.TIME for g in model.GEN 
+                            if model.genNode[g]==model.demNode[c])
+                expr = (expr*samplefactor <= model.emissionCap[c])
+                return expr
+            model.cEmissionCap = pyo.Constraint(model.LOAD, rule=emissionCap_rule)
             
 
-
-        def curtailment_rule(model,g,t):
-            # Only consider curtailment cost for zero cost generators
-            if model.genCostAvg[g] == 0:
-                expr =  (model.curtailment[g,t] 
-                    == model.genCapacityProfile[g,t]*(model.genCapacity[g] + model.genNewCapacity[g]) 
-                        - model.generation[g,t])
-                return expr
-            else:
-                return pyo.Constraint.Skip
-        model.genCurtailment = pyo.Constraint(model.GEN, model.TIME, 
-                                              rule=curtailment_rule)
-
+        if genExpansion:
+            def curtailment_rule(model,g,t):
+                # Only consider curtailment cost for zero cost generators
+                if model.genCostAvg[g] == 0:
+                    expr =  (model.curtailment[g,t] 
+                        == model.genCapacityProfile[g,t]*(model.genCapacity[g] + model.genNewCapacity[g]) 
+                            - model.generation[g,t])
+                    return expr
+                else:
+                    return pyo.Constraint.Skip
+            model.genCurtailment = pyo.Constraint(model.GEN, model.TIME, 
+                                                  rule=curtailment_rule)
+        else:
+            def curtailment_rule(model,g,t):
+                # Only consider curtailment cost for zero cost generators
+                if model.genCostAvg[g] == 0:
+                    expr =  (model.curtailment[g,t] 
+                        == model.genCapacityProfile[g,t]*(model.genCapacity[g]) 
+                            - model.generation[g,t])
+                    return expr
+                else:
+                    return pyo.Constraint.Skip
+            model.genCurtailment = pyo.Constraint(model.GEN, model.TIME, 
+                                                  rule=curtailment_rule)
        
         # Power balance in nodes : gen+demand+flow into node=0
         def powerbalance_rule(model,n,t):
@@ -385,10 +417,15 @@ class SipModel():
     
         def secondStageCost_rule(model):
             """Operational costs: cost of gen, load shed and curtailment"""
-            expr = sum(model.generation[i,t]*(
-                        model.genCostAvg[i]*model.genCostProfile[i,t]
-                        +model.genTypeEmissionRate[model.genType[i]]*model.CO2price)
-                        for i in model.GEN for t in model.TIME)
+            if CO2price:            
+                expr = sum(model.generation[i,t]*(
+                            model.genCostAvg[i]*model.genCostProfile[i,t]
+                            +model.genTypeEmissionRate[model.genType[i]]*model.CO2price)
+                            for i in model.GEN for t in model.TIME)
+            else:
+                expr = sum(model.generation[i,t]*
+                            model.genCostAvg[i]*model.genCostProfile[i,t]
+                            for i in model.GEN for t in model.TIME)
             #loadshedding=0 by powerbalance constraint
             #expr += sum(model.loadShed[i,t]*model.shedCost[i] 
             #            for i in model.NODE for t in model.TIME)
@@ -399,8 +436,9 @@ class SipModel():
             expr = samplefactor*expr
             
             # 2nd stage investment costs in generation capacity
-            for g in model.GEN:
-                expr += costGen(model, g)
+            if genExpansion:
+                for g in model.GEN:
+                    expr += costGen(model, g)
             
             # lifetime cost of operation and investment
             expr = expr*annuityfactor(model.financeInterestrate,
