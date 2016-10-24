@@ -45,6 +45,8 @@ class SipModel():
         model.NODECOSTITEM = pyo.Set(initialize=['L','S'])
         model.LINEAR = pyo.Set(initialize=['fix','slope'])
         
+        model.GENTYPE = pyo.Set()
+        
 
         # PARAMETERS #########################################################
         
@@ -63,8 +65,11 @@ class SipModel():
                                      within=pyo.Reals)
         model.nodetypeCost = pyo.Param(model.NODETYPE, model.NODECOSTITEM,
                                        within=pyo.Reals)
+        model.genTypeCost = pyo.Param(model.GENTYPE, within=pyo.Reals)
         model.nodeCostScale = pyo.Param(model.NODE,within=pyo.Reals)
         model.branchCostScale = pyo.Param(model.BRANCH,within=pyo.Reals)
+        model.genCostScale = pyo.Param(model.GEN, within=pyo.Reals)
+        model.genNewCapMax = pyo.Param(within=pyo.Reals)
         
         #branches:
         model.branchExistingCapacity = pyo.Param(model.BRANCH, 
@@ -90,6 +95,8 @@ class SipModel():
         model.genCapacityProfile = pyo.Param(model.GEN,model.TIME,
                                           within=pyo.Reals)
         model.genPAvg = pyo.Param(model.GEN,within=pyo.Reals)
+        model.genType = pyo.Param(model.GEN, within=model.GENTYPE)
+        model.genExpand = pyo.Param(model.GEN, within=pyo.Reals)
         
         #helpers:
         model.genNode = pyo.Param(model.GEN,within=model.NODE)
@@ -106,20 +113,27 @@ class SipModel():
 
         # VARIABLES ##########################################################
     
-        # investment: new dcbranch capacity [dcVarInvest]
+        # 1st stage investment: new dcbranch capacity [dcVarInvest]
         def branchNewCapacity_bounds(model,j):
             return (0,maxNewBranchCap)
         model.branchNewCapacity = pyo.Var(model.BRANCH, 
                                           within = pyo.NonNegativeReals,
                                           bounds = branchNewCapacity_bounds)
-        # investment: new dcbranch number of cables [dcFixInvest]
+        # 1st stage investment: new dcbranch number of cables [dcFixInvest]
         def branchNewCables_bounds(model,j):
             return (0,maxNewBranchNum)                                  
         model.branchNewCables = pyo.Var(model.BRANCH, 
                                         within = pyo.NonNegativeIntegers,
                                         bounds = branchNewCables_bounds)
-        # investment: new nodes
+        # 1st stage investment: new nodes
         model.newNodes = pyo.Var(model.NODE, within = pyo.Binary)
+        
+        # 2nd stage investment:
+        def genNewCapacity_bounds(model,g):
+            return (0,model.genNewCapMax)
+        model.genNewCapacity = pyo.Var(model.GEN,
+                                       within = pyo.NonNegativeReals,
+                                       bounds = genNewCapacity_bounds)
         
         # branch power flow (ac and dc):
         def branchFlow_bounds(model,j,t):
@@ -134,20 +148,21 @@ class SipModel():
                                      bounds = branchFlow_bounds)
         
         # generator output
+        # Martin: had to remove this as we can not have genNewCapacity (variable)
+        # as an upper bound
         def generation_bounds(model,j,t):
-            # could use available capacity instead of capacity, and get rid
-            # of generation limit constraint
-            ub = model.genCapacity[j]
+            ub = model.genCapacity[j] 
             return (0,ub)
         model.generation = pyo.Var(model.GEN, model.TIME, 
-                                   within = pyo.NonNegativeReals,
-                                   bounds = generation_bounds)
+                                   within = pyo.NonNegativeReals)
+
         # load shedding (cf gen)
         #model.loadShed = pyo.Var(model.NODE, model.TIME, 
-        #                         domain = pyo.NonNegativeReals)       
+        #                         domain = pyo.NonNegativeReals) 
+        
+        # bounds are given in the curtailment restriction
         model.curtailment = pyo.Var(model.GEN, model.TIME, 
-                                    domain = pyo.NonNegativeReals,
-                                    bounds = generation_bounds)
+                                    domain = pyo.NonNegativeReals)
         
         
         # CONSTRAINTS ########################################################
@@ -197,11 +212,19 @@ class SipModel():
             return expr
         model.cNewNodes = pyo.Constraint(model.NODE,rule=newNodes_rule)
         
+        def newGenCapacity_rule(model,g):
+            if model.genExpand[g] == 0:
+                expr = model.genNewCapacity[g] == 0
+            else:
+                expr = pyo.Constraint.Skip
+            return expr
+        model.cNewGenCapacity = pyo.Constraint(model.GEN, 
+                                               rule=newGenCapacity_rule)
+        
         # Generator output limitations
         def maxPgen_rule(model,g,t):
-            expr = model.generation[g,t] <= (model.genCapacity[g]
-                *model.genCapacityProfile[g,t])
-            
+            expr = model.generation[g,t] <= (model.genCapacityProfile[g,t]*
+                        (model.genCapacity[g] + model.genNewCapacity[g]))
             return expr
         model.cMaxPgen = pyo.Constraint(model.GEN,model.TIME,
                                         rule=maxPgen_rule)
@@ -223,7 +246,7 @@ class SipModel():
             # Only consider curtailment cost for zero cost generators
             if model.genCostAvg[g] == 0:
                 expr =  (model.curtailment[g,t] 
-                    == model.genCapacity[g]*model.genCapacityProfile[g,t] 
+                    == model.genCapacityProfile[g,t]*(model.genCapacity[g] + model.genNewCapacity[g]) 
                         - model.generation[g,t])
                 return expr
             else:
@@ -307,6 +330,12 @@ class SipModel():
             n_cost += (1-N)*(model.nodetypeCost[model.nodeType[n],'L']
                         *model.newNodes[n])
             return model.nodeCostScale[n]*n_cost
+            
+        def costGen(model,g):
+            g_cost = 0
+            typ = model.genType[g]
+            g_cost += model.genTypeCost[typ]*model.genNewCapacity[g]
+            return model.genCostScale[g]*g_cost
 
         #model.branchCost = pyo.Param(model.BRANCH, 
         #                                 within=pyo.NonNegativeReals,
@@ -348,10 +377,18 @@ class SipModel():
             #            for i in model.NODE for t in model.TIME)
             expr += sum(model.curtailment[i,t]*model.curtailmentCost 
                         for i in model.GEN for t in model.TIME)
-            # lifetime cost
+            # annual costs of operation
             samplefactor = 8760/len(model.TIME)
-            expr = samplefactor*expr*annuityfactor(model.financeInterestrate,
-                                                   model.financeYears)
+            expr = samplefactor*expr
+            
+            # 2nd stage investment costs in generation capacity
+            for g in model.GEN:
+                expr += costGen(model, g)
+            
+            # lifetime cost of operation and investment
+            expr = expr*annuityfactor(model.financeInterestrate,
+                                      model.financeYears)
+            
             return expr
         model.secondStageCost = pyo.Expression(rule=secondStageCost_rule)
     
@@ -496,11 +533,17 @@ class SipModel():
         di['genCostAvg'] = {}
         di['genCostProfile'] = {}
         di['genPAvg'] = {}
+        di['genExpand'] = {}
+        di['genType'] = {}
+        di['genCostScale'] = {}
         for k,row in grid_data.generator.iterrows():
             di['genCapacity'][k] = row['pmax']
             di['genNode'][k] = row['node']
             di['genCostAvg'][k] = row['fuelcost']
             di['genPAvg'][k] = row['pavg']
+            di['genExpand'][k] = row['expand']
+            di['genType'][k] = row['type']
+            di['genCostScale'][k] = row['cost_scaling']
             ref = row['fuelcost_ref']
             ref2 = row['inflow_ref']
             for i,t in enumerate(grid_data.timerange):
@@ -548,8 +591,15 @@ class SipModel():
             di['branchtypeCost'][(name,'CSp')] = float(i.attrib['CSp'])
             di['branchtypeMaxCapacity'][name] = float(i.attrib['maxCap'])
             di['branchLossfactor'][(name,'fix')] = float(i.attrib['lossFix'])
-            di['branchLossfactor'][(name,'slope')] = float(
-                                                        i.attrib['lossSlope'])
+            di['branchLossfactor'][(name,'slope')] = float(i.attrib['lossSlope'])
+                                                        
+        di['GENTYPE'] = {None:[]}
+        di['genTypeCost'] = {}    
+        for i in root.findall('./gentype/item'):
+            name = i.attrib['name']
+            di['GENTYPE'][None].append(name)
+            di['genTypeCost'][name] = float(i.attrib['CX'])                                                
+        
         for i in root.findall('./parameters'):
             di['curtailmentCost'] = {None: 
                 float(i.attrib['curtailmentCost'])}
@@ -559,6 +609,8 @@ class SipModel():
                 float(i.attrib['financeYears'])}
             di['omRate'] = {None: 
                 float(i.attrib['omRate'])}
+            di['genNewCapMax'] = {None: 
+                float(i.attrib['genNewCapMax'])}
 
         return {'powergim':di}
 
@@ -667,6 +719,7 @@ class SipModel():
         st_model.StageVariables[second_stage].add('curtailment')
         st_model.StageVariables[second_stage].add('branchFlow12')
         st_model.StageVariables[second_stage].add('branchFlow21')
+        st_model.StageVariables[second_stage].add('genNewCapacity')
             
         st_model.ScenarioBasedData=False
     
@@ -800,6 +853,7 @@ class SipModel():
         df_nodes = pd.DataFrame(columns=['num','newNodes',
                                          'cost','cost_withOM'])
         df_gen = pd.DataFrame(columns=['num','node','Pavg','Pmin','Pmax',
+                                       'type','newCapacity',
                                        'curtailed_avg','cost_NPV'])
         df_load = pd.DataFrame(columns=['num','node','Pavg','Pmin','Pmax',])
     
@@ -831,6 +885,8 @@ class SipModel():
         for j in model.GEN:
             df_gen.loc[j,'num'] = j
             df_gen.loc[j,'node'] = model.genNode[j]
+            df_gen.loc[j,'type'] = model.genType[j]
+            df_gen.loc[j,'newCapacity'] = model.genNewCapacity[j].value
             df_gen.loc[j,'Pavg'] = np.mean([
                 model.generation[(j,t)].value for t in model.TIME])
             df_gen.loc[j,'Pmin'] = np.min([
@@ -1075,7 +1131,7 @@ def sample_latinhypercube(X, samplesize):
     from scipy.stats.distributions import norm
     X_rows = X.shape[0]; X_cols = X.shape[1]
     X_mean = X.mean(); X_std = X.std()
-    lhX = lhs( X_cols , samples=samplesize , criterion='center' )
+    X_sample = lhs( X_cols , samples=samplesize , criterion='center' )
     kernel=False
     if kernel:
         # Fit data w kernel density
@@ -1086,48 +1142,52 @@ def sample_latinhypercube(X, samplesize):
         kde_sample = kde.sample(samplesize)     
     else:
         # Fit data w normal distribution
-        for i in range(X_rows):
-            lhX[:,i] = norm(loc=X_mean[i] , scale=X_std[i]).ppf(lhX[:,i])
-    return lhX
+        for i in range(X_cols):
+            X_sample[:,i] = norm(loc=X_mean[i] , scale=X_std[i]).ppf(X_sample[:,i])
+    
+    return X_sample
   
 def sampleProfileData(data, samplesize, sampling_method):
-        """
-        Collect time series in absoulute values/magnitude and use
-        a proper sampling/clustering technique.
+        """ Sample data from full-year time series
         
-        kmeans, mmatching, latinhypercube
+        Parameters
+        ==========
+        X : matrix
+            data matrix to sample from
+        samplesize : int
+            size of sample
+        sampling_method : str
+            'kmeans', 'lhs', 'uniform', ('mmatching', 'meanshift')
         
         Returns:
-        grid_data.timerange (or grid_data.profiles?)
+            reduced data matrix according to sample size and method
         """
-        
-        # Multiply time series for load and VRES with their respective 
-        # maximum capacities in order to get the correct clusters/samples
-        
         X = data.profiles.copy()
-        for k in data.profiles.columns.values.tolist():
-            ref = k
-            pmax = sum(data.generator.pmax[g] for g in range(len(data.generator)) if data.generator.inflow_ref[g] == ref)
-            if pmax > 0:
-                X[ref] = data.profiles[ref] * pmax
-#        for k,row in self.generator.iterrows():
-#            pmax = row['pmax']
-#            ref = row['inflow_ref']
-#            if X[ref].mean()<1:
-#                X[ref] = self.profiles[ref] * pmax
-        X['const'] = 1
         
-        for k,row in data.consumer.iterrows():
-            pmax = row['demand_avg']
-            ref = row['demand_ref']
-            X[ref] = data.profiles[ref] * pmax
-    
-        
-        # Sampling and clustering methods.         
         if sampling_method == 'kmeans':
             print("Using k-means...")
-            X_sample = sample_kmeans(X, samplesize)
-            X_sample = pd.DataFrame(data=X_sample,
+            # Multiply time series for load and VRES with their respective 
+            # maximum capacities in order to get the correct clusters/samples
+
+            for k in data.profiles.columns.values.tolist():
+                ref = k
+                pmax = sum(data.generator.pmax[g] for g in range(len(data.generator)) if data.generator.inflow_ref[g] == ref)
+                if pmax > 0:
+                    X[ref] = data.profiles[ref] * pmax
+#            for k,row in self.generator.iterrows():
+#                pmax = row['pmax']
+#                ref = row['inflow_ref']
+#                if X[ref].mean()<1:
+#                    X[ref] = self.profiles[ref] * pmax
+            X['const'] = 1
+            
+            for k,row in data.consumer.iterrows():
+                pmax = row['demand_avg']
+                ref = row['demand_ref']
+                X[ref] = data.profiles[ref] * pmax
+                
+                X_sample = sample_kmeans(X, samplesize)
+                X_sample = pd.DataFrame(data=X_sample,
                         columns=X.columns)
 
             # convert back to relative values
@@ -1151,6 +1211,7 @@ def sampleProfileData(data, samplesize, sampling_method):
                     X_sample[ref] = 0
                 else:
                     X_sample[ref] = X_sample[ref] / pmax
+            X_sample['const'] = 1
             return X_sample
 
         elif sampling_method == 'mmatching':
@@ -1162,12 +1223,17 @@ def sampleProfileData(data, samplesize, sampling_method):
         elif sampling_method == 'lhs':
             print("Using Latin-Hypercube...")
             X_sample = sample_latinhypercube(X, samplesize)
+            X_sample = pd.DataFrame(data=X_sample,
+                        columns=X.columns)
+            X_sample['const'] = 1
+            X_sample[(X_sample < 0)] = 0
             return X_sample
         elif sampling_method == 'uniform':
             print("Using uniform sampling (consider changing sampling method!)...")
             import random
             timerange = random.sample(range(8760),samplesize)
             X_sample = data.profiles.loc[timerange, :]
+            X_sample.index = list(range(len(X_sample.index)))
             return X_sample
                              
         return
