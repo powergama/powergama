@@ -63,6 +63,7 @@ class SipModel():
         #investment costs and limits:        
         model.branchtypeMaxCapacity = pyo.Param(model.BRANCHTYPE,
                                                 within=pyo.Reals)
+        model.branchMaxNewCapacity = pyo.Param(model.BRANCH,within=pyo.Reals)
         model.branchtypeCost = pyo.Param(model.BRANCHTYPE, 
                                          model.BRANCHCOSTITEM,
                                          within=pyo.Reals)
@@ -74,7 +75,7 @@ class SipModel():
         model.nodeCostScale = pyo.Param(model.NODE,within=pyo.Reals)
         model.branchCostScale = pyo.Param(model.BRANCH,within=pyo.Reals)
         model.genCostScale = pyo.Param(model.GEN, within=pyo.Reals)
-        model.genNewCapMax = pyo.Param(within=pyo.Reals)
+        model.genNewCapMax = pyo.Param(model.GEN, within=pyo.Reals)
         
         #branches:
         model.branchExistingCapacity = pyo.Param(model.BRANCH, 
@@ -124,7 +125,10 @@ class SipModel():
     
         # 1st stage investment: new dcbranch capacity [dcVarInvest]
         def branchNewCapacity_bounds(model,j):
-            return (0,maxNewBranchCap)
+            if model.branchMaxNewCapacity[j] == 0:
+                return (0,maxNewBranchCap)
+            else:
+                return (0,model.branchMaxNewCapacity[j])
         model.branchNewCapacity = pyo.Var(model.BRANCH, 
                                           within = pyo.NonNegativeReals,
                                           bounds = branchNewCapacity_bounds)
@@ -140,7 +144,7 @@ class SipModel():
         # 2nd stage investment:
         if genExpansion:
             def genNewCapacity_bounds(model,g):
-                return (0,model.genNewCapMax)
+                return (0,model.genNewCapMax[g])
             model.genNewCapacity = pyo.Var(model.GEN,
                                            within = pyo.NonNegativeReals,
                                            bounds = genNewCapacity_bounds)
@@ -567,9 +571,11 @@ class SipModel():
         di['branchOffshoreTo'] = {}
         di['branchNodeFrom'] = {}
         di['branchNodeTo'] = {}
+        di['branchMaxNewCapacity'] = {}
         offsh = self._offshoreBranch(grid_data)
         for k,row in grid_data.branch.iterrows():
             di['branchExistingCapacity'][k] = row['capacity']
+            di['branchMaxNewCapacity'][k] = row['max_newCap']
             di['branchExpand'][k] = row['expand']
             if row['distance'] >= 0:
                 di['branchDistance'][k] = row['distance']
@@ -589,6 +595,7 @@ class SipModel():
         di['genCostProfile'] = {}
         di['genPAvg'] = {}
         di['genExpand'] = {}
+        di['genNewCapMax'] = {}
         di['genType'] = {}
         di['genCostScale'] = {}
         for k,row in grid_data.generator.iterrows():
@@ -597,6 +604,7 @@ class SipModel():
             di['genCostAvg'][k] = row['fuelcost']
             di['genPAvg'][k] = row['pavg']
             di['genExpand'][k] = row['expand']
+            di['genNewCapMax'][k] = row['p_maxNew']
             di['genType'][k] = row['type']
             di['genCostScale'][k] = row['cost_scaling']
             ref = row['fuelcost_ref']
@@ -668,8 +676,6 @@ class SipModel():
                 float(i.attrib['financeYears'])}
             di['omRate'] = {None: 
                 float(i.attrib['omRate'])}
-            di['genNewCapMax'] = {None: 
-                float(i.attrib['genNewCapMax'])}
             di['CO2price'] = {None: 
                 float(i.attrib['CO2price'])}
 

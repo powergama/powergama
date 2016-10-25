@@ -42,10 +42,10 @@ class GridData(object):
         'node': ['id','area', 'lat', 'lon','offshore','type',
                  'existing','cost_scaling'],
         'branch': ['node_from','node_to','capacity',
-                   'expand','distance','cost_scaling',
+                   'expand','max_newCap','distance','cost_scaling',
                    'type'],
         'generator': ['type','desc','node','pmax','pmin',
-                      'expand', 'cost_scaling',
+                      'expand','p_maxNew', 'cost_scaling',
                       'fuelcost','fuelcost_ref','pavg',
                       'inflow_fac','inflow_ref'],
         'consumer': ['node', 'demand_avg','emission_cap', 'demand_ref']
