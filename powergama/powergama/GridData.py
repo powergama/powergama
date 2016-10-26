@@ -44,7 +44,7 @@ class GridData(object):
         'branch': ['node_from','node_to','capacity',
                    'expand','max_newCap','distance','cost_scaling',
                    'type'],
-        'generator': ['type','desc','node','pmax','pmin',
+        'generator': ['type','node','pmax','pmin',
                       'expand','p_maxNew', 'cost_scaling',
                       'fuelcost','fuelcost_ref','pavg',
                       'inflow_fac','inflow_ref'],
@@ -133,7 +133,7 @@ class GridData(object):
         '''
         self.node = pd.read_csv(nodes,
                                 usecols=self.keys_sipdata['node'],
-                                dtype={'id':str})
+                                dtype={'id':str, 'area':str})
         self.node.set_index('id',inplace=True)
         self.node['id']=self.node.index
         self.branch = pd.read_csv(branches,
