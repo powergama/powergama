@@ -983,30 +983,34 @@ class SipModel():
             flow = []
             price2 = []
             for j in model.BRANCH:
-                if model.nodeArea[model.branchNodeFrom[j]]==area:
-                    flow.append(model.branchFlow12[j,t].value)
-                    price2.append(self.computeAreaPrice(model,
-                                    model.nodeArea[model.branchNodeTo[j]],t))
-                if model.nodeArea[model.branchNodeTo[j]]==area:
-                    flow.append(model.branchFlow21[j,t].value)
-                    price2.append(self.computeAreaPrice(model,
-                                    model.nodeArea[model.branchNodeFrom[j]],t))
-            CR = sum(flow*(price-price2))/2
+                if (model.nodeArea[model.branchNodeFrom[j]]==area and
+                    model.nodeArea[model.branchNodeTo[j]]!=area):
+                        flow.append(model.branchFlow12[j,t].value)
+                        price2.append(self.computeAreaPrice(model,
+                                        model.nodeArea[model.branchNodeTo[j]],t))
+                if (model.nodeArea[model.branchNodeTo[j]]==area and
+                    model.nodeArea[model.branchNodeFrom[j]]!=area):
+                        flow.append(model.branchFlow21[j,t].value)
+                        price2.append(self.computeAreaPrice(model,
+                                        model.nodeArea[model.branchNodeFrom[j]],t))
+            CR = sum(flow[i]*(price2[i]-price) for i in range(len(flow)))/2
         elif gen < dem:
             X = 0
             IM = price*(dem-gen)
             flow = []
             price2 = []
             for j in model.BRANCH:
-                if model.nodeArea[model.branchNodeFrom[j]]==area:
-                    flow.append(model.branchFlow21[j,t].value)
-                    price2.append(self.computeAreaPrice(model,
-                                    model.nodeArea[model.branchNodeFrom[j]],t))
-                if model.nodeArea[model.branchNodeTo[j]]==area:
-                    flow.append(model.branchFlow12[j,t].value)
-                    price2.append(self.computeAreaPrice(model,
-                                    model.nodeArea[model.branchNodeTo[j]],t))
-            CR = sum(flow*(price2-price))/2
+                if (model.nodeArea[model.branchNodeFrom[j]]==area and
+                    model.nodeArea[model.branchNodeTo[j]]!=area):
+                        flow.append(model.branchFlow21[j,t].value)
+                        price2.append(self.computeAreaPrice(model,
+                                        model.nodeArea[model.branchNodeTo[j]],t))
+                if (model.nodeArea[model.branchNodeTo[j]]==area and
+                    model.nodeArea[model.branchNodeFrom[j]]!=area):
+                        flow.append(model.branchFlow12[j,t].value)
+                        price2.append(self.computeAreaPrice(model,
+                                        model.nodeArea[model.branchNodeFrom[j]],t))
+            CR = sum(flow[i]*(price-price2[i]) for i in range(len(flow)))/2
         else:
             X = 0
             IM = 0
@@ -1032,7 +1036,6 @@ class SipModel():
         
         return cost
         
-        
     def saveDeterministicResults(self,model,excel_file):
         '''export results to excel file
         
@@ -1048,7 +1051,7 @@ class SipModel():
                                            'newCables','newCapacity',
                                            'existingCapacity',
                                            'type',
-                                           'flow12avg','flow21avg',
+                                           'flow12avg','flow12%','flow21avg','flow21%',
                                            'cost','cost_withOM'])
         df_nodes = pd.DataFrame(columns=['num','area','newNodes',
                                          'cost','cost_withOM'])
@@ -1058,7 +1061,7 @@ class SipModel():
                                        'curtailed_avg','cost_NPV'])
         df_load = pd.DataFrame(columns=['num','node','area','Pavg','Pmin','Pmax',
                                         'emissions','emissionCap', 'emission_cost',
-                                        'RES%dem','RES%gen', 'IM', 'EX',
+                                        'price_avg','RES%dem','RES%gen', 'IM', 'EX',
                                         'CS', 'PS', 'CR', 'CAPEX', 'Welfare'])
         samplefactor=8760/len(model.TIME)
         for j in model.BRANCH:
@@ -1073,8 +1076,12 @@ class SipModel():
             df_branches.loc[j,'type'] = model.branchType[j]
             df_branches.loc[j,'flow12avg'] = np.mean([
                 model.branchFlow12[(j,t)].value for t in model.TIME])
+            df_branches.loc[j,'flow12%'] = df_branches.loc[j,'flow12avg']/(
+                df_branches.loc[j,'existingCapacity']+df_branches.loc[j,'newCapacity'])
             df_branches.loc[j,'flow21avg'] = np.mean([
                 model.branchFlow21[(j,t)].value for t in model.TIME])
+            df_branches.loc[j,'flow21%'] = df_branches.loc[j,'flow21avg']/(
+                df_branches.loc[j,'existingCapacity']+df_branches.loc[j,'newCapacity'])
             df_branches.loc[j,'cost'] = self.computeCostBranch(model,j)
             df_branches.loc[j,'cost_withOM'] = self.computeCostBranch(model,j,
                     include_om=True)
@@ -1113,6 +1120,9 @@ class SipModel():
             df_load.loc[j,'num'] = j
             df_load.loc[j,'node'] = model.demNode[j]
             df_load.loc[j,'area'] = model.nodeArea[model.demNode[j]]
+            df_load.loc[j,'price_avg'] = np.mean(
+                [self.computeAreaPrice(model,df_load.loc[j,'area'], t)
+                for t in model.TIME])
             df_load.loc[j,'Pavg'] = np.mean([self.computeDemand(model,j,t)
                 for t in model.TIME])
             df_load.loc[j,'Pmin'] = np.min([self.computeDemand(model,j,t)
