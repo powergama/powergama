@@ -889,7 +889,7 @@ class SipModel():
         return cost
 
     def computeGenerationCost(self,model,g):
-        '''compute cost of generation (and curtailment)
+        '''compute NPV cost of generation (+ curtailment and CO2 emissions)
         
         This corresponds to secondStageCost in abstract model        
         '''
@@ -898,12 +898,16 @@ class SipModel():
                      for t in model.TIME)
         expr += sum(model.curtailment[g,t].value*model.curtailmentCost 
                      for t in model.TIME)
+        expr += sum(model.generation[g,t].value*
+                            model.genTypeEmissionRate[model.genType[g]]*model.CO2price
+                            for t in model.TIME)
         # lifetime cost
         samplefactor = 8760/len(model.TIME)
         expr = samplefactor*expr*annuityfactor(model.financeInterestrate,
                                                model.financeYears)
         return expr
-        
+     
+                
     def computeDemand(self,model,c,t):
         '''compute demand at specified load ant time'''
         return model.demandAvg[c]*model.demandProfile[c,t]
@@ -920,7 +924,8 @@ class SipModel():
                             model.genTypeEmissionRate[model.genType[g]]
                             for t in model.TIME)
         if cost:
-            expr = expr*samplefactor*model.CO2price
+            expr = expr*samplefactor*model.CO2price*annuityfactor(model.financeInterestrate,
+                                                                  model.financeYears)
         else:
             expr = expr*samplefactor
         return expr
@@ -951,7 +956,8 @@ class SipModel():
         for g in model.GEN:
             if model.generation[g,t].value > 0:
                 if model.nodeArea[model.genNode[g]]==area:
-                    mc.append(model.genCostAvg[g]*model.genCostProfile[g,t])
+                    mc.append(model.genCostAvg[g]*model.genCostProfile[g,t]
+                                +model.genTypeEmissionRate[model.genType[g]]*model.CO2price)
         price = max(mc)
         return price
         
@@ -963,19 +969,19 @@ class SipModel():
         '''
         node = model.demNode[c]
         area = model.nodeArea[node]
-        PS = 0
-        CS = 0
-        CR = 0
-        GC = 0
-        gen = 0
+        PS = 0; CS = 0; CR = 0; GC = 0; gen = 0; 
         dem = model.demandAvg[c]*model.demandProfile[c,t]
         price = self.computeAreaPrice(model, area, t)
+        branch_capex = self.computeAreaCostBranch(model,c,include_om=True) #npv
+        gen_capex = self.computeAreaCostGen(model,c) #annualized
         for g in model.GEN:
             if model.nodeArea[model.genNode[g]]==area:
                 gen += model.generation[g,t].value
-                GC += (model.generation[g,t].value*
-                    model.genCostAvg[g]*model.genCostProfile[g,t])
+                GC += model.generation[g,t].value*(
+                    model.genCostAvg[g]*model.genCostProfile[g,t]
+                    +model.genTypeEmissionRate[model.genType[g]]*model.CO2price)
         CS = (model.VOLL-price)*dem
+        CC = price*dem
         PS = price*gen - GC
         if gen > dem:
             X = price*(gen-dem)
@@ -1018,7 +1024,7 @@ class SipModel():
             price2 = [0]
             CR = 0
         W = PS + CS + CR
-        return {'W':W, 'PS':PS, 'CS':CS, 'CR':CR, 'IM':IM, 'X':X}
+        return {'W':W, 'PS':PS, 'CS':CS, 'CC':CC, 'GC':GC, 'CR':CR, 'IM':IM, 'X':X}
             
     def computeAreaCostBranch(self,model,c,include_om=False):
         '''Investment cost of single branch
@@ -1034,7 +1040,26 @@ class SipModel():
             elif model.nodeArea[model.branchNodeFrom[b]]==area:
                 cost += self.computeCostBranch(model,b,include_om)
         
-        return cost
+        if include_om:
+             cost = cost*(1 + model.omRate*annuityfactor(
+                            model.financeInterestrate,
+                            model.financeYears)) 
+        
+        return cost/2
+        
+        
+    def computeAreaCostGen(self,model,c):
+        '''compute capital costs for new generator capacity'''
+        node = model.demNode[c]
+        area = model.nodeArea[node]
+        gen_capex = 0
+        
+        for g in model.GEN:
+            if model.nodeArea[model.genNode[g]]==area:
+                typ = model.genType[g]
+                gen_capex += model.genTypeCost[typ]*model.genNewCapacity[g].value*model.genCostScale[g]
+                
+        return gen_capex  
         
     def saveDeterministicResults(self,model,excel_file):
         '''export results to excel file
@@ -1052,7 +1077,7 @@ class SipModel():
                                            'existingCapacity',
                                            'type',
                                            'flow12avg','flow12%','flow21avg','flow21%',
-                                           'cost','cost_withOM'])
+                                           'cost','cost_withOM','congestion_rent'])
         df_nodes = pd.DataFrame(columns=['num','area','newNodes',
                                          'cost','cost_withOM'])
         df_gen = pd.DataFrame(columns=['num','node','area','Pavg','Pmin','Pmax',
@@ -1085,6 +1110,7 @@ class SipModel():
             df_branches.loc[j,'cost'] = self.computeCostBranch(model,j)
             df_branches.loc[j,'cost_withOM'] = self.computeCostBranch(model,j,
                     include_om=True)
+            df_branches.loc[j,'congestion_rent'] = self.computeCostBranch(model,j)
                                     
     #    for j in model.newNodes:
         for j in model.NODE:
