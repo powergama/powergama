@@ -43,6 +43,14 @@ class SipModel():
         model.AREA = pyo.Set()
         model.TIME = pyo.Set()
         
+        #A set for each stage i.e. a list with two sets
+        model.NODE_EXPAND1 = pyo.Set()
+        model.NODE_EXPAND2 = pyo.Set()
+        model.BRANCH_EXPAND1 = pyo.Set()
+        model.BRANCH_EXPAND2 = pyo.Set()
+        model.GEN_EXPAND1 = pyo.Set()
+        model.GEN_EXPAND2 = pyo.Set()
+        
         model.BRANCHTYPE = pyo.Set()
         model.BRANCHCOSTITEM = pyo.Set(initialize=['B','Bd', 'Bdp', 
                                                    'CLp','CL','CSp','CS'])        
@@ -82,7 +90,8 @@ class SipModel():
         #branches:
         model.branchExistingCapacity = pyo.Param(model.BRANCH, 
                                                  within=pyo.NonNegativeReals)
-        model.branchExpand = pyo.Param(model.BRANCH,within=pyo.Binary)         
+        model.branchExpand = pyo.Param(model.BRANCH,
+                                       within=pyo.NonNegativeIntegers)         
         model.branchDistance = pyo.Param(model.BRANCH, 
                                          within=pyo.NonNegativeReals)                                             
         model.branchType = pyo.Param(model.BRANCH,within=model.BRANCHTYPE)
@@ -104,7 +113,8 @@ class SipModel():
                                           within=pyo.Reals)
         model.genPAvg = pyo.Param(model.GEN,within=pyo.Reals)
         model.genType = pyo.Param(model.GEN, within=model.GENTYPE)
-        model.genExpand = pyo.Param(model.GEN, within=pyo.Reals)
+        model.genExpand = pyo.Param(model.GEN, 
+                                    within=pyo.NonNegativeIntegers)
         model.genTypeEmissionRate = pyo.Param(model.GENTYPE, within=pyo.Reals)
         
         #helpers:
@@ -124,154 +134,253 @@ class SipModel():
         
         # VARIABLES ##########################################################
     
-        # 1st stage investment: new dcbranch capacity [dcVarInvest]
+        # investment: new branch capacity
         def branchNewCapacity_bounds(model,j):
             if model.branchMaxNewCapacity[j] == 0:
                 return (0,maxNewBranchCap)
             else:
                 return (0,model.branchMaxNewCapacity[j])
-        model.branchNewCapacity = pyo.Var(model.BRANCH, 
+        model.branchNewCapacity1 = pyo.Var(model.BRANCH_EXPAND1, 
+                                          within = pyo.NonNegativeReals,
+                                          bounds = branchNewCapacity_bounds)                                  
+        model.branchNewCapacity2 = pyo.Var(model.BRANCH_EXPAND2, 
                                           within = pyo.NonNegativeReals,
                                           bounds = branchNewCapacity_bounds)
-        # 1st stage investment: new dcbranch number of cables [dcFixInvest]
+        # investment: new branch cables
         def branchNewCables_bounds(model,j):
             return (0,maxNewBranchNum)                                  
-        model.branchNewCables = pyo.Var(model.BRANCH, 
+        model.branchNewCables1 = pyo.Var(model.BRANCH_EXPAND1, 
                                         within = pyo.NonNegativeIntegers,
                                         bounds = branchNewCables_bounds)
-        # 1st stage investment: new nodes
-        model.newNodes = pyo.Var(model.NODE, within = pyo.Binary)
+                                        
+        model.branchNewCables2 = pyo.Var(model.BRANCH_EXPAND2, 
+                                        within = pyo.NonNegativeIntegers,
+                                        bounds = branchNewCables_bounds)
+
+        # investment: new nodes
+        model.newNodes1 = pyo.Var(model.NODE_EXPAND1, within = pyo.Binary)
+        model.newNodes2 = pyo.Var(model.NODE_EXPAND2, within = pyo.Binary)
         
-        # 2nd stage investment:
-        if genExpansion:
-            def genNewCapacity_bounds(model,g):
-                return (0,model.genNewCapMax[g])
-            model.genNewCapacity = pyo.Var(model.GEN,
-                                           within = pyo.NonNegativeReals,
-                                           bounds = genNewCapacity_bounds)
+        # investment: generation capacity
+        def genNewCapacity_bounds(model,g):
+            return (0,model.genNewCapMax[g])
+        model.genNewCapacity1 = pyo.Var(model.GEN_EXPAND1,
+                                       within = pyo.NonNegativeReals,
+                                       bounds = genNewCapacity_bounds)
+        model.genNewCapacity2 = pyo.Var(model.GEN_EXPAND2,
+                                       within = pyo.NonNegativeReals,
+                                       bounds = genNewCapacity_bounds)
         
-        # branch power flow (ac and dc):
+        # branch power flow (phase 1 and phase 2)
         def branchFlow_bounds(model,j,t):
             ub = (model.branchExistingCapacity[j]
                     +branchNewCapacity_bounds(model,j)[1])
             return (0,ub)
-        model.branchFlow12 = pyo.Var(model.BRANCH, model.TIME, 
+        model.branchFlow12_1 = pyo.Var(model.BRANCH, model.TIME, 
                                      within = pyo.NonNegativeReals,
                                      bounds = branchFlow_bounds)
-        model.branchFlow21 = pyo.Var(model.BRANCH, model.TIME, 
+        model.branchFlow12_2 = pyo.Var(model.BRANCH, model.TIME, 
                                      within = pyo.NonNegativeReals,
                                      bounds = branchFlow_bounds)
+        model.branchFlow21_1 = pyo.Var(model.BRANCH, model.TIME, 
+                                     within = pyo.NonNegativeReals,
+                                     bounds = branchFlow_bounds)
+        model.branchFlow21_2 = pyo.Var(model.BRANCH, model.TIME, 
+                                     within = pyo.NonNegativeReals,
+                                     bounds = branchFlow_bounds)
+
         
-        # generator output
-        # Martin: had to remove this as we can not have genNewCapacity (variable)
-        # as an upper bound
-        if genExpansion: 
-            model.generation = pyo.Var(model.GEN, model.TIME, 
-                                       within = pyo.NonNegativeReals)
-        else:
-            def generation_bounds(model,j,t):
-                ub = model.genCapacity[j] 
-                return (0,ub)
-            model.generation = pyo.Var(model.GEN, model.TIME, 
-                                       within = pyo.NonNegativeReals,
-                                       bounds = generation_bounds)
+        # generator output (bounds set by constraint)
+        model.generation1 = pyo.Var(model.GEN, model.TIME, 
+                                   within = pyo.NonNegativeReals)
+        model.generation2 = pyo.Var(model.GEN, model.TIME, 
+                                   within = pyo.NonNegativeReals)
 
         # load shedding (cf gen)
         #model.loadShed = pyo.Var(model.NODE, model.TIME, 
         #                         domain = pyo.NonNegativeReals) 
         
         # bounds are given in the curtailment restriction
-        model.curtailment = pyo.Var(model.GEN, model.TIME, 
+        model.curtailment1  = pyo.Var(model.GEN, model.TIME, 
+                                    domain = pyo.NonNegativeReals)
+        model.curtailment2  = pyo.Var(model.GEN, model.TIME, 
                                     domain = pyo.NonNegativeReals)
         
         
         # CONSTRAINTS ########################################################
-        # Power flow limitations
-        
-        def maxflow12_rule(model, j, t):
-            expr = (model.branchFlow12[j,t] <= model.branchExistingCapacity[j] 
-                        + model.branchNewCapacity[j] )
+
+        # Power flow limitations (in both directions, in phase 1 and 2)        
+#        def maxflow12_rule(model, j, t, phase):
+#            cap=model.branchExistingCapacity[j]
+#            if j in model.BRANCH_EXPAND[phase]:
+#                cap += model.branchNewCapacity[phase][j]                
+#            expr = (model.branchFlow12[phase][j,t] <= cap )
+#            return expr
+#        model.cMaxFlow12 = [pyo.Constraint(model.BRANCH, model.TIME, 0, 
+#                                         rule=maxflow12_rule),
+#                            pyo.Constraint(model.BRANCH, model.TIME, 1,
+#                                         rule=maxflow12_rule)]
+        def maxflow21_rule1(model, j, t):
+            cap = model.branchExistingCapacity[j]
+            if j in model.BRANCH_EXPAND1:
+                cap += model.branchNewCapacity1[j]
+            expr = (model.branchFlow21_1[j,t] <= cap )
             return expr
-        model.cMaxFlow12 = pyo.Constraint(model.BRANCH, model.TIME, 
-                                         rule=maxflow12_rule)
-        def maxflow21_rule(model, j, t):
-            expr = (model.branchFlow21[j,t] <= model.branchExistingCapacity[j] 
-                        + model.branchNewCapacity[j] )
+            
+        def maxflow21_rule2(model, j, t):
+            cap = model.branchExistingCapacity[j]
+            if j in model.BRANCH_EXPAND1:
+                cap += model.branchNewCapacity1[j]
+            if j in model.BRANCH_EXPAND2:
+                cap += model.branchNewCapacity2[j]
+            expr = (model.branchFlow21_2[j,t] <= cap)
             return expr
-        model.cMaxFlow21 = pyo.Constraint(model.BRANCH, model.TIME, 
-                                         rule=maxflow21_rule)
+        model.cMaxFlow21_1 = pyo.Constraint(model.BRANCH, model.TIME, 
+                                         rule=maxflow21_rule1)
+        model.cMaxFlow21_2 = pyo.Constraint(model.BRANCH, model.TIME, 
+                                         rule=maxflow21_rule2)
                                          
         # No new branch capacity without new cables
-        def maxNewCap_rule(model,j):
+        def maxNewCap_rule1(model,j):
             typ = model.branchType[j]
-            expr = (model.branchNewCapacity[j] 
+            expr = (model.branchNewCapacity1[j] 
                     <= model.branchtypeMaxCapacity[typ]
-                        *model.branchNewCables[j])
+                        *model.branchNewCables1[j])
             return expr
-        model.cmaxNewCapacity = pyo.Constraint(model.BRANCH,
-                                               rule=maxNewCap_rule)
-        def newBranches_rule(model,j):
-            if model.branchExpand[j]==0:
-                expr = model.branchNewCables[j]==0
-                return expr
-            else:
-                return pyo.Constraint.Skip
-        model.cNewBranches = pyo.Constraint(model.BRANCH,
-                                            rule=newBranches_rule)
+        def maxNewCap_rule2(model,j):
+            typ = model.branchType[j]
+            expr = (model.branchNewCapacity2[j] 
+                    <= model.branchtypeMaxCapacity[typ]
+                        *model.branchNewCables2[j])
+            return expr
+        model.cmaxNewCapacity1 = pyo.Constraint(model.BRANCH_EXPAND1,
+                                               rule=maxNewCap_rule1)
+        model.cmaxNewCapacity2 = pyo.Constraint(model.BRANCH_EXPAND2,
+                                               rule=maxNewCap_rule2)
+
+# #Not required anymore since using BRANCH_EXPAND set instead of BRANCH set        
+#        def newBranches_rule(model,j):
+#            if model.branchExpand[j]==0:
+#                expr = model.branchNewCables[j]==0
+#                return expr
+#            else:
+#                return pyo.Constraint.Skip
+#        model.cNewBranches = pyo.Constraint(model.BRANCH,
+#                                            rule=newBranches_rule)
                                             
         # A node required at each branch endpoint
-        def newNodes_rule(model,n):
+        def newNodes_rule1(model,n):
             expr = 0
-            for j in model.BRANCH:
+            numnodes = model.nodeExistingNumber[n]
+            if n in model.NODE_EXPAND1:
+                numnodes += model.newNodes1[n]
+            for j in model.BRANCH_EXPAND1:
                 if model.branchNodeFrom[j]==n or model.branchNodeTo[j]==n:
-                    expr += model.branchNewCables[j]
-            #for j in model.branchNewCables:
-            #    expr += model.branchNewCables[j]
-            expr = expr <= self.M_const*(model.newNodes[n]
-                                         +model.nodeExistingNumber[n])
+                    expr += model.branchNewCables1[j]
+            expr = expr <= self.M_const * numnodes
+            if ((type(expr) is bool) and (expr==True)):
+                expr = pyo.Constraint.Skip
             return expr
-        model.cNewNodes = pyo.Constraint(model.NODE,rule=newNodes_rule)
+                    
+
+        def newNodes_rule2(model,n):
+            expr = 0
+            numnodes = model.nodeExistingNumber[n]
+            if n in model.NODE_EXPAND1:
+                numnodes += model.newNodes1[n]
+            if n in model.NODE_EXPAND2:
+                numnodes += model.newNodes2[n]
+            for j in model.BRANCH_EXPAND2:
+                if model.branchNodeFrom[j]==n or model.branchNodeTo[j]==n:
+                    expr += model.branchNewCables2[j]
+            expr = expr <= self.M_const * numnodes
+            if ((type(expr) is bool) and (expr==True)):
+                expr = pyo.Constraint.Skip
+            return expr
         
-        if genExpansion:
-            def newGenCapacity_rule(model,g):
-                if model.genExpand[g] == 0:
-                    expr = model.genNewCapacity[g] == 0
-                else:
-                    expr = pyo.Constraint.Skip
-                return expr
-            model.cNewGenCapacity = pyo.Constraint(model.GEN, 
-                                                   rule=newGenCapacity_rule)
+        model.cNewNodes1 = pyo.Constraint(model.NODE,
+                                          rule=newNodes_rule1)
+        model.cNewNodes2 = pyo.Constraint(model.NODE,
+                                          rule=newNodes_rule2)
+        
+#        def newGenCapacity_rule1(model,g):
+#            if model.genExpand[g] == 0:
+#                expr = model.genNewCapacity[g] == 0
+#            else:
+#                expr = pyo.Constraint.Skip
+#            return expr
+#        model.cNewGenCapacity = pyo.Constraint(model.GEN_EXPAND1, 
+#                                               rule=newGenCapacity_rule1)
                             
         
         # Generator output limitations
-        if genExpansion:
-            def maxPgen_rule(model,g,t):
-                expr = model.generation[g,t] <= (model.genCapacityProfile[g,t]*
-                            (model.genCapacity[g] + model.genNewCapacity[g]))
-                return expr
-            model.cMaxPgen = pyo.Constraint(model.GEN,model.TIME,
-                                            rule=maxPgen_rule)
-        else:
-            def maxPgen_rule(model,g,t):
-                expr = model.generation[g,t] <= (model.genCapacityProfile[g,t]*
-                            model.genCapacity[g])
-                return expr
-            model.cMaxPgen = pyo.Constraint(model.GEN,model.TIME,
-                                            rule=maxPgen_rule)
+
+        def maxPgen_rule(model,g,t,phase):
+            cap = model.genCapacity[g]
+            for ph in range(phase+1):
+                if g in model.GEN_EXPAND[ph]:
+                    cap += model.genNewCapacity[ph][g]
+            expr = model.generationTEST[g,t] <= (
+                model.genCapacityProfile[g,t] * cap)
+            #expr = model.generation[ph][g,t] <= (
+            #    model.genCapacityProfile[g,t] * cap)
+            return expr
+            
+        def maxPgen_rule1(model,g,t):
+            cap = model.genCapacity[g]
+            if g in model.GEN_EXPAND1:
+                cap += model.genNewCapacity_1[g]
+            expr = model.generation1[g,t] <= (
+                model.genCapacityProfile[g,t] * cap)
+            return expr
+
+        def maxPgen_rule2(model,g,t):
+            cap = model.genCapacity[g]
+            if g in model.GEN_EXPAND1:
+                cap += model.genNewCapacity_1[g]
+            if g in model.GEN_EXPAND2:
+                cap += model.genNewCapacity_2[g]
+            expr = model.generation2[g,t] <= (
+                model.genCapacityProfile[g,t] * cap)
+            return expr
+            
+
+        model.cMaxPgen1 = pyo.Constraint(model.GEN,model.TIME,
+                                        rule=maxPgen_rule1)
+        model.cMaxPgen2 = pyo.Constraint(model.GEN,model.TIME,
+                                        rule=maxPgen_rule2)
+#        if False:
+#            def maxPgen_rule(model,g,t):
+#                expr = model.generation[g,t] <= (model.genCapacityProfile[g,t]*
+#                            model.genCapacity[g])
+#                return expr
+#            model.cMaxPgen = pyo.Constraint(model.GEN,model.TIME,
+#                                            rule=maxPgen_rule)
         
         
         # Generator maximum average output (energy sum) 
         #(e.g. for hydro with storage)
-        def maxPavg_rule(model,g):
+        def maxPavg_rule1(model,g):
             if model.genPAvg[g]>0:
-                expr = (sum(model.generation[g,t] for t in model.TIME) 
+                expr = (sum(model.generation_phase1[g,t] for t in model.TIME) 
                             <= model.genPAvg[g]*len(model.TIME))
             else:
                 expr = pyo.Constraint.Skip
             return expr
-        model.cMaxPavg = pyo.Constraint(model.GEN,rule=maxPavg_rule)
+        def maxPavg_rule2(model,g):
+            if model.genPAvg[g]>0:
+                expr = (sum(model.generation_phase2[g,t] for t in model.TIME) 
+                            <= model.genPAvg[g]*len(model.TIME))
+            else:
+                expr = pyo.Constraint.Skip
+            return expr
+        model.cMaxPavg1 = pyo.Constraint(model.GEN,
+                                               rule=maxPavg_rule1)
+        model.cMaxPavg2 = pyo.Constraint(model.GEN,
+                                               rule=maxPavg_rule2)
 
         # Emissions restriction per country/load
+        # TODO: Update in line with 2-stage/2-phase model
         if CO2price:
             def emissionCap_rule(model,a):
                 expr = 0
@@ -286,33 +395,53 @@ class SipModel():
             model.cEmissionCap = pyo.Constraint(model.AREA, rule=emissionCap_rule)
             
 
-        if genExpansion:
-            def curtailment_rule(model,g,t):
-                # Only consider curtailment cost for zero cost generators
-                if model.genCostAvg[g] == 0:
-                    expr =  (model.curtailment[g,t] 
-                        == model.genCapacityProfile[g,t]*(model.genCapacity[g] + model.genNewCapacity[g]) 
-                            - model.generation[g,t])
-                    return expr
-                else:
-                    return pyo.Constraint.Skip
-            model.genCurtailment = pyo.Constraint(model.GEN, model.TIME, 
-                                                  rule=curtailment_rule)
-        else:
-            def curtailment_rule(model,g,t):
-                # Only consider curtailment cost for zero cost generators
-                if model.genCostAvg[g] == 0:
-                    expr =  (model.curtailment[g,t] 
-                        == model.genCapacityProfile[g,t]*(model.genCapacity[g]) 
-                            - model.generation[g,t])
-                    return expr
-                else:
-                    return pyo.Constraint.Skip
-            model.genCurtailment = pyo.Constraint(model.GEN, model.TIME, 
-                                                  rule=curtailment_rule)
+        def curtailment_rule1(model,g,t):
+            # Only consider curtailment cost for zero cost generators
+            if model.genCostAvg[g] == 0:
+                gencap = model.genCapacity[g] 
+                if g in model.GEN_EXPAND1:
+                    gencap += + model.genNewCapacity1[g]
+                expr =  (model.curtailment1[g,t] == (
+                        model.genCapacityProfile[g,t]*gencap 
+                        - model.generation1[g,t]))
+                return expr
+            else:
+                return pyo.Constraint.Skip
+
+        def curtailment_rule2(model,g,t):
+            # Only consider curtailment cost for zero cost generators
+            if model.genCostAvg[g] == 0:
+                gencap = model.genCapacity[g] 
+                if g in model.GEN_EXPAND1:
+                    gencap += model.genNewCapacity1[g]
+                if g in model.GEN_EXPAND2:
+                    gencap += model.genNewCapacity2[g]
+                expr =  (model.curtailment2[g,t] == (
+                        model.genCapacityProfile[g,t]*gencap 
+                            - model.generation2[g,t]))
+                return expr
+            else:
+                return pyo.Constraint.Skip
+
+        model.genCurtailment_phase1 = pyo.Constraint(model.GEN, model.TIME, 
+                                              rule=curtailment_rule1)
+        model.genCurtailment_phase2 = pyo.Constraint(model.GEN, model.TIME, 
+                                              rule=curtailment_rule2)
+#        else:
+#            def curtailment_rule(model,g,t):
+#                # Only consider curtailment cost for zero cost generators
+#                if model.genCostAvg[g] == 0:
+#                    expr =  (model.curtailment[g,t] 
+#                        == model.genCapacityProfile[g,t]*(model.genCapacity[g]) 
+#                            - model.generation[g,t])
+#                    return expr
+#                else:
+#                    return pyo.Constraint.Skip
+#            model.genCurtailment = pyo.Constraint(model.GEN, model.TIME, 
+#                                                  rule=curtailment_rule)
        
         # Power balance in nodes : gen+demand+flow into node=0
-        def powerbalance_rule(model,n,t):
+        def powerbalance_rule1(model,n,t):
             expr = 0
 
             # flow of power into node (subtrating losses)
@@ -321,76 +450,112 @@ class SipModel():
                     # branch out of node
                     typ = model.branchType[j]
                     dist = model.branchDistance[j]
-                    expr += -model.branchFlow12[j,t]
-                    expr += model.branchFlow21[j,t] * (1-(
+                    expr += -model.branchFlow12_1[j,t]
+                    expr += model.branchFlow21_1[j,t] * (1-(
                                 model.branchLossfactor[typ,'fix']
                                 +model.branchLossfactor[typ,'slope']*dist))
                 if model.branchNodeTo[j]==n:
                     # branch into node
                     typ = model.branchType[j]
                     dist = model.branchDistance[j]
-                    expr += model.branchFlow12[j,t] * (1-(
+                    expr += model.branchFlow12_1[j,t] * (1-(
                                 model.branchLossfactor[typ,'fix']
                                 +model.branchLossfactor[typ,'slope']*dist))
-                    expr += -model.branchFlow21[j,t] 
+                    expr += -model.branchFlow21_1[j,t] 
 
             # generated power 
             for g in model.GEN:
                 if model.genNode[g]==n:
-                    expr += model.generation[g,t]
+                    expr += model.generation1[g,t]
 
             # consumed power
             for c in model.LOAD:
                 if model.demNode[c]==n:
                     expr += -model.demandAvg[c]*model.demandProfile[c,t]
             
+            expr = (expr == 0)
+            return expr
             
+        def powerbalance_rule2(model,n,t):
+            expr = 0
+
+            # flow of power into node (subtrating losses)
+            for j in model.BRANCH:
+                if model.branchNodeFrom[j]==n:
+                    # branch out of node
+                    typ = model.branchType[j]
+                    dist = model.branchDistance[j]
+                    expr += -model.branchFlow12_2[j,t]
+                    expr += model.branchFlow21_2[j,t] * (1-(
+                                model.branchLossfactor[typ,'fix']
+                                +model.branchLossfactor[typ,'slope']*dist))
+                if model.branchNodeTo[j]==n:
+                    # branch into node
+                    typ = model.branchType[j]
+                    dist = model.branchDistance[j]
+                    expr += model.branchFlow12_2[j,t] * (1-(
+                                model.branchLossfactor[typ,'fix']
+                                +model.branchLossfactor[typ,'slope']*dist))
+                    expr += -model.branchFlow21_2[j,t] 
+
+            # generated power 
+            for g in model.GEN:
+                if model.genNode[g]==n:
+                    expr += model.generation2[g,t]
+
+            # consumed power
+            for c in model.LOAD:
+                if model.demNode[c]==n:
+                    expr += -model.demandAvg[c]*model.demandProfile[c,t]
             
             expr = (expr == 0)
             return expr
-        model.cPowerbalance = pyo.Constraint(model.NODE,model.TIME,
-                                             rule=powerbalance_rule)
+            
+        model.cPowerbalance_phase1 = pyo.Constraint(model.NODE,model.TIME,
+                                             rule=powerbalance_rule1)
+        model.cPowerbalance_phase2 = pyo.Constraint(model.NODE,model.TIME,
+                                             rule=powerbalance_rule2)
         
         # COST PARAMETERS ############
-        def costBranch(model,b):
+        def costBranch(model,b,var_num,var_cap):
             b_cost = 0
             typ = model.branchType[b]
             b_cost += (model.branchtypeCost[typ,'B']
-                        *model.branchNewCables[b])
+                        *var_num[b])
             b_cost += (model.branchtypeCost[typ,'Bd']
                         *model.branchDistance[b]
-                        *model.branchNewCables[b])
+                        *var_cap[b])
             b_cost += (model.branchtypeCost[typ,'Bdp']
-                    *model.branchDistance[b]*model.branchNewCapacity[b])
+                    *model.branchDistance[b]*var_cap[b])
             
             #endpoints offshore (N=1) or onshore (N=0) ?
             N1 = model.branchOffshoreFrom[b]
             N2 = model.branchOffshoreTo[b]
             for N in [N1,N2]:
                 b_cost += N*(model.branchtypeCost[typ,'CS']
-                            *model.branchNewCables[b]
+                            *var_num[b]
                         +model.branchtypeCost[typ,'CSp']
-                        *model.branchNewCapacity[b])            
+                        *var_cap[b])            
                 b_cost += (1-N)*(model.branchtypeCost[typ,'CL']
-                            *model.branchNewCables[b]
+                            *var_num[b]
                         +model.branchtypeCost[typ,'CLp']
-                        *model.branchNewCapacity[b])
+                        *var_cap[b])
             
             return model.branchCostScale[b]*b_cost
 
-        def costNode(model,n):
+        def costNode(model,n,var_num):
             n_cost = 0
             N = model.nodeOffshore[n]
             n_cost += N*(model.nodetypeCost[model.nodeType[n],'S']
-                        *model.newNodes[n])
+                        *var_num[n])
             n_cost += (1-N)*(model.nodetypeCost[model.nodeType[n],'L']
-                        *model.newNodes[n])
+                        *var_num[n])
             return model.nodeCostScale[n]*n_cost
             
-        def costGen(model,g):
+        def costGen(model,g,var_cap):
             g_cost = 0
             typ = model.genType[g]
-            g_cost += model.genTypeCost[typ]*model.genNewCapacity[g]
+            g_cost += model.genTypeCost[typ]*var_cap[g]
             return model.genCostScale[g]*g_cost
 
         #model.branchCost = pyo.Param(model.BRANCH, 
@@ -406,47 +571,54 @@ class SipModel():
             """Investment cost, including lifetime O&M costs"""
             expr = 0
 
-            # add branch costs:
-            for b in model.BRANCH:
-                #expr += model.branchCost[b]
-                expr += costBranch(model,b)
-                        
-            # add node costs:
-            for n in model.NODE:
-                #expr += model.nodeCost
-                expr += costNode(model,n)
-            
+            # add branch, node and generator investment costs:
+            for b in model.BRANCH_EXPAND1:
+                expr += costBranch(model,b,
+                                   var_num=model.branchNewCables1,
+                                   var_cap=model.branchNewCapacity1)
+            for n in model.NODE_EXPAND1:
+                expr += costNode(model,n,var_num=model.newNodes1)            
+            for g in model.GEN_EXPAND1:
+                expr += costGen(model, g,var_cap=model.genNewCapacity1)
+
             # add O&M costs:
             expr = expr*(1 + model.omRate*annuityfactor(
                             model.financeInterestrate,
                             model.financeYears)) 
+                            
+            # TODO: Add operational costs for phase one (if delta T >0)
             return   expr  
         model.firstStageCost = pyo.Expression(rule=firstStageCost_rule)
     
         def secondStageCost_rule(model):
             """Operational costs: cost of gen, load shed and curtailment"""
             if CO2price:            
-                expr = sum(model.generation[i,t]*(
+                expr = sum(model.generation2[i,t]*(
                             model.genCostAvg[i]*model.genCostProfile[i,t]
                             +model.genTypeEmissionRate[model.genType[i]]*model.CO2price)
                             for i in model.GEN for t in model.TIME)
             else:
-                expr = sum(model.generation[i,t]*
+                expr = sum(model.generation2[i,t]*
                             model.genCostAvg[i]*model.genCostProfile[i,t]
                             for i in model.GEN for t in model.TIME)
             #loadshedding=0 by powerbalance constraint
             #expr += sum(model.loadShed[i,t]*model.shedCost[i] 
             #            for i in model.NODE for t in model.TIME)
-            expr += sum(model.curtailment[i,t]*model.curtailmentCost 
+            expr += sum(model.curtailment2[i,t]*model.curtailmentCost 
                         for i in model.GEN for t in model.TIME)           
             # annual costs of operation
             samplefactor = 8760/len(model.TIME)
             expr = samplefactor*expr
             
-            # 2nd stage investment costs in generation capacity
-            if genExpansion:
-                for g in model.GEN:
-                    expr += costGen(model, g)
+            # 2nd stage investment costs 
+            for b in model.BRANCH_EXPAND2:
+                expr += costBranch(model,b,
+                                   var_num=model.branchNewCables2,
+                                   var_cap=model.branchNewCapacity2)
+            for n in model.NODE_EXPAND2:
+                expr += costNode(model,n,var_num=model.newNodes2)            
+            for g in model.GEN_EXPAND2:
+                expr += costGen(model, g,var_cap=model.genNewCapacity2)
             
             # lifetime cost of operation and investment
             expr = expr*annuityfactor(model.financeInterestrate,
@@ -553,7 +725,27 @@ class SipModel():
         di['GEN'] = {None: [i for i in range(grid_data.generator.shape[0]) ]}
         di['LOAD'] = {None: [i for i in range(grid_data.consumer.shape[0]) ]}
         di['AREA'] = {None: grid_data.node.area.unique().tolist()}
-        di['TIME'] = {None: grid_data.timerange}        
+        di['TIME'] = {None: grid_data.timerange}
+        
+        br_expand1 = grid_data.branch[
+                        grid_data.branch['expand']==1].index.tolist()
+        br_expand2 = grid_data.branch[
+                        grid_data.branch['expand']==2].index.tolist()
+        gen_expand1 = grid_data.generator[
+                        grid_data.generator['expand']==1].index.tolist()
+        gen_expand2 = grid_data.generator[
+                        grid_data.generator['expand']==2].index.tolist()
+        node_expand1 = grid_data.node[
+                        grid_data.node['expand1']==1].index.tolist()
+        node_expand2 = grid_data.node[
+                        grid_data.node['expand2']==2].index.tolist()
+        
+        di['BRANCH_EXPAND1'] = {None: br_expand1}
+        di['BRANCH_EXPAND2'] = {None: br_expand2}
+        di['GEN_EXPAND1'] = {None:gen_expand1}
+        di['GEN_EXPAND2'] = {None:gen_expand2}
+        di['NODE_EXPAND1'] = {None:node_expand1}
+        di['NODE_EXPAND2'] = {None:node_expand2}
         
         #Parameters:
         di['nodeOffshore'] = {}
