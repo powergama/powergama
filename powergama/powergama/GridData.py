@@ -22,33 +22,39 @@ class GridData(object):
     
     # Headers and default values in input files:
     # default=None: column _must_ be present in input file
-    _keys_node = {'id':None, 'area':None, 'lat':None,'lon':None}
-    _keys_branch = {'node_from':None,'node_to':None,
-                    'reactance':None,'capacity':None}
-    _keys_dcbranch = {'node_from':None, 'node_to':None, 'capacity':None}
-    _keys_generator = {'type':None,'desc':'', 'node':None,
+    keys_powergama = {
+        'node': {'id':None, 'area':None, 'lat':None,'lon':None},
+        'branch': {'node_from':None,'node_to':None,
+                   'reactance':None,'capacity':None},
+        'dcbranch': {'node_from':None, 'node_to':None, 'capacity':None},
+        'generator': {'type':None,'desc':'', 'node':None,
                        'pmax':None,'pmin':None,'fuelcost':None,
                        'inflow_fac':None,'inflow_ref':None,
                        'storage_cap':0,'storage_price':0,'storage_ini':0,
                        'storval_filling_ref':'','storval_time_ref':'',
-                       'pump_cap':0,'pump_efficiency':0,'pump_deadband':0}
-    _keys_consumer = {'node':None, 'demand_avg':None,'demand_ref':None,
+                       'pump_cap':0,'pump_efficiency':0,'pump_deadband':0},
+        'consumer' : {'node':None, 'demand_avg':None,'demand_ref':None,
                       'flex_fraction':0, 'flex_on_off':0, 'flex_basevalue':0,
                       'flex_storage':0, 'flex_storval_filling':'',
                       'flex_storval_time':'', 'flex_storagelevel_init':0.5}
+        }
 
-    # Required fields for investment analysis input data    
+    # Required fields for investment analysis input data  
+    # Default value = -1 means that it should be computed by the program  
     keys_sipdata = {
-        'node': ['id','area', 'lat', 'lon','offshore','type',
-                 'existing','cost_scaling'],
-        'branch': ['node_from','node_to','capacity',
-                   'expand','max_newCap','distance','cost_scaling',
-                   'type'],
-        'generator': ['type','node','pmax','pmin',
-                      'expand','p_maxNew', 'cost_scaling',
-                      'fuelcost','fuelcost_ref','pavg',
-                      'inflow_fac','inflow_ref'],
-        'consumer': ['node', 'demand_avg','emission_cap', 'demand_ref']
+        'node': {'id':None,'area':None, 'lat':None, 'lon':None,
+                 'offshore':None,'type':None,
+                 'existing':None,'cost_scaling':None},
+        'branch': {'node_from':None,'node_to':None,'capacity':None,
+                   'expand':None,'max_newCap':-1,'distance':-1,
+                   'cost_scaling':None,'type':None},
+        'dcbranch' :{},
+        'generator': {'type':None,'node':None,'pmax':None,'pmin':None,
+                      'expand':None,'p_maxNew':-1, 'cost_scaling':1,
+                      'fuelcost':None,'fuelcost_ref':None,'pavg':None,
+                      'inflow_fac':None,'inflow_ref':None},
+        'consumer': {'node':None, 'demand_avg':None,'emission_cap':-1, 
+                     'demand_ref':None}
         }
         
 
@@ -81,7 +87,8 @@ class GridData(object):
         elif method=='ceil':
             return int(base * math.ceil(float(x)/base))
         else:
-            raise
+            raise Exception("Rounding error")
+
             
     def readGridData(self,nodes,ac_branches,dc_branches,generators,consumers):
         '''Read grid data from files into data variables'''
@@ -91,35 +98,22 @@ class GridData(object):
         if not dc_branches is None:
             self.dcbranch = pd.read_csv(dc_branches)
         else:
-            self.dcbranch = pd.DataFrame(columns=self._keys_dcbranch.keys())
+            self.dcbranch = pd.DataFrame(
+                columns=self.keys_powergama['dcbranch'].keys())
         self.generator = pd.read_csv(generators)
         self.consumer = pd.read_csv(consumers)
 
-        for k,v in self._keys_node.items():
-            if v==None and not k in self.node:
-                raise Exception("Node input file must contain %s" %k)
-        for k,v in self._keys_branch.items():
-            if v==None and not k in self.branch:
-                raise Exception("Branch input file must contain %s" %k)
-        for k,v in self._keys_dcbranch.items():
-            if v==None and not k in self.dcbranch:
-                raise Exception("DC branch input file must contain %s" %k)
-        for k,v in self._keys_generator.items():
-            if v==None and not k in self.generator:
-                raise Exception("Generator input file must contain %s" %k)
-        for k,v in self._keys_consumer.items():
-            if v==None and not k in self.consumer:
-                raise Exception("Consumer input file must contain %s" %k)
-        
+        self._checkGridDataFields(self.keys_powergama)
+                
 
         #TODO: fix difference in node index between powergama and powergim        
         # numerical index is needed in method computePowerFlowMatrices
-        # (and maybe elsewhere)         
+        # (and maybe elsewhere). This does _not_ work with powergama:         
         #self.node.set_index('id',inplace=True,append=False)
         #self.node['id']=self.node.index
         self._checkGridData()
-        self._addDefaultColumns()
-        self._fillEmptyCells()
+        self._addDefaultColumns(keys=self.keys_powergama)
+        self._fillEmptyCells(keys=self.keys_powergama)
         
     def readSipData(self,nodes,branches,generators,consumers):
         '''Read grid data for investment analysis from files (PowerGIM)
@@ -132,56 +126,90 @@ class GridData(object):
         generator fuelcost (e.g. one generator with fuelcost = power price)
         '''
         self.node = pd.read_csv(nodes,
-                                usecols=self.keys_sipdata['node'],
+                                #usecols=self.keys_sipdata['node'],
                                 dtype={'id':str, 'area':str})
         self.node.set_index('id',inplace=True)
         self.node['id']=self.node.index
         self.branch = pd.read_csv(branches,
-                                  usecols=self.keys_sipdata['branch'],
+                                  #usecols=self.keys_sipdata['branch'],
                                   dtype={'node_from':str,'node_to':str})
         # dcbranch variable only needed for powergama.plotMapGrid
         self.dcbranch = pd.DataFrame()
         self.generator = pd.read_csv(generators,
-                                     usecols=self.keys_sipdata['generator'],
+                                     #usecols=self.keys_sipdata['generator'],
                                      dtype={'node':str,'type':str})
         self.consumer = pd.read_csv(consumers,
-                                    usecols=self.keys_sipdata['consumer'],
+                                    #usecols=self.keys_sipdata['consumer'],
                                     dtype={'node':str})
         
-        # treat node id as string (even if numeric)                            
-        #self.node['id'] = self.node['id'].astype(str)
-        #self.generator['node'] = self.generator['node'].astype(str)
-        #self.branch['node_from'] = self.branch['node_from'].astype(str)
-        #self.branch['node_to'] = self.branch['node_to'].astype(str)
-        #self.consumer['node'] = self.consumer['node'].astype(str)
     
+        self._checkGridDataFields(self.keys_sipdata)
+        self._addDefaultColumns(keys=self.keys_sipdata)
+        self._fillEmptyCells(keys=self.keys_sipdata)
         self._checkGridData()
 
 
 
-    def _fillEmptyCells(self):
+    def _fillEmptyCells(self,keys):
         '''Use default data where none is given'''
         #generators:
-        for col,val in self._keys_generator.items():
+        for col,val in keys['generator'].items():
             if val != None:
                 self.generator[col] = self.generator[col].fillna(
-                    self._keys_generator[col])
+                    keys['generator'][col])
         #consumers:
-        for col,val in self._keys_consumer.items():
+        for col,val in keys['consumer'].items():
             if val != None:
                 self.consumer[col] = self.consumer[col].fillna(
-                    self._keys_consumer[col])
+                    keys['consumer'][col])
+
+        #branches:
+        for col,val in keys['branch'].items():
+            if val != None:
+                self.branch[col] = self.branch[col].fillna(
+                    keys['branch'][col])
         
         
-    def _addDefaultColumns(self):
+    def _addDefaultColumns(self,keys):
         '''insert optional columns with default values when none
         are provided in input files'''
-        for k in self._keys_generator:
+        for k in keys['generator']:
             if k not in self.generator.keys():
-                self.generator[k] = self._keys_generator[k]
-        for k in self._keys_consumer:
+                self.generator[k] = keys['generator'][k]
+        for k in keys['consumer']:
             if k not in self.consumer.keys():
-                self.consumer[k] = self._keys_consumer[k]
+                self.consumer[k] = keys['consumer'][k]
+        for k in keys['branch']:
+            if k not in self.branch.keys():
+                self.branch[k] = keys['branch'][k]
+        
+        # Discard extra columns (comments etc)
+        self.node = self.node[list(keys['node'].keys())]
+        self.branch = self.branch[list(keys['branch'].keys())]
+        self.dcbranch = self.dcbranch[list(keys['dcbranch'].keys())]
+        self.generator = self.generator[list(keys['generator'].keys())]
+        self.consumer = self.consumer[list(keys['consumer'].keys())]
+                
+                
+    def _checkGridDataFields(self,keys):
+        '''check if all required columns are present 
+        (ie. all columns with no default value)'''
+        for k,v in keys['node'].items():
+            if v==None and not k in self.node:
+                raise Exception("Node input file must contain %s" %k)
+        for k,v in keys['branch'].items():
+            if v==None and not k in self.branch:
+                raise Exception("Branch input file must contain %s" %k)
+        for k,v in keys['dcbranch'].items():
+            if v==None and not k in self.dcbranch:
+                raise Exception("DC branch input file must contain %s" %k)
+        for k,v in keys['generator'].items():
+            if v==None and not k in self.generator:
+                raise Exception("Generator input file must contain %s" %k)
+        for k,v in keys['consumer'].items():
+            if v==None and not k in self.consumer:
+                raise Exception("Consumer input file must contain %s" %k)
+        
            
         
     def _checkGridData(self):
