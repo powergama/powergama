@@ -121,8 +121,10 @@ def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,
     for i in grid_data.generator.index:
         typ = grid_data.generator.type[i]
         cap = grid_data.generator.pmax[i]
-        name = simplekml.makeunicode.u("GENERATOR {}"
-                    .format(grid_data.generator.desc[i]))
+        name = "GENERATOR"
+        if 'desc' in grid_data.generator.columns:
+            name = simplekml.makeunicode.u("GENERATOR {}"
+                        .format(grid_data.generator.desc[i]))
         node = grid_data.generator.node[i]
         nodeIndx = node
         lon = grid_data.node.lon[nodeIndx]

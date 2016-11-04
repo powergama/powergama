@@ -44,8 +44,7 @@ class GridData(object):
     keys_sipdata = {
         'node': {'id':None,'area':None, 'lat':None, 'lon':None,
                  'offshore':None,'type':None,
-                 'existing':None,'cost_scaling':None,
-                 'expand1':None,'expand2':None},
+                 'existing':None,'cost_scaling':None},
         'branch': {'node_from':None,'node_to':None,'capacity':None,
                    'expand':None,'max_newCap':-1,'distance':-1,
                    'cost_scaling':None,'type':None},
