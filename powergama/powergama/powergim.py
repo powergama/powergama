@@ -782,6 +782,12 @@ class SipModel():
                         grid_data.generator['expand']==1].index.tolist()
         gen_expand2 = grid_data.generator[
                         grid_data.generator['expand']==2].index.tolist()
+        # Convert from numpy.int64 (pandas) to int in order to work with PySP
+        # (pprint function error otherwise)
+        br_expand1 = [int(i) for i in br_expand1]
+        br_expand2 = [int(i) for i in br_expand2]
+        gen_expand1 = [int(i) for i in gen_expand1]
+        gen_expand2 = [int(i) for i in gen_expand2]
         # Determine which nodes should be considered upgraded in each stage,
         # depending on whether any generators or branches are connected
         node_expand1=[]
@@ -1624,7 +1630,8 @@ class SipModel():
 
 
     def extractResultingGridData(self,grid_data,
-                                 model=None,file_ph=None,stage=1):
+                                 model=None,file_ph=None,
+                                 stage=1,scenario=None):
         '''Extract resulting optimal grid layout from simulation results
         
         Parameters
@@ -1639,7 +1646,9 @@ class SipModel():
             Which stage to extract data for (1 or 2).
             1: only stage one investments included (default)
             2: both stage one and stage two investments included
-
+        scenario : int
+            which stage 2 scenario to get data for (only relevant when stage=2)
+            
         Use either model or file_ph parameter        
         
         Returns
@@ -1649,48 +1658,73 @@ class SipModel():
         import copy
 
         grid_res = copy.deepcopy(grid_data)
-        res_brC = pd.DataFrame(0,index=model.BRANCH,columns=['val'])  
-        res_N = pd.DataFrame(0,index=model.NODE,columns=['val'])
-        res_G = pd.DataFrame(0,index=model.GEN,columns=['val'])
+        res_brC = pd.DataFrame(data=grid_res.branch['capacity']) 
+        res_N = pd.DataFrame(data=grid_res.node['existing'])
+        res_G = pd.DataFrame(data=grid_res.generator['pmax'])
         if model is not None:
+            #res_brC = pd.DataFrame(0,index=model.BRANCH,columns=['val'])  
+            #res_N = pd.DataFrame(0,index=model.NODE,columns=['val'])
+            #res_G = pd.DataFrame(0,index=model.GEN,columns=['val'])
             if stage >= 1:
                 for j in model.BRANCH_EXPAND1:
-                    res_brC['val'][j] = model.branchNewCapacity1[j].value
+                    res_brC['capacity'][j] += model.branchNewCapacity1[j].value
                 for j in model.NODE_EXPAND1:
-                    res_N['val'][j] = int(model.newNodes1[j].value)
+                    res_N['existing'][j] += int(model.newNodes1[j].value)
                 for j in model.GEN_EXPAND1:
-                    res_G['val'][j] = int(model.genNewCapacity1[j].value)
+                    res_G['pmax'][j] += model.genNewCapacity1[j].value
             if stage >= 2:
                 #add to investments in stage 1
                 for j in model.BRANCH_EXPAND2:
-                    res_brC['val'][j] += model.branchNewCapacity2[j].value
+                    res_brC['capacity'][j] += model.branchNewCapacity2[j].value
                 for j in model.NODE_EXPAND2:
-                    res_N['val'][j] += int(model.newNodes2[j].value)
+                    res_N['existing'][j] += int(model.newNodes2[j].value)
                 for j in model.GEN_EXPAND2:
-                    res_G['val'][j] += int(model.genNewCapacity2[j].value)
+                    res_G['pmax'][j] += model.genNewCapacity2[j].value
         elif file_ph is not None:
+            #res_brC = pd.DataFrame(data=grid_res.branch['capacity'],
+            #                       columns=['val']) 
+            #res_N = pd.DataFrame(data=grid_res.node['existing'],
+            #                       columns=['val'])
+            #res_G = pd.DataFrame(data=grid_res.generator['pmax'],
+            #                       columns=['val'])
             df_ph = pd.read_csv(file_ph,header=None,skipinitialspace=True,
                                 names=['stage','node',
-                                       'var','var_indx','value']);
-            df_branchNewCables = df_ph.loc[df_ph['var']=='branchNewCables']
-            df_branchNewCapacity = df_ph.loc[df_ph['var']=='branchNewCapacity']
-            df_newNodes = df_ph.loc[df_ph['var']=='newNodes']
-
-            for j in grid_res.branch.index:
-                # need to convert to string, because ph.csv indx_var is treated as
-                # string:
-                ind = df_branchNewCapacity['var_indx']==str(j)
-                res_brC.append(float(df_branchNewCapacity[ind]['value']))
-            res_N = []
-            for j in grid_res.node.index:
-                ind = df_newNodes['var_indx']==str(j)
-                res_N.append(int(df_newNodes[ind]['value']))
+                                       'var','var_indx','value'])
+            if stage>=1:
+                df_branchNewCables = df_ph[df_ph['var']=='branchNewCables1']
+                df_branchNewCapacity = df_ph[df_ph['var']=='branchNewCapacity1']
+                df_newNodes = df_ph[df_ph['var']=='newNodes1']
+                df_newGen = df_ph[df_ph['var']=='genNewCapacity1']
+                for k,row in df_branchNewCapacity.iterrows():
+                    res_brC['capacity'][int(row['var_indx'])] += float(row['value'])
+                for k,row in df_newNodes.iterrows():
+                    res_N['existing'][row['var_indx']] += int(row['value'])
+                for k,row in df_newGen.iterrows():
+                    res_G['pmax'][int(row['var_indx'])] += float(row['value'])                
+            if stage>=2:
+                if scenario is None:
+                    raise Exception('Missing input "scenario"')
+                    
+                df_branchNewCapacity = df_ph[
+                    (df_ph['var']=='branchNewCapacity2') &
+                    (df_ph['node']=='LeafNode_Scenario{}'.format(scenario))]
+                df_newNodes = df_ph[(df_ph['var']=='newNodes2') &
+                    (df_ph['node']=='LeafNode_Scenario{}'.format(scenario))]
+                df_newGen = df_ph[(df_ph['var']=='genNewCapacity2') &
+                    (df_ph['node']=='LeafNode_Scenario{}'.format(scenario))]
+                #TODO fix: this will add up from all scenarios:
+                for k,row in df_branchNewCapacity.iterrows():
+                    res_brC['capacity'][int(row['var_indx'])] += float(row['value'])
+                for k,row in df_newNodes.iterrows():
+                    res_N['existing'][row['var_indx']] += int(row['value'])
+                for k,row in df_newGen.iterrows():
+                    res_G['pmax'][int(row['var_indx'])] += float(row['value'])                
         else:
             raise Exception('Missing input parameter')
             
-        grid_res.branch['capacity'] = grid_res.branch['capacity'] + res_brC['val']
-        grid_res.node['existing'] = grid_res.node['existing'] + res_N['val']
-        grid_res.generator['pmax'] = grid_res.generator['pmax'] + res_G['val']
+        grid_res.branch['capacity'] = res_brC['capacity']
+        grid_res.node['existing'] = res_N['existing']
+        grid_res.generator['pmax'] = res_G['pmax']
         grid_res.branch = grid_res.branch[grid_res.branch['capacity'] 
             > self._NUMERICAL_THRESHOLD_ZERO]
         grid_res.node = grid_res.node[grid_res.node['existing'] 
