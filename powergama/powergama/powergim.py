@@ -93,6 +93,8 @@ class SipModel():
         #branches:
         model.branchExistingCapacity = pyo.Param(model.BRANCH, 
                                                  within=pyo.NonNegativeReals)
+        model.branchExistingCapacity2 = pyo.Param(model.BRANCH, 
+                                                 within=pyo.NonNegativeReals)
         model.branchExpand = pyo.Param(model.BRANCH,
                                        within=pyo.NonNegativeIntegers)         
         model.branchDistance = pyo.Param(model.BRANCH, 
@@ -112,6 +114,7 @@ class SipModel():
         model.genCostProfile = pyo.Param(model.GEN,model.TIME,
                                          within=pyo.Reals)
         model.genCapacity = pyo.Param(model.GEN,within=pyo.Reals)
+        model.genCapacity2 = pyo.Param(model.GEN,within=pyo.Reals)
         model.genCapacityProfile = pyo.Param(model.GEN,model.TIME,
                                           within=pyo.Reals)
         model.genPAvg = pyo.Param(model.GEN,within=pyo.Reals)
@@ -230,7 +233,8 @@ class SipModel():
         
         #phase 2
         def maxflow12_rule2(model, j, t):
-            cap = model.branchExistingCapacity[j]
+            cap = (model.branchExistingCapacity[j]
+                    +model.branchExistingCapacity2[j])
             if j in model.BRANCH_EXPAND1:
                 cap += model.branchNewCapacity1[j]
             if j in model.BRANCH_EXPAND2:
@@ -248,7 +252,8 @@ class SipModel():
         
         #phase 2
         def maxflow21_rule2(model, j, t):
-            cap = model.branchExistingCapacity[j]
+            cap = (model.branchExistingCapacity[j]
+                    +model.branchExistingCapacity2[j])
             if j in model.BRANCH_EXPAND1:
                 cap += model.branchNewCapacity1[j]
             if j in model.BRANCH_EXPAND2:
@@ -350,6 +355,7 @@ class SipModel():
 #            #    model.genCapacityProfile[g,t] * cap)
 #            return expr
             
+        # phase 1
         def maxPgen_rule1(model,g,t):
             cap = model.genCapacity[g]
             if g in model.GEN_EXPAND1:
@@ -357,9 +363,10 @@ class SipModel():
             expr = model.generation1[g,t] <= (
                 model.genCapacityProfile[g,t] * cap)
             return expr
-
+        
+        # phase 2
         def maxPgen_rule2(model,g,t):
-            cap = model.genCapacity[g]
+            cap = model.genCapacity[g] + model.genCapacity2[g]
             if g in model.GEN_EXPAND1:
                 cap += model.genNewCapacity1[g]
             if g in model.GEN_EXPAND2:
@@ -435,7 +442,7 @@ class SipModel():
         def curtailment_rule2(model,g,t):
             # Only consider curtailment cost for zero cost generators
             if model.genCostAvg[g] == 0:
-                gencap = model.genCapacity[g] 
+                gencap = model.genCapacity[g] + model.genCapacity2[g] 
                 if g in model.GEN_EXPAND1:
                     gencap += model.genNewCapacity1[g]
                 if g in model.GEN_EXPAND2:
@@ -831,6 +838,7 @@ class SipModel():
             di['nodeArea'][n] = row['area']
             
         di['branchExistingCapacity'] = {}
+        di['branchExistingCapacity2'] = {}
         di['branchExpand'] = {}
         di['branchDistance'] = {}
         di['branchType'] = {}
@@ -843,6 +851,7 @@ class SipModel():
         offsh = self._offshoreBranch(grid_data)
         for k,row in grid_data.branch.iterrows():
             di['branchExistingCapacity'][k] = row['capacity']
+            di['branchExistingCapacity2'][k] = row['capacity2']
             if row['max_newCap'] >0:
                 di['branchMaxNewCapacity'][k] = row['max_newCap']
             else:
@@ -860,6 +869,7 @@ class SipModel():
             di['branchNodeTo'][k] = row['node_to']
             
         di['genCapacity']={}
+        di['genCapacity2']={}
         di['genCapacityProfile']={}
         di['genNode']={}
         di['genCostAvg'] = {}
@@ -871,6 +881,7 @@ class SipModel():
         di['genCostScale'] = {}
         for k,row in grid_data.generator.iterrows():
             di['genCapacity'][k] = row['pmax']
+            di['genCapacity2'][k] = row['pmax2']
             di['genNode'][k] = row['node']
             di['genCostAvg'][k] = row['fuelcost']
             di['genPAvg'][k] = row['pavg']
@@ -1446,12 +1457,14 @@ class SipModel():
         # Specifying columns is not necessary, but useful to get the wanted 
         # ordering
         df_branches = pd.DataFrame(columns=['from','to','fArea','tArea','type',
-                                           'existingCapacity','expand',
+                                           'existingCapacity',
+                                           'existingCapacity2','expand',
                                            'newCables','newCapacity'])
 #        df_nodes = pd.DataFrame(columns=['num','area','newNodes1',
 #                                         'cost','cost_withOM'])
         df_gen = pd.DataFrame(columns=['num','node','area',
-                                       'type','expand','newCapacity'])
+                                       'type','pmax','pmax2','expand',
+                                       'newCapacity'])
 #        df_load = pd.DataFrame(columns=['num','node','area','Pavg','Pmin','Pmax',
 #                                        'emissions','emissionCap', 'emission_cost',
 #                                        'price_avg','RES%dem','RES%gen', 'IM', 'EX',
@@ -1465,11 +1478,11 @@ class SipModel():
             df_branches.loc[j,'fArea'] = model.nodeArea[model.branchNodeFrom[j]]
             df_branches.loc[j,'tArea'] = model.nodeArea[model.branchNodeTo[j]]
             df_branches.loc[j,'existingCapacity'] = model.branchExistingCapacity[j]
+            df_branches.loc[j,'existingCapacity2'] = model.branchExistingCapacity2[j]
             df_branches.loc[j,'expand'] = model.branchExpand[j]
             df_branches.loc[j,'type'] = model.branchType[j]
-            cap1 = model.branchExistingCapacity[j]
+            cap1 = 0 #model.branchExistingCapacity[j]
             cap2 = cap1
-            # TODO: simplify, j is either in expand1 or stage
             if j in model.BRANCH_EXPAND1:
                 df_branches.loc[j,'newCables'] = model.branchNewCables1[j].value
                 df_branches.loc[j,'newCapacity'] = model.branchNewCapacity1[j].value
@@ -1523,6 +1536,8 @@ class SipModel():
             df_gen.loc[j,'area'] = model.nodeArea[model.genNode[j]]
             df_gen.loc[j,'node'] = model.genNode[j]
             df_gen.loc[j,'type'] = model.genType[j]
+            df_gen.loc[j,'pmax'] = model.genCapacity[j]
+            df_gen.loc[j,'pmax2'] = model.genCapacity2[j]
             df_gen.loc[j,'expand'] = model.genExpand[j]
             df_gen.loc[j,'emission_rate'] = model.genTypeEmissionRate[model.genType[j]]
             #Phase 1:
@@ -1674,6 +1689,8 @@ class SipModel():
                     res_G['pmax'][j] += model.genNewCapacity1[j].value
             if stage >= 2:
                 #add to investments in stage 1
+                res_brC['capacity'] += grid_res.branch['capacity2']
+                res_G['pmax'] += grid_res.generator['pmax2']
                 for j in model.BRANCH_EXPAND2:
                     res_brC['capacity'][j] += model.branchNewCapacity2[j].value
                 for j in model.NODE_EXPAND2:
