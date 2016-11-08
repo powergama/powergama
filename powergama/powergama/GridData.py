@@ -53,7 +53,7 @@ class GridData(object):
         'generator': {'type':None,'node':None,'pmax':None,'pmax2':0,
                       'pmin':None,
                       'expand':None,'p_maxNew':-1, 'cost_scaling':1,
-                      'fuelcost':None,'fuelcost_ref':None,'pavg':None,
+                      'fuelcost':None,'fuelcost_ref':None,'pavg':0,
                       'inflow_fac':None,'inflow_ref':None},
         'consumer': {'node':None, 'demand_avg':None,'emission_cap':-1, 
                      'demand_ref':None}

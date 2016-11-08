@@ -411,19 +411,34 @@ class SipModel():
                                                rule=maxPavg_rule2)
 
         # Emissions restriction per country/load
-        # TODO: Update in line with 2-stage/2-phase model
+        # TODO: deal with situation when no emission cap has been given (-1)
         if CO2price:
-            def emissionCap_rule(model,a):
+            def emissionCap_rule1(model,a):
                 expr = 0
                 for n in model.NODE:
                     if model.nodeArea[n]==a:
-                        expr += sum(model.generation[g,t]*model.genTypeEmissionRate[model.genType[g]] 
+                        expr += sum(model.generation1[g,t]*model.genTypeEmissionRate[model.genType[g]] 
                                     for t in model.TIME for g in model.GEN 
                                     if model.genNode[g]==n)
-                samplefactor = 8760/len(model.TIME)
-                expr = (expr*samplefactor <= sum(model.emissionCap[c] for c in model.LOAD if model.nodeArea[model.demNode[c]]==a))
+                samplefactor = model.samplefactor
+                expr = (expr*samplefactor <= sum(model.emissionCap[c] 
+                    for c in model.LOAD if model.nodeArea[model.demNode[c]]==a))
                 return expr
-            model.cEmissionCap = pyo.Constraint(model.AREA, rule=emissionCap_rule)
+            def emissionCap_rule2(model,a):
+                expr = 0
+                for n in model.NODE:
+                    if model.nodeArea[n]==a:
+                        expr += sum(model.generation2[g,t]*model.genTypeEmissionRate[model.genType[g]] 
+                                    for t in model.TIME for g in model.GEN 
+                                    if model.genNode[g]==n)
+                samplefactor = model.samplefactor
+                expr = (expr*samplefactor <= sum(model.emissionCap[c] 
+                    for c in model.LOAD if model.nodeArea[model.demNode[c]]==a))
+                return expr
+            model.cEmissionCap1 = pyo.Constraint(model.AREA, 
+                                                 rule=emissionCap_rule1)
+            model.cEmissionCap2 = pyo.Constraint(model.AREA, 
+                                                 rule=emissionCap_rule2)
             
 
         def curtailment_rule1(model,g,t):
@@ -1027,8 +1042,6 @@ class SipModel():
         dat_str += NL + str_set + NL + str_sprm + NL + str_param    
         
         #scenario structure data file:
-        #TODO: export scenario structure data file
-        
         #root node scenario data:
         with open("{}/RootNode.dat".format(path), "w") as text_file:
             text_file.write(dat_str)
@@ -1127,7 +1140,6 @@ class SipModel():
         corresponds to  firstStageCost in abstract model'''
         
         ar = 1
-        #TODO is it not enough to check if b in BRANCH_EXPAND?
         if b in model.BRANCH_EXPAND1:
             br_num = model.branchNewCables1[b].value
             br_cap = model.branchNewCapacity1[b].value
@@ -1708,7 +1720,6 @@ class SipModel():
                                 names=['stage','node',
                                        'var','var_indx','value'])
             if stage>=1:
-                df_branchNewCables = df_ph[df_ph['var']=='branchNewCables1']
                 df_branchNewCapacity = df_ph[df_ph['var']=='branchNewCapacity1']
                 df_newNodes = df_ph[df_ph['var']=='newNodes1']
                 df_newGen = df_ph[df_ph['var']=='genNewCapacity1']
@@ -1729,7 +1740,7 @@ class SipModel():
                     (df_ph['node']=='LeafNode_Scenario{}'.format(scenario))]
                 df_newGen = df_ph[(df_ph['var']=='genNewCapacity2') &
                     (df_ph['node']=='LeafNode_Scenario{}'.format(scenario))]
-                #TODO fix: this will add up from all scenarios:
+
                 for k,row in df_branchNewCapacity.iterrows():
                     res_brC['capacity'][int(row['var_indx'])] += float(row['value'])
                 for k,row in df_newNodes.iterrows():
@@ -1748,27 +1759,6 @@ class SipModel():
             > self._NUMERICAL_THRESHOLD_ZERO]
         return grid_res
         
-
-    def presentResults(self,csvfile):
-        '''load  results and present plots etc
-        
-        Parameters
-        ----------
-        csvfile : string
-            name of csv file holding RUNPH results (ph.cvs)
-        
-        Returns
-        -------
-        pandas.Dataframe results
-        '''
-        
-        df = pd.read_csv(csvfile,header=None, 
-                         names=['r_stage','r_node','r_var','r_indx','r_val'])
-                         
-        #TODO: present results
-        # Martin's functions...
-                         
-        return df
         
         
 def annuityfactor(rate,years):
