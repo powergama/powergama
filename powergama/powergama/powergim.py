@@ -1732,6 +1732,8 @@ class SipModel():
             if stage>=2:
                 if scenario is None:
                     raise Exception('Missing input "scenario"')
+                res_brC['capacity'] += grid_res.branch['capacity2']
+                res_G['pmax'] += grid_res.generator['pmax2']
                     
                 df_branchNewCapacity = df_ph[
                     (df_ph['var']=='branchNewCapacity2') &
