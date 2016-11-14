@@ -789,11 +789,11 @@ class SipModel():
         
         di = {}
         #Sets:
-        di['NODE'] = {None: grid_data.node['id'].tolist()}
-        di['BRANCH'] = {None: [i for i in range(grid_data.branch.shape[0]) ]}
-        di['GEN'] = {None: [i for i in range(grid_data.generator.shape[0]) ]}
-        di['LOAD'] = {None: [i for i in range(grid_data.consumer.shape[0]) ]}
-        di['AREA'] = {None: grid_data.node.area.unique().tolist()}
+        di['NODE'] = {None: grid_data.node['id'].tolist() }
+        di['BRANCH'] = {None: grid_data.branch.index.tolist() }
+        di['GEN'] = {None: grid_data.generator.index.tolist() }
+        di['LOAD'] = {None: grid_data.consumer.index.tolist() }
+        di['AREA'] = {None: grid_data.getAllAreas() }
         di['TIME'] = {None: grid_data.timerange}
         
         br_expand1 = grid_data.branch[
@@ -846,6 +846,7 @@ class SipModel():
         di['nodeArea']={}
         for k,row in grid_data.node.iterrows():
             n=grid_data.node['id'][k]
+            #n=grid_data.node.index[k] #or simply =k
             di['nodeOffshore'][n] = row['offshore']
             di['nodeType'][n] = row['type']
             di['nodeExistingNumber'][n] = row['existing']
@@ -1493,8 +1494,8 @@ class SipModel():
             df_branches.loc[j,'existingCapacity2'] = model.branchExistingCapacity2[j]
             df_branches.loc[j,'expand'] = model.branchExpand[j]
             df_branches.loc[j,'type'] = model.branchType[j]
-            cap1 = 0 #model.branchExistingCapacity[j]
-            cap2 = cap1
+            cap1 = model.branchExistingCapacity[j]
+            cap2 = cap1 + model.branchExistingCapacity2[j]
             if j in model.BRANCH_EXPAND1:
                 df_branches.loc[j,'newCables'] = model.branchNewCables1[j].value
                 df_branches.loc[j,'newCapacity'] = model.branchNewCapacity1[j].value
@@ -1513,22 +1514,24 @@ class SipModel():
             # Phase 1
             df_branches.loc[j,'flow12avg_1'] = np.mean([
                 model.branchFlow12_1[(j,t)].value for t in model.TIME])
-            df_branches.loc[j,'flow12%_1'] = (
-                df_branches.loc[j,'flow12avg_1']/cap1)
             df_branches.loc[j,'flow21avg_1'] = np.mean([
                 model.branchFlow21_1[(j,t)].value for t in model.TIME])
-            df_branches.loc[j,'flow21%_1'] = (
-                df_branches.loc[j,'flow21avg_1']/cap1)
+            if cap1>0:
+                df_branches.loc[j,'flow12%_1'] = (
+                    df_branches.loc[j,'flow12avg_1']/cap1)
+                df_branches.loc[j,'flow21%_1'] = (
+                    df_branches.loc[j,'flow21avg_1']/cap1)
 
             # Phase 2
             df_branches.loc[j,'flow12avg_2'] = np.mean([
                 model.branchFlow12_2[(j,t)].value for t in model.TIME])
-            df_branches.loc[j,'flow12%_2'] = (
-                df_branches.loc[j,'flow12avg_2']/cap2)
             df_branches.loc[j,'flow21avg_2'] = np.mean([
                 model.branchFlow21_2[(j,t)].value for t in model.TIME])
-            df_branches.loc[j,'flow21%_2'] = (
-                df_branches.loc[j,'flow21avg_2']/cap2)
+            if cap2>0:
+                df_branches.loc[j,'flow12%_2'] = (
+                    df_branches.loc[j,'flow12avg_2']/cap2)
+                df_branches.loc[j,'flow21%_2'] = (
+                    df_branches.loc[j,'flow21avg_2']/cap2)
 
                                     
         for j in model.NODE:

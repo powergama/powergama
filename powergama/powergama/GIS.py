@@ -126,7 +126,7 @@ def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,
             name = simplekml.makeunicode.u("GENERATOR {}"
                         .format(grid_data.generator.desc[i]))
         node = grid_data.generator.node[i]
-        nodeIndx = node
+        nodeIndx = grid_data.node.index[grid_data.node.id==node][0]
         lon = grid_data.node.lon[nodeIndx]
         lat = grid_data.node.lat[nodeIndx]
         description = """ 
@@ -171,9 +171,9 @@ def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,
         startbus = grid_data.branch.node_from[i]
         endbus = grid_data.branch.node_to[i]
         #startbusIndx = (grid_data.node.id == startbus)[0]
-        startbusIndx = startbus
-        endbusIndx = (grid_data.node.id == endbus)[0]
-        endbusIndx = endbus
+        startbusIndx = grid_data.node.index[grid_data.node.id==startbus][0]
+        #endbusIndx = (grid_data.node.id == endbus)[0]
+        endbusIndx = grid_data.node.index[grid_data.node.id==endbus][0]
         startbuslon = grid_data.node.lon[startbusIndx]
         startbuslat = grid_data.node.lat[startbusIndx]
         endbuslon = grid_data.node.lon[endbusIndx]

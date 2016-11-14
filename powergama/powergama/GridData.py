@@ -130,6 +130,7 @@ class GridData(object):
         self.node = pd.read_csv(nodes,
                                 #usecols=self.keys_sipdata['node'],
                                 dtype={'id':str, 'area':str})
+        #TODO use integer range index instead of id string, cf powergama
         self.node.set_index('id',inplace=True)
         self.node['id']=self.node.index
         self.branch = pd.read_csv(branches,
@@ -459,6 +460,9 @@ class GridData(object):
         
         fromIdx = self.branchFromNodeIdx()
         toIdx = self.branchToNodeIdx()
+        # get integer position (not necessary if index is int range
+        fromIdx = [self.node.index.get_loc(n) for n in fromIdx]
+        toIdx = [self.node.index.get_loc(n) for n in toIdx]
         data = numpy.r_[numpy.ones(num_branches),-numpy.ones(num_branches)]
         row = numpy.r_[range(num_branches),range(num_branches)]
         col = numpy.r_[fromIdx, toIdx]
@@ -663,12 +667,12 @@ class GridData(object):
         n_to = self.branchToNodeIdx()
         distance = []
         for i,br in self.branch.iterrows():
-            n_from= br['node_from']
-            n_to=br['node_to']
-            lat1 = math.radians(self.node.ix[n_from]['lat'])
-            lon1 = math.radians(self.node.ix[n_from]['lon'])
-            lat2 = math.radians(self.node.ix[n_to]['lat'])
-            lon2 = math.radians(self.node.ix[n_to]['lon'])
+            #n_from= br['node_from']
+            #n_to=br['node_to']
+            lat1 = math.radians(self.node.ix[n_from[i]]['lat'])
+            lon1 = math.radians(self.node.ix[n_from[i]]['lon'])
+            lat2 = math.radians(self.node.ix[n_to[i]]['lat'])
+            lon2 = math.radians(self.node.ix[n_to[i]]['lon'])
         
             dlon = lon2 - lon1
             dlat = lat2 - lat1

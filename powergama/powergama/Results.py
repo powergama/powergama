@@ -236,7 +236,7 @@ class Results(object):
                 for ld in loads:
                     the_node = self.grid.consumer.node[ld]
                     the_load = self.grid.consumer.demand_avg[ld]
-                    node_indx = self.grid.node.name.index(the_node)
+                    node_indx = self.grid.node.id.tolist().index(the_node)
                     node_weight[node_indx] += the_load                
                 sumWght = sum(node_weight)
                 node_weight = [a/sumWght for a in node_weight]                
@@ -447,7 +447,7 @@ class Results(object):
             timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
 
         generation_per_gen = self.db.getResultGeneratorPowerSum(timeMaxMin)
-        areas_per_gen = [self.grid.node.area[self.grid.node.name.index(n)] 
+        areas_per_gen = [self.grid.node.area[self.grid.node.id==n].tolist()[0] 
                     for n in self.grid.generator.node]
                 
         allareas = self.grid.getAllAreas()
@@ -516,7 +516,7 @@ class Results(object):
         generator to compute total storage value
         '''
         storage_energy = self.getGeneratorStorageAll(timestep)
-        storage_values = self.grid.generator.storagevalue_abs
+        storage_values = self.grid.generator.storage_price
         indx_storage_generators = self.grid.getIdxGeneratorsWithStorage()
         storval = [storage_energy[i]*storage_values[v]
                     for i,v in enumerate(indx_storage_generators)]
@@ -528,7 +528,7 @@ class Results(object):
         #Is handy when you need to access more information about the node, 
         #but only the node name is avaiable. (which is the case in the generator file)
         try:
-            nodeIndex = self.grid.node.name.index(nodeName)
+            nodeIndex = self.grid.node.id.tolist().index(nodeName)
             return self.grid.node.area[nodeIndex]
         except:
             return
@@ -794,7 +794,7 @@ class Results(object):
         generators = []
         capacity = 0
         for gen in storageGen:
-            area = nodeAreas[self.grid.node.name.index(nodeNames[gen])]
+            area = nodeAreas[self.grid.node.id.tolist().index(nodeNames[gen])]
             if area in areas and storageTypes[gen] == generator_type:
                 generators.append(gen)
                 if relative_storage:
@@ -1359,7 +1359,7 @@ class Results(object):
         timerange = range(timeMaxMin[0],timeMaxMin[-1])
 
         if consumerindx in self.flex_idx_consumers:
-            nodeidx = self.grid.node.name.index(
+            nodeidx = self.grid.node.id.tolist().index(
                 self.grid.consumer.node[consumerindx])
             storagevalue = self.db.getResultFlexloadStorageValue(
                                 consumerindx,timeMaxMin)
