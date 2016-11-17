@@ -2,7 +2,7 @@
 """
 Created on Tue Aug 16 13:21:21 2016
 
-@author: hsven
+@author: Martin Kristiansen, Harald Svendsen
 """
 
 
