@@ -65,6 +65,7 @@ class SipModel():
         #investment costs and limits:        
         model.branchtypeMaxCapacity = pyo.Param(model.BRANCHTYPE,
                                                 within=pyo.Reals)
+        model.branchMinNewCapacity = pyo.Param(model.BRANCH,within=pyo.Reals)
         model.branchMaxNewCapacity = pyo.Param(model.BRANCH,within=pyo.Reals)
         model.branchtypeCost = pyo.Param(model.BRANCHTYPE, 
                                          model.BRANCHCOSTITEM,
@@ -127,9 +128,9 @@ class SipModel():
         # 1st stage investment: new dcbranch capacity [dcVarInvest]
         def branchNewCapacity_bounds(model,j):
             if model.branchMaxNewCapacity[j] == 0:
-                return (0,maxNewBranchCap)
+                return (model.branchMinNewCapacity[j],maxNewBranchCap)
             else:
-                return (0,model.branchMaxNewCapacity[j])
+                return (model.branchMinNewCapacity[j],model.branchMaxNewCapacity[j])
         model.branchNewCapacity = pyo.Var(model.BRANCH, 
                                           within = pyo.NonNegativeReals,
                                           bounds = branchNewCapacity_bounds)
@@ -579,9 +580,11 @@ class SipModel():
         di['branchNodeFrom'] = {}
         di['branchNodeTo'] = {}
         di['branchMaxNewCapacity'] = {}
+        di['branchMinNewCapacity'] = {}
         offsh = self._offshoreBranch(grid_data)
         for k,row in grid_data.branch.iterrows():
             di['branchExistingCapacity'][k] = row['capacity']
+            di['branchMinNewCapacity'][k] = row['min_newCap']
             di['branchMaxNewCapacity'][k] = row['max_newCap']
             di['branchExpand'][k] = row['expand']
             if row['distance'] >= 0:
@@ -911,6 +914,29 @@ class SipModel():
     def computeDemand(self,model,c,t):
         '''compute demand at specified load ant time'''
         return model.demandAvg[c]*model.demandProfile[c,t]
+    
+    def computeBranchCongestionRent(self, model, b):
+        '''
+        Compute annual congestion rent for a given branch
+        '''
+        # TODO: use nodal price, not area price.
+        N1 = model.branchNodeFrom[b]
+        N2 = model.branchNodeTo[b]
+
+        area1 = model.nodeArea[N1]
+        area2 = model.nodeArea[N2]
+        
+        flow = []
+        deltaP = []
+        
+        for t in model.TIME:
+            deltaP.append(abs(self.computeAreaPrice(model, area1, t) 
+                         - self.computeAreaPrice(model, area2, t)))
+            flow.append(model.branchFlow21[b,t].value + model.branchFlow12[b,t].value)
+        
+        samplefactor = 8760/len(model.TIME)
+        
+        return sum(deltaP[i]*flow[i] for i in range(len(deltaP)))*samplefactor
         
     def computeAreaEmissions(self,model,c, cost=False):
         '''compute total emissions from a load/country'''
@@ -1027,7 +1053,7 @@ class SipModel():
         return {'W':W, 'PS':PS, 'CS':CS, 'CC':CC, 'GC':GC, 'CR':CR, 'IM':IM, 'X':X}
             
     def computeAreaCostBranch(self,model,c,include_om=False):
-        '''Investment cost of single branch
+        '''Investment cost for an area (50% of interconnector CAPEX)
         
         corresponds to  firstStageCost in abstract model'''
         node = model.demNode[c]
@@ -1040,16 +1066,11 @@ class SipModel():
             elif model.nodeArea[model.branchNodeFrom[b]]==area:
                 cost += self.computeCostBranch(model,b,include_om)
         
-        if include_om:
-             cost = cost*(1 + model.omRate*annuityfactor(
-                            model.financeInterestrate,
-                            model.financeYears)) 
-        
         return cost/2
         
         
     def computeAreaCostGen(self,model,c):
-        '''compute capital costs for new generator capacity'''
+        '''compute capital costs for new generator capacity in an area'''
         node = model.demNode[c]
         area = model.nodeArea[node]
         gen_capex = 0
@@ -1083,13 +1104,14 @@ class SipModel():
         df_nodes = pd.DataFrame(columns=['num','area','newNodes',
                                          'cost','cost_withOM'])
         df_gen = pd.DataFrame(columns=['num','node','area','Pavg','Pmin','Pmax',
-                                       'type','newCapacity',
+                                       'type','newCapacity','CAPEX'
                                        'emission_rate','emission',
                                        'curtailed_avg','cost_NPV'])
         df_load = pd.DataFrame(columns=['num','node','area','Pavg','Pmin','Pmax',
                                         'emissions','emissionCap', 'emission_cost',
                                         'price_avg','RES%dem','RES%gen', 'IM', 'EX',
-                                        'CS', 'PS', 'CR', 'CAPEX', 'Welfare'])
+                                        'CS', 'PS', 'CR','CC','Welfare',
+                                        'branch_CAPEX_npv','gen_CAPEX_a'])
         samplefactor=8760/len(model.TIME)
         for j in model.BRANCH:
             df_branches.loc[j,'num'] = j
@@ -1112,7 +1134,7 @@ class SipModel():
             df_branches.loc[j,'cost'] = self.computeCostBranch(model,j)
             df_branches.loc[j,'cost_withOM'] = self.computeCostBranch(model,j,
                     include_om=True)
-            df_branches.loc[j,'congestion_rent'] = self.computeCostBranch(model,j)
+            df_branches.loc[j,'congestion_rent'] = self.computeBranchCongestionRent(model,j)
                                     
     #    for j in model.newNodes:
         for j in model.NODE:
@@ -1134,6 +1156,7 @@ class SipModel():
                                         model.generation[j,t].value for t in model.TIME)
                                         *samplefactor)
             df_gen.loc[j,'newCapacity'] = model.genNewCapacity[j].value
+            df_gen.loc[j,'CAPEX'] = model.genTypeCost[model.genType[j]]*model.genNewCapacity[j].value*model.genCostScale[j]
             df_gen.loc[j,'Pavg'] = np.mean([
                 model.generation[(j,t)].value for t in model.TIME])
             df_gen.loc[j,'Pmin'] = np.min([
@@ -1168,13 +1191,16 @@ class SipModel():
                                             for t in model.TIME)*samplefactor
             df_load.loc[j,'CS'] = sum(self.computeAreaWelfare(model,j,t)['CS']
                                             for t in model.TIME)*samplefactor
+            df_load.loc[j,'CC'] = sum(self.computeAreaWelfare(model,j,t)['CC']
+                                            for t in model.TIME)*samplefactor
             df_load.loc[j,'CR'] = sum(self.computeAreaWelfare(model,j,t)['CR']
                                             for t in model.TIME)*samplefactor
             df_load.loc[j,'IM'] = sum(self.computeAreaWelfare(model,j,t)['IM']
                                             for t in model.TIME)*samplefactor 
             df_load.loc[j,'EX'] = sum(self.computeAreaWelfare(model,j,t)['X']
                                             for t in model.TIME)*samplefactor 
-            df_load.loc[j,'CAPEX'] = self.computeAreaCostBranch(model,j,include_om=False)
+            df_load.loc[j,'branch_CAPEX_npv'] = self.computeAreaCostBranch(model,j,include_om=False)
+            df_load.loc[j,'gen_CAPEX_a'] = self.computeAreaCostGen(model,j)
         
         df_cost = pd.DataFrame(columns=['value','unit'])
         df_cost.loc['firstStageCost','value'] = (

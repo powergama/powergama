@@ -46,7 +46,7 @@ class GridData(object):
                  'offshore':None,'type':None,
                  'existing':None,'cost_scaling':None},
         'branch': {'node_from':None,'node_to':None,'capacity':None,
-                   'expand':None,'max_newCap':-1,'distance':-1,
+                   'expand':None,'min_newCap':-1,'max_newCap':-1,'distance':-1,
                    'cost_scaling':None,'type':None},
         'dcbranch' :{},
         'generator': {'type':None,'node':None,'pmax':None,'pmin':None,
