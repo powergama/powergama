@@ -13,7 +13,7 @@
 \usepackage{fancyhdr}
 
 
-\title{PowerGAMA\\User guide (v1.0.3)}
+\title{PowerGAMA\\User guide (v1.0.4)}
 \author{Harald G Svendsen}
 \date{\today}
 
@@ -26,6 +26,25 @@
 	\end{picture}
 }
 \pagestyle{fancyplain}
+
+\definecolor{mygreen}{rgb}{0,0.6,0}
+\definecolor{mygray}{rgb}{0.9,0.9,0.9}
+\definecolor{mymauve}{rgb}{0.58,0,0.82}
+\lstset{
+  language=Python,
+  showstringspaces=false,
+  formfeed=\newpage,
+  tabsize=4,
+  %xleftmargin=\parindent,
+  backgroundcolor=\color{mygray}, 
+  commentstyle=\itshape,
+  basicstyle=\ttfamily,
+  keywordstyle=\color{blue},
+  stringstyle=\color{mygreen},
+  %morekeywords={models, lambda, forms}
+}
+
+
 
 
 \begin{document}
@@ -574,8 +593,8 @@ Branches have from and to references that must match a node identifier in the li
 	\hline
 	column key & description & type & units \\
 	\hline
-	``from"	&	Node identifier 	& string	& \\
-	``to"		&	Node identifier	& string	& \\
+	``node\_from"	&	Node identifier 	& string	& \\
+	``node\_to"		&	Node identifier	& string	& \\
 	``reactance"	&	Reactance	& float	& ohm \\
 	``capacity"		&	Capacity & float		& MW \\
 	\hline
@@ -592,8 +611,8 @@ DC branches have from and to references that must match a node identifier in the
 	\hline
 	column key & description & type & units \\
 	\hline
-	``from"	&	Node identifier 	& string	& \\
-	``to"		&	Node identifier	& string	& \\
+	``node\_from"	&	Node identifier 	& string	& \\
+	``node\_to"		&	Node identifier	& string	& \\
 	``capacity"		&	Capacity & float		& MW \\
 	\hline
 \end{tabular}
@@ -824,7 +843,7 @@ This is useful for identifying grid bottlenecks and nodal power prices.
 
 
 \subsection{Further analysis of results}
-Interesting analyses that can be addressed using PowerGAMA are
+Examples of interesting analyses that can be addressed using PowerGAMA are
 \begin{itemize}
 \item Identification of grid bottlenecks. This is relevant for existing bottlenecks, but even more so with future scenarios with new generators installed, e.g. large amounts of renewable generation. Assessment of ot benefits by reinforcing certain connections, or adding more lines.
 \item Identification of the potential of the grid and power system to absorb large amounts of renewable generation. How much new capacity of wind and solar power can be introduced without problems
@@ -835,15 +854,15 @@ It should be noted that PowerGAMA does not include any power market subtleties (
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\section{Analysis and plotting of results (TODO)}
-This section gives an overview of methods for analysis and plotting of results, included in PowerGAMA. 
+\subsection{Included plots and other result analysis functions}
 
-See powergama source code (Results class) for some documentation
+See the online  powergama source code documentation for a complete overview of plotting functions and other functions to retreive simulation results for further analysis.
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\section{Scenario generation tool (TODO)}
-This section gives an overview of methods that can be used to generate scenarios.
+\section{Scenario generation tool}
+
+In order to simplify the process of generating scenarios with differeng generation mix and demand, the package includes a scenario module that can be used to save the loaded grid model to a scenario file. This is a summary file that includes demand per area, generation capacities per type and area etc. Exporting the grid model to a scenario file can be very useful for checking that the dataset is consistent with the scenario being studied.
 
 The key function are :
 \begin{itemize}
@@ -851,6 +870,64 @@ The key function are :
 \item powergama.scenarios.newScenario(...)
 \end{itemize}
 
+
+\subsection{Saving grid model to scenario file}
+To load an existing grid model and export a scenario file (``scenario.csv'''), run code similar to the following:
+
+\begin{lstlisting}
+>>>import powergama
+>>>import powergama.scenarios
+
+>>>gridmodel = powergama.GridData()
+>>>gridmodel.readGridData(nodes="nodes.csv",
+                          ac_branches="branches.csv",
+                          dc_branches="hvdc.csv",
+                          generators="generators.csv",
+                          consumers="consumers.csv")
+>>>gridmodel.readProfileData(filename="profiles.csv",
+               storagevalue_filling="profiles_storval_filling.csv",
+               storagevalue_time="profiles_storval_time.csv",
+               timerange=range(0,8760), 
+               timedelta=1.0)
+
+>>>powergama.scenarios.saveScenario(gridmodel, 
+                                    scenario_file= "scenario.csv")
+\end{lstlisting}
+
+\subsection{Create modified dataset using scenario file}
+In order to create a scenario file, the simplest is to to save an existing grid model to scenario file as shown above. Then, it can be open in a spreadsheet editor and modified according to the specifications of the new scenario. Values that should not be modified should be left blank.
+
+Note that certain rows created with the saveScenario method  should be removed before using it as 
+
+Once a modified scenario file has been created (``scenario\_new.csv''), run code similar to the following in order to create new input data files:
+
+\begin{lstlisting}
+>>>import powergama
+>>>import powergama.scenarios
+
+>>>gridmodel = powergama.GridData()
+>>>gridmodel.readGridData(nodes="nodes.csv",
+                          ac_branches="branches.csv",
+                          dc_branches="hvdc.csv",
+                          generators="generators.csv",
+                          consumers="consumers.csv")
+>>>gridmodel.readProfileData(filename="profiles.csv",
+               storagevalue_filling="profiles_storval_filling.csv",
+               storagevalue_time="profiles_storval_time.csv",
+               timerange=range(0,8760), 
+               timedelta=1.0)
+            
+>>>powergama.scenarios.newScenario(gridmodel, 
+                                   scenario\_file="scenario\_new.csv", 
+                                   new_file_prefix="new_")
+\end{lstlisting}
+The new input files will have the same names as the original, but with the prefix ``new\_'', e.g. ``new\_nodes..csv''.
+
+Now, you can run a new simulation with these new input files instead of the original ones.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Power Grid Investment Module (PowerGIM)}
+The PowerGAMA includes a grid investment module for determining socio-economically beneficial grid investments (connections and generators). This module is documented separately.
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -860,22 +937,6 @@ The following example runs the simulation for the first two weeks of January, us
 
 The Python script is as follows: 
 
-\definecolor{mygreen}{rgb}{0,0.6,0}
-\definecolor{mygray}{rgb}{0.9,0.9,0.9}
-\definecolor{mymauve}{rgb}{0.58,0,0.82}
-\lstset{
-  language=Python,
-  showstringspaces=false,
-  formfeed=\newpage,
-  tabsize=4,
-  %xleftmargin=\parindent,
-  backgroundcolor=\color{mygray}, 
-  commentstyle=\itshape,
-  basicstyle=\ttfamily,
-  keywordstyle=\color{blue},
-  stringstyle=\color{mygreen},
-  %morekeywords={models, lambda, forms}
-}
 \begin{lstlisting}
 
 >>> import powergama
@@ -883,14 +944,15 @@ The Python script is as follows:
 >>> timerange=range(0,24*14)
 >>> data = powergama.GridData()
 
->>> data.readGridData(nodes="s2_nodes.csv",\
-          branches="s2_branches.csv",\
-          generators="s2_generators.csv",\
-          consumers="s2_consumers.csv")
->>> data.readProfileData(inflow="profiles_inflow.csv",\
-          demand="profiles_demand.csv",\
-          storagevalues="profiles_storagevalue.csv",\
-          timerange=timerange, timedelta=1.0)
+>>> data.readGridData(nodes="nodes.csv",
+          ac\_branches="branches.csv",
+          dc\_branches=''dcbranches.csv'',
+          generators="generators.csv",
+          consumers="consumers.csv")
+>>> data.readProfileData(filename="profiles.csv",
+           storagevalue_filling="profiles_storval_filling.csv",
+           storagevalue_time="profiles_storval_time.csv",
+           timerange=timerange, timedelta=1.0)
 
 >>> lp = powergama.LpProblem(data)
 >>> res = powergama.Results(data,''results.sqlite3'',replace=True)
@@ -944,27 +1006,6 @@ The Python script is as follows:
 
 \newpage
 \appendix
-
-\section{Software design and implementation (TODO)}
-
-\subsection{Class GridData}
-nodes
-branches
-generators
-consumers
-
-\subsection{Class LpProblem}
-This class contains the LP problem formulation using the PuLP interface. It contains the main loop that solves the problem for each time step and includes the dynamics that link the time steps.
-
-
-\subsection{Class Results}
-This class contains variables (arrays) with results for each time step, and methods to analyse and present the results.
-
-
-\subsection{Implementation}
-Python
-
-Classes
 
 
 

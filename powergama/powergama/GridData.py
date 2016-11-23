@@ -221,11 +221,19 @@ class GridData(object):
         #generator nodes
         for g in self.generator['node']:
             if not g in self.node['id'].values:
-                raise Exception("Generator node does not exist: %s" %g)
+                raise Exception("Generator node does not exist: '%s'" %g)
         #consumer nodes
         for c in self.consumer['node']:
             if not c in self.node['id'].values:
-                raise Exception("Consumer node does not exist: %s" %c)
+                raise Exception("Consumer node does not exist: '%s'" %c)
+
+        #branch nodes
+        for c in self.branch['node_from']:
+            if not c in self.node['id'].values:
+                raise Exception("Branch from node does not exist: '%s'" %c)
+        for c in self.branch['node_to']:
+            if not c in self.node['id'].values:
+                raise Exception("Branch to node does not exist: '%s'" %c)
                 
 
     def _readProfileFromFile(self,filename,timerange):          
@@ -333,29 +341,42 @@ class GridData(object):
     
     def getGeneratorsAtNode(self,nodeIdx):
         """Indices of all generators attached to a particular node"""
-        indices = [i for i, x in enumerate(self.generator['node']) 
-                    if x == self.node['id'][nodeIdx]]
+        #indices = [i for i, x in enumerate(self.generator['node']) 
+        #            if x == self.node['id'][nodeIdx]]
+        indices = self.generator['node'][self.generator.loc[:,'node']
+                        ==self.node['id'][nodeIdx]].index.tolist()
         return indices
         
     def getGeneratorsWithPumpAtNode(self,nodeIdx):
         """Indices of all pumps attached to a particular node"""
-        indices = [i for i, x in enumerate(self.generator['node']) 
-                    if x == self.node['id'][nodeIdx]
-                    and self.generator['pump_cap'][i]>0]
+        #indices = [i for i, x in enumerate(self.generator['node']) 
+        #            if x == self.node['id'][nodeIdx]
+        #            and self.generator['pump_cap'][i]>0]
+        indices = self.generator['node'][
+                    (self.generator.loc[:,'node']==self.node['id'][nodeIdx])
+                    & (self.generator.loc[:,'pump_cap']>0)].index.tolist()
         return indices
         
     def getLoadsAtNode(self,nodeIdx):
         """Indices of all loads (consumers) attached to a particular node"""
-        indices = [i for i, x in enumerate(self.consumer['node']) 
-                    if x == self.node['id'][nodeIdx]]
+        #indices = [i for i, x in enumerate(self.consumer['node']) 
+        #            if x == self.node['id'][nodeIdx]]:
+        #25 times faster:
+        indices = self.consumer['node'][self.consumer.loc[:,'node']
+                                ==self.node['id'][nodeIdx]].index.tolist()
         return indices
 
     def getLoadsFlexibleAtNode(self,nodeIdx):
         """Indices of all flexible nodes attached to a particular node"""
-        indices = [i for i, x in enumerate(self.consumer['node']) 
-                    if x == self.node['id'][nodeIdx]
-                    and self.consumer['flex_fraction'][i]>0
-                    and self.consumer['demand_avg'][i]>0]
+        #indices = [i for i, x in enumerate(self.consumer['node']) 
+        #            if x == self.node['id'][nodeIdx]
+        #            and self.consumer['flex_fraction'][i]>0
+        #            and self.consumer['demand_avg'][i]>0]
+        #faster:
+        indices = self.consumer['node'][
+            (self.consumer.loc[:,'node']==self.node['id'][nodeIdx]) 
+            & (self.consumer.loc[:,'flex_fraction'] > 0) 
+            & (self.consumer.loc[:,'demand_avg'] > 0)].index.tolist()
         return indices
         
     def getIdxConsumersWithFlexibleLoad(self):

@@ -26,6 +26,7 @@ from datetime import datetime as datetime
 from . import constants as const
 import scipy.sparse
 import sys
+import warnings
 #needed for code to work both for python 2.7 and 3:
 try:
     from itertools import izip as zip
@@ -630,7 +631,7 @@ class LpProblem(object):
             if solver_status != pulp.LpStatusOptimal:
                 print("SOLVE -> status = {}".
                       format(pulp.LpStatus[solver_status]))
-                raise Exception("t={}: No optimal solution found: {}."
+                warnings.warn("t={}: No optimal solution found: {}."
                                 .format(timestep,pulp.LpStatus[solver_status]))
             
             # print result summary            
