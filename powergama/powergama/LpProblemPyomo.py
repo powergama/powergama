@@ -61,33 +61,27 @@ class LpProblem(object):
         model.BRANCH_DC = pyo.Set()
         model.LOAD = pyo.Set()
         model.LOAD_FLEX = pyo.Set()
-        model.AREA = pyo.Set()
-        #model.TIME = pyo.Set()
-        
-        model.GENTYPE = pyo.Set()
-        
+        #model.AREA = pyo.Set()        
+        #model.GENTYPE = pyo.Set()        
 
         # PARAMETERS #########################################################
         model.loadShedCost = pyo.Param(within=pyo.NonNegativeReals)
         model.flexLoadCost = pyo.Param(model.LOAD_FLEX,
                                        within=pyo.NonNegativeReals)
-
         model.branchAcCapacity = pyo.Param(model.BRANCH_AC, 
                                          within=pyo.NonNegativeReals)
         model.branchDcCapacity = pyo.Param(model.BRANCH_DC, 
-                                         within=pyo.NonNegativeReals)
-    
+                                         within=pyo.NonNegativeReals)    
         model.genCost = pyo.Param(model.GEN, within=pyo.Reals)
-        model.genCapacity = pyo.Param(model.GEN,within=pyo.Reals)
+        model.genPmaxLimit = pyo.Param(model.GEN,within=pyo.Reals)
 
         # helpers:
-        model.genNode = pyo.Param(model.GEN,within=model.NODE)
-        model.demNode = pyo.Param(model.LOAD,within=model.NODE)
-        model.branchNodeFrom = pyo.Param(model.BRANCH,within=model.NODE)
-        model.branchNodeTo = pyo.Param(model.BRANCH,within=model.NODE)
-        model.nodeArea = pyo.Param(model.NODE,within=model.AREA)
-        
-        model.demand = pyo.Param(model.LOAD,within=pyo.Reals)
+        #model.genNode = pyo.Param(model.GEN,within=model.NODE)
+        #model.demNode = pyo.Param(model.LOAD,within=model.NODE)
+        #model.branchNodeFrom = pyo.Param(model.BRANCH_AC,within=model.NODE)
+        #model.branchNodeTo = pyo.Param(model.BRANCH_AC,within=model.NODE)
+        #model.nodeArea = pyo.Param(model.NODE,within=model.AREA) 
+        #model.demand = pyo.Param(model.LOAD,within=pyo.Reals)
 
         
         # VARIABLES ##########################################################
@@ -123,15 +117,14 @@ class LpProblem(object):
         model.cMaxFlowDc = pyo.Constraint(model.BRANCH_DC, rule=maxflowDc_rule)
         
         # 2 Generator output limit                                 
-        def Pgen_rule(model,g,t):
-            expr = model.varGeneration[g] <= (
-                model.genCapacityProfile[g] * model.genCapacity[g])
+        def Pgen_rule(model,g):
+            expr = model.varGeneration[g] <=  model.genPmaxLimit[g]
             return expr
         
         model.cMaxPgen = pyo.Constraint(model.GEN, rule=Pgen_rule)
                     
         # 3 Pump output limit                                 
-        def pump_rule(model,g,t):
+        def pump_rule(model,g):
             expr = (model.varPump[g] <= model.pumpCapacity[g])
             return expr
         
@@ -163,8 +156,8 @@ class LpProblem(object):
         #5 Power balance (power flow equation)                               
 
         # Power balance in nodes : gen+demand+flow into node=0
-        # TODO: Update power flow eqn
-        def powerbalance_rule(model,n,t):
+        # TODO: Update power flow eqn HERE HERE HERE
+        def powerbalance_rule(model,n):
             expr = 0
 
             # flow of power into node (subtrating losses)
@@ -240,6 +233,70 @@ class LpProblem(object):
     
         return model
 
+
+
+    def createModelData(self,grid_data):
+        '''Create model data in dictionary format
+
+        Parameters
+        ----------
+        grid_data : powergama.GridData object
+            contains grid model
+        
+        Returns
+        --------
+        dictionary with pyomo data (in pyomo format)
+        '''
+                
+        #to see how the data format is:        
+        #data = pyo.DataPortal(model=self.abstractmodel)
+        #data.load(filename=datafile)
+        
+        di = {}
+        #Sets:
+        di['NODE'] = {None: grid_data.node['id'].tolist() }
+        di['BRANCH_AC'] = {None: grid_data.branch.index.tolist() }
+        di['BRANCH_DC'] = {None: grid_data.dcbranch.index.tolist() }
+        di['GEN'] = {None: grid_data.generator.index.tolist() }
+        di['GEN_PUMP'] = {None: grid_data.getIdxGeneratorsWithPumping() }
+        di['LOAD'] = {None: grid_data.consumer.index.tolist() }
+        di['LOAD_FLEX'] = {None: grid_data.getIdxConsumersWithFlexibleLoad() }
+        di['AREA'] = {None: grid_data.getAllAreas() }
+                
+        # PARAMETERS #########################################################
+
+#        model.genCapacity = pyo.Param(model.GEN,within=pyo.Reals)
+#
+#        # helpers:
+#        model.genNode = pyo.Param(model.GEN,within=model.NODE)
+#        model.demNode = pyo.Param(model.LOAD,within=model.NODE)
+#        model.branchNodeFrom = pyo.Param(model.BRANCH_AC,within=model.NODE)
+#        model.branchNodeTo = pyo.Param(model.BRANCH_AC,within=model.NODE)
+#        model.nodeArea = pyo.Param(model.NODE,within=model.AREA)
+#        
+#        model.demand = pyo.Param(model.LOAD,within=pyo.Reals)
+
+        #Parameters:
+        #self._marginalcosts_flexload = asarray(grid.consumer['flex_basevalue'])      
+        di['branchAcCapacity'] = grid_data.branch['capacity'].to_dict()
+        di['branchDcCapacity'] = grid_data.dcbranch['capacity'].to_dict()
+        di['genPmaxLimit'] = grid_data.generator['pmax'].to_dict()
+        di['genCost'] = grid_data.generator['fuelcost'].to_dict()
+        di['loadShedCost'] = {None: 1000}
+        di['flexLoadCost']={i: grid_data.consumer['flex_basevalue'][i] 
+                                for i in di['LOAD_FLEX'][None] }
+
+
+#        di['demandAvg'] = {}
+#        di['demandProfile'] ={}
+#        di['demNode'] = {}
+        
+        return {'powergama':di}
+
+
+
+
+
     def __init__(self,grid,solver='cbc', solver_path=None):
         '''LP problem formulation
         
@@ -261,6 +318,11 @@ class LpProblem(object):
         self.abstractmodel = self._createAbstractModel()
 
         # 2 create concrete instance using grid data
+        modeldata_dict = self.createModelData(grid)
+        model = self.abstractmodel.create_instance(
+                            data=modeldata_dict,
+                            name="PowerGAMA Model",
+                            namespace='powergama')
 
         #TODO - change to abstractmodel/concretemodel
 
@@ -295,7 +357,6 @@ class LpProblem(object):
                 * asarray(grid.consumer['flex_fraction'])
                 * asarray(grid.consumer['demand_avg'])
                 )
-        self._marginalcosts_flexload = asarray(grid.consumer['flex_basevalue'])      
         self._idx_consumersStorageProfileFilling = asarray(
             [grid.consumer['flex_storval_filling'][i]
             for i in self._idx_consumersWithFlexLoad])
@@ -311,28 +372,6 @@ class LpProblem(object):
 
 
         #print "Creating LP problem..."        
-        self.prob = pulp.LpProblem(
-            "PowerGAMA_"+datetime.now().strftime("%Y-%m-%dT%H%M%S"), 
-            pulp.LpMinimize)
-        self.initialiseSolver(solver,solver_path)
-
-        # Define (and keep track of) LP problem variables
-        self._var_generation = [
-            pulp.LpVariable("Pgen%d" %(i)) for i in range_generators] 
-        self._var_pumping = [
-            pulp.LpVariable("Ppump%d" %(i)) 
-            for i in self._idx_generatorsWithPumping] 
-        self._var_flexload = [
-            pulp.LpVariable("Pflexload%d" %(i)) 
-            for i in self._idx_consumersWithFlexLoad] 
-        self._var_branchflow = [
-            pulp.LpVariable("Pbranch%d" %(i)) for i in range_branches] 
-        self._var_dc = [
-            pulp.LpVariable("Pdc%d" %(i)) for i in range_dc_branches] 
-        self._var_angle = [
-            pulp.LpVariable("theta%d" %(i)) for i in range_nodes] 
-        self._var_loadshedding = [
-            pulp.LpVariable("Pshed%d" %(i)) for i in range_nodes] 
 
         self._idx_load = [[]]*self.num_nodes
         
