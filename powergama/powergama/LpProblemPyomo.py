@@ -76,12 +76,15 @@ class LpProblem(object):
         model.genPmaxLimit = pyo.Param(model.GEN,within=pyo.Reals)
 
         # helpers:
-        #model.genNode = pyo.Param(model.GEN,within=model.NODE)
-        #model.demNode = pyo.Param(model.LOAD,within=model.NODE)
-        #model.branchNodeFrom = pyo.Param(model.BRANCH_AC,within=model.NODE)
-        #model.branchNodeTo = pyo.Param(model.BRANCH_AC,within=model.NODE)
-        #model.nodeArea = pyo.Param(model.NODE,within=model.AREA) 
-        #model.demand = pyo.Param(model.LOAD,within=pyo.Reals)
+        model.genNode = pyo.Param(model.GEN,within=model.NODE)
+        model.demNode = pyo.Param(model.LOAD,within=model.NODE)
+        model.branchNodeFrom = pyo.Param(model.BRANCH_AC,within=model.NODE)
+        model.branchNodeTo = pyo.Param(model.BRANCH_AC,within=model.NODE)
+        model.dcbranchNodeFrom = pyo.Param(model.BRANCH_AC,within=model.NODE)
+        model.dcbranchNodeTo = pyo.Param(model.BRANCH_AC,within=model.NODE)
+        model.demand = pyo.Param(model.LOAD,within=pyo.Reals)
+        model.coeff_B = pyo.Param(model.NODE,model.NODE,within=pyo.Reals)
+        model.coeff_DA = pyo.Param(model.BRANCH_AC,model.NODE,within=pyo.Reals)
 
         
         # VARIABLES ##########################################################
@@ -136,70 +139,50 @@ class LpProblem(object):
             return expr
         
         model.cFlexload = pyo.Constraint(model.GEN_PUMP,rule=flexload_rule)
-        
-        
-#        #Necessary?
-#        def curtailment_rule(model,g,t):
-#            # Only consider curtailment cost for zero cost generators
-#            if model.genCostAvg[g] == 0:
-#                expr =  (model.varCurtailment[g,t] == 
-#                        model.genCapacityProfile[g,t] * model.genCapacity[g] 
-#                        - model.varGeneration[g,t])
-#                return expr
-#            else:
-#                return pyo.Constraint.Skip
-#
-#        model.genCurtailment = pyo.Constraint(model.GEN, model.TIME, 
-#                                              rule=curtailment_rule)
-
-       
-        #5 Power balance (power flow equation)                               
-
-        # Power balance in nodes : gen+demand+flow into node=0
-        # TODO: Update power flow eqn HERE HERE HERE
+               
+        #5 Power balance (power flow equation)  (Pnode = B theta)
         def powerbalance_rule(model,n):
-            expr = 0
-
-            # flow of power into node (subtrating losses)
-            for j in model.BRANCH:
-                if model.branchNodeFrom[j]==n:
-                    # branch out of node
-                    typ = model.branchType[j]
-                    dist = model.branchDistance[j]
-                    expr += -model.branchFlow12_1[j,t]
-                    expr += model.branchFlow21_1[j,t] * (1-(
-                                model.branchLossfactor[typ,'fix']
-                                +model.branchLossfactor[typ,'slope']*dist))
-                if model.branchNodeTo[j]==n:
-                    # branch into node
-                    typ = model.branchType[j]
-                    dist = model.branchDistance[j]
-                    expr += model.branchFlow12_1[j,t] * (1-(
-                                model.branchLossfactor[typ,'fix']
-                                +model.branchLossfactor[typ,'slope']*dist))
-                    expr += -model.branchFlow21_1[j,t] 
-
-            # generated power 
+            lhs = 0            
             for g in model.GEN:
                 if model.genNode[g]==n:
-                    expr += model.generation1[g,t]
+                    lhs += model.varGeneration[g]
+            for p in model.GEN_PUMP:
+                if model.pumpNode[p]==n:
+                    lhs -= model.varPump[p]
+            for l in model.LOAD:
+                if model.demNode[l]==n:
+                    lhs -= model.demand[l]
+                    lhs += model.varLoadshed[l]
+            for f in model.LOAD_FLEX:
+                if model.flexNode[f]==n:
+                    lhs -= model.varFlexload[f]
+            for b in model.BRANCH_DC:
+                # positive sign for flow into node
+                if model.dcbranchToNode[b]==n:
+                    lhs += model.varDcBranchFlow[b]
+                elif model.dcbranchFromNode[b]==n:
+                    lhs -= model.varDcBranchFlow[b]
 
-            # consumed power
-            for c in model.LOAD:
-                if model.demNode[c]==n:
-                    expr += -model.demandAvg[c]*model.demandProfile[c,t]
+            lhs = lhs/const.baseMVA
             
-            expr = (expr == 0)
-            if ((type(expr) is bool) and (expr==True)):
-                # Trivial constraint
-                expr = pyo.Constraint.Skip
+            rhs = 0
+            for n2 in model.NODE:
+                rhs += model.coeff_B[n,n2]*model.varVoltageAngle[n2]
+            expr = (lhs == rhs)
             return expr
-            
-            
-        model.cPowerbalance = pyo.Constraint(model.NODE,
-                                             rule=powerbalance_rule)
+
+        model.cPowerbalance = pyo.Constraint(model.NODE,rule=powerbalance_rule)
         
         #6 Power balance (power flow vs voltage angle)                               
+        def flowangle_rule(model,b):
+            lhs = model.varAcBranchFlow[b]
+            rhs = 0
+            for n2 in model.NODE:
+                rhs += model.coeff_DA[b,n2]*model.varVoltageAngle[n2]
+            expr = (lhs==rhs)
+            return expr
+
+        model.cFlowAngle = pyo.Constraint(model.BRANCH_AC, rule=flowangle_rule)
 
         #7 Reference voltag angle)        
         def referenceNode_rule(model):
@@ -285,6 +268,32 @@ class LpProblem(object):
         di['loadShedCost'] = {None: 1000}
         di['flexLoadCost']={i: grid_data.consumer['flex_basevalue'][i] 
                                 for i in di['LOAD_FLEX'][None] }
+
+        di['genNode'] = grid_data.generator['node'].to_dict()
+        di['demNode'] = grid_data.consumer['node'].to_dict()
+        di['branchNodeFrom'] = grid_data.branch['node_from'].to_dict() 
+        di['branchNodeTo'] = grid_data.branch['node_to'].to_dict() 
+        di['dcbranchNodeFrom'] = grid_data.dcbranch['node_from'].to_dict() 
+        di['dcbranchNodeTo'] = grid_data.dcbranch['node_to'].to_dict() 
+        di['demand'] = grid_data.consumer['demand_avg'].to_dict()
+
+
+        # Compute matrices used in power flow equaions        
+        print("Computing B and DA matrices...")        
+        Bbus, DA = grid_data.computePowerFlowMatrices(const.baseZ)
+
+        n_i = di['NODE'][None]
+        b_i = di['BRANCH_AC'][None]
+        di['coeff_B'] = dict()
+        di['coeff_DA'] = dict()
+        
+        cx = scipy.sparse.coo_matrix(Bbus)
+        for i,j,v in zip(cx.row, cx.col, cx.data):
+            di['coeff_B'][(n_i[i],n_i[j])] = v
+
+        cx = scipy.sparse.coo_matrix(DA)
+        for i,j,v in zip(cx.row, cx.col, cx.data):
+            di['coeff_DA'][(b_i[i],n_i[j])] = v
 
 
 #        di['demandAvg'] = {}
@@ -375,9 +384,6 @@ class LpProblem(object):
 
         self._idx_load = [[]]*self.num_nodes
         
-        # Compute matrices used in power flow equaions        
-        print("Computing B and DA matrices...")        
-        self._Bbus, self._DA = grid.computePowerFlowMatrices(const.baseZ)
         print("Creating B.theta and DA.theta expressions")
 
          # Matrix * vector product -- Using coo_matrix
