@@ -85,7 +85,45 @@ class Results(object):
                                flexload_power,
                                flexload_storage,
                                flexload_storagevalue):
-        '''Store results from optimal power flow for a new timestep'''
+        '''Store results from optimal power flow for a new timestep
+        
+        timestep : int
+            timestamp of results
+        objective_function : float
+            value of objective function
+        generator_power : list
+            generator output (list of same length and order as generators)
+        generator_pumped : list
+            position according to grid.getIdxGeneratorsWithPumping()
+        branch_power : list
+            AC branch power flow (list of same length and order as branches)
+        dcbranch_power : list
+            DC branch power flow (list of same length and order as dcbranches)
+        node_angles : list
+            voltage angles (list of same length and order as nodes)
+        sensitivity_branch_capacity : list
+            dual, position according to grid.getIdxBranchesWithFlowConstraints()
+        sensitivity_dcbranch_capacity : list
+            dual, capacity (list of same length and order as dcbranches)
+        sensitivity_node_power : list
+            dual, node demand(list of same length and order as nodes)
+        storage : list
+            position accordint to grid.getIdxGeneratorsWithStorage()
+        inflow_spilled : list
+            spileld power (list of same length and order as generators)
+        loadshed_power : list 
+            same length and order as nodes
+        marginalprice : list
+            position according to grid.getIdxGeneratorsWithStorage()
+        flexload_power : list
+            position according to grid.getIdxConsumersWithFlexibleLoad()
+        flexload_storage : list
+            position according to grid.getIdxConsumersWithFlexibleLoad()
+        flexload_storagevalue : list
+            position according to grid.getIdxConsumersWithFlexibleLoad()
+        
+        
+        '''
         
         # Store results in sqlite database on disk (to avoid memory problems)
         self.db.appendResults(
