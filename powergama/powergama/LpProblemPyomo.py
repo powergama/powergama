@@ -22,7 +22,8 @@ Module containing PowerGAMA LpProblem class
 
 import pyomo.environ as pyo
 import pyomo.opt
-from numpy import pi, array, asarray, vstack, zeros
+import numpy as np
+#from numpy import pi, array, asarray, vstack, zeros
 from datetime import datetime as datetime
 from . import constants as const
 import scipy.sparse
@@ -77,7 +78,10 @@ class LpProblem(object):
                                          within=pyo.NonNegativeReals)
         model.branchDcCapacity = pyo.Param(model.BRANCH_DC, 
                                          within=pyo.NonNegativeReals)    
-        model.genPmaxLimit = pyo.Param(model.GEN,within=pyo.Reals)
+        model.genPmaxLimit = pyo.Param(model.GEN,within=pyo.NonNegativeReals)
+        model.pumpCapacity = pyo.Param(model.GEN_PUMP,within=pyo.Reals)
+        model.flexloadMax = pyo.Param(model.LOAD_FLEX,
+                                       within=pyo.NonNegativeReals)
         model.refNode = pyo.Param(within=model.NODE)
 
         # helpers:
@@ -105,7 +109,7 @@ class LpProblem(object):
                                     within = pyo.NonNegativeReals)
         model.varLoadShed = pyo.Var(model.LOAD, within = pyo.NonNegativeReals) 
         model.varVoltageAngle = pyo.Var(model.NODE, within = pyo.Reals,
-                                        bounds = (-pi,pi)) 
+                                        bounds = (-np.pi,np.pi)) 
         
 #        # not needed because limit is set by constraint        
 #        def ubFlexLoad_rule(model,i):
@@ -119,7 +123,10 @@ class LpProblem(object):
         # 1 Power flow limit   (AC branches)   
         def maxflowAc_rule(model, j):
             cap = model.branchAcCapacity[j]
-            expr = (-cap <= model.varAcBranchFlow[j] <= cap )
+            if  not np.isinf(cap):
+                expr = (-cap <= model.varAcBranchFlow[j] <= cap )
+            else:
+                expr = pyo.Constraint.Skip
             return expr
                         
         model.cMaxFlowAc = pyo.Constraint(model.BRANCH_AC, rule=maxflowAc_rule)
@@ -148,10 +155,10 @@ class LpProblem(object):
 
         # 4 Flexible load limit                                 
         def flexload_rule(model,i):
-            expr = (model.varFlexload[i] <= model.flexloadMax[i])
+            expr = (model.varFlexLoad[i] <= model.flexloadMax[i])
             return expr
         
-        model.cFlexload = pyo.Constraint(model.GEN_PUMP,rule=flexload_rule)
+        model.cFlexload = pyo.Constraint(model.LOAD_FLEX,rule=flexload_rule)
                
         #5 Power balance (power flow equation)  (Pnode = B theta)
         def powerbalance_rule(model,n):
@@ -160,28 +167,32 @@ class LpProblem(object):
                 if model.genNode[g]==n:
                     lhs += model.varGeneration[g]
             for p in model.GEN_PUMP:
-                if model.pumpNode[p]==n:
+                if model.genNode[p]==n:
                     lhs -= model.varPump[p]
             for l in model.LOAD:
                 if model.demNode[l]==n:
                     lhs -= model.demand[l]
                     lhs += model.varLoadShed[l]
             for f in model.LOAD_FLEX:
-                if model.flexNode[f]==n:
+                if model.demNode[f]==n:
                     lhs -= model.varFlexLoad[f]
             for b in model.BRANCH_DC:
                 # positive sign for flow into node
-                if model.dcbranchToNode[b]==n:
+                if model.dcbranchNodeTo[b]==n:
                     lhs += model.varDcBranchFlow[b]
-                elif model.dcbranchFromNode[b]==n:
+                elif model.dcbranchNodeFrom[b]==n:
                     lhs -= model.varDcBranchFlow[b]
 
             lhs = lhs/const.baseMVA
             
             rhs = 0
-            for n2 in model.NODE:
-                if (n,n2) in model.coeff_B.keys():
-                    rhs -= model.coeff_B[n,n2]*model.varVoltageAngle[n2]
+            #TODO speed up- remove for loop
+            n2s = [k[1]  for k in model.coeff_B.keys() if k[0]==n]
+            for n2 in n2s:
+                rhs -= model.coeff_B[n,n2]*model.varVoltageAngle[n2]                
+            #for n2 in model.NODE:
+            #    if (n,n2) in model.coeff_B.keys():
+            #        rhs -= model.coeff_B[n,n2]*model.varVoltageAngle[n2]
             expr = (lhs == rhs)
             return expr
 
@@ -192,9 +203,13 @@ class LpProblem(object):
             lhs = model.varAcBranchFlow[b]
             lhs = lhs/const.baseMVA
             rhs = 0
-            for n2 in model.NODE:
-                if (b,n2) in model.coeff_DA.keys():
-                    rhs += model.coeff_DA[b,n2]*model.varVoltageAngle[n2]
+            #TODO speed up- remove for loop
+            n2s = [k[1]  for k in model.coeff_DA.keys() if k[0]==b]
+            for n2 in n2s:
+                rhs += model.coeff_DA[b,n2]*model.varVoltageAngle[n2]                
+            #for n2 in model.NODE:
+            #    if (b,n2) in model.coeff_DA.keys():
+            #        rhs += model.coeff_DA[b,n2]*model.varVoltageAngle[n2]
             expr = (lhs==rhs)
             return expr
 
@@ -268,10 +283,15 @@ class LpProblem(object):
         di['branchDcCapacity'] = grid_data.dcbranch['capacity'].to_dict()
         di['genPmaxLimit'] = grid_data.generator['pmax'].to_dict()
         di['genCost'] = grid_data.generator['fuelcost'].to_dict()
-        di['pumpCost'] = {k:v 
-                for k,v in grid_data.generator['fuelcost'].items() 
-                if k in di['GEN_PUMP'][None]}
-        di['flexLoadCost']={i: grid_data.consumer['flex_basevalue'][i] 
+        di['pumpCost'] = {k: grid_data.generator['fuelcost'][k]
+                            for k in di['GEN_PUMP'][None] }
+        di['pumpCapacity'] = {k: grid_data.generator['pump_cap'][k] 
+                                for k in di['GEN_PUMP'][None] }
+        di['flexLoadCost'] = {i: grid_data.consumer['flex_basevalue'][i] 
+                                for i in di['LOAD_FLEX'][None] }
+        di['flexloadMax'] = {i: (grid_data.consumer['demand_avg'][i]
+                                    * grid_data.consumer['flex_fraction'][i]
+                                    / grid_data.consumer['flex_on_off'][i])
                                 for i in di['LOAD_FLEX'][None] }
         # use fixed load shedding penalty of 1000 €/MWh
         di['loadShedCost'] = {None: 1000}
@@ -296,6 +316,7 @@ class LpProblem(object):
         di['coeff_B'] = dict()
         di['coeff_DA'] = dict()
         
+        print("Creating B and DA coefficients...")        
         cx = scipy.sparse.coo_matrix(Bbus)
         for i,j,v in zip(cx.row, cx.col, cx.data):
             di['coeff_B'][(n_i[i],n_i[j])] = v
@@ -324,6 +345,7 @@ class LpProblem(object):
         '''
         
         self.solver=solver
+        self.solver_path = solver_path
         
         # Pyomo
         # 1 create abstract pyomo model        
@@ -331,6 +353,7 @@ class LpProblem(object):
 
         # 2 create concrete instance using grid data
         modeldata_dict = self.createModelData(grid)
+        print('Creating LP problem instance...')
         self.concretemodel = self.abstractmodel.create_instance(
                                 data=modeldata_dict,
                                 name="PowerGAMA Model",
@@ -392,6 +415,8 @@ class LpProblem(object):
                 This won't affect fuel based generators with zero storage,
                 since these should have inflow=p_max in any case
                 '''
+                #TODO: change from bounds to constraints
+                # (which gives interesting dual value, cf max flow)
                 self.concretemodel.varGeneration[i].setlb(
                         min(P_inflow,P_min[i]))
                 self.concretemodel.varGeneration[i].setub(P_inflow)
@@ -466,9 +491,9 @@ class LpProblem(object):
         inflow_profile_refs = self._grid.generator['inflow_ref']
         inflow_factor = self._grid.generator['inflow_fac']
         capacity= self._grid.generator['pmax']
-        pumpedIn = zeros(len(capacity))
-        energyIn = zeros(len(capacity))
-        energyOut = zeros(len(capacity))
+        pumpedIn = np.zeros(len(capacity))
+        energyIn = np.zeros(len(capacity))
+        energyOut = np.zeros(len(capacity))
         for i in self.concretemodel.GEN:
             genInflow = (capacity[i] * inflow_factor[i]
         			 * self._grid.profiles[inflow_profile_refs[i]][timestep] )                        
@@ -476,13 +501,13 @@ class LpProblem(object):
             energyOut[i] = (self.concretemodel.varGeneration[i].value
                             *self.timeDelta)
         for i in self._idx_generatorsWithPumping:
-            Ppump = self.concretemodel.varPump[i]
+            Ppump = self.concretemodel.varPump[i].value
             pumpedIn[i] = (Ppump*self._grid.generator['pump_efficiency'][i] 
                             *self.timeDelta)
         energyStorable = (self._storage + energyIn + pumpedIn - energyOut)
         storagecapacity = self._grid.generator['storage_cap']
         #self._storage[i] = min(storagecapacity,energyStorable)
-        self._storage = vstack((storagecapacity,energyStorable)).min(axis=0)
+        self._storage = np.vstack((storagecapacity,energyStorable)).min(axis=0)
         self._energyspilled = energyStorable-self._storage
 
         # 2. Update flexible load storage
@@ -573,7 +598,7 @@ class LpProblem(object):
         return
     
 
-    def initialiseSolver(self,solver='cbc'):
+    def initialiseSolver(self):
         '''
         Initialise solver - normally not necessary
 		
@@ -586,18 +611,18 @@ class LpProblem(object):
         #    print("Only 'cbc' and 'gurobi' solvers can be used. Returning.")
         #    raise Exception("Solver must be 'cbc' or 'gurobi'")
             
-        opt = pyo.SolverFactory(solver)
+        opt = pyo.SolverFactory(self.solver,executable=self.solver_path)
         if opt.available():
             print (":) Found solver here: {}".format(opt.executable()))
-            self.solver = solver
         else:
-            print(":( Could not find solver {}. Returning.".format(solver))     
-            self.solver = None
-            raise Exception("Could not find LP solver {}".format(solver))
-        return
+            print(":( Could not find solver {}. Returning."
+                    .format(self.solver))     
+            raise Exception("Could not find LP solver {}"
+                            .format(self.solver))
+        return opt
                 
         
-    def solve(self,results):
+    def solve(self,results,warmstart=False):
         '''
         Solve LP problem for each time step in the time range
         
@@ -605,6 +630,8 @@ class LpProblem(object):
         ----------
         results : Results
             PowerGAMA Results object reference
+        warmstart : Boolean
+            Use warmstart option (only some solvers, e.g. gurobi)
             
         Returns
         -------
@@ -616,14 +643,16 @@ class LpProblem(object):
         #    results = Results(self._grid)      
        
         # Check if solver is available
-        self.initialiseSolver(self.solver)
-        opt = pyo.SolverFactory(self.solver)
+        opt = self.initialiseSolver()
+        #opt = pyo.SolverFactory(self.solver,executable=self.solver_path)
         
         #Enable access to dual values
         self.concretemodel.dual = pyo.Suffix(direction=pyo.Suffix.IMPORT)
        
         print("Solving...")
         numTimesteps = len(self._grid.timerange)
+        count = 0
+        warmstart_now=False
         for timestep in range(numTimesteps):
             # update LP problem (inflow, storage, profiles)                     
             self._updateLpProblem(timestep)
@@ -631,10 +660,23 @@ class LpProblem(object):
             # solve the LP problem
             #self.concretemodel.pprint('concretemodel_{}.txt'.format(timestep))        
 
-            res = opt.solve(self.concretemodel, 
-                    tee=False, #stream the solver output
-                    keepfiles=False, #print the LP file for examination
-                    symbolic_solver_labels=True) # use human readable names 
+            if warmstart:  
+                #warmstart available (does not work with cbc)
+                if count>0:
+                    warmstart_now=warmstart
+                count = count+1
+                res = opt.solve(self.concretemodel, 
+                        tee=False, #stream the solver output
+                        keepfiles=False, #print the LP file for examination
+                        warmstart=warmstart_now,
+                        symbolic_solver_labels=True) # use human readable names 
+            else:
+                #no warmstart option
+                res = opt.solve(self.concretemodel, 
+                        tee=False, #stream the solver output
+                        keepfiles=False, #print the LP file for examination
+                        symbolic_solver_labels=True) # use human readable names 
+                
             
             if (res.solver.status != pyomo.opt.SolverStatus.ok):
                 raise Exception("Something went wrong with LP solver: {}"
