@@ -181,7 +181,7 @@ class LpProblem(object):
             rhs = 0
             for n2 in model.NODE:
                 if (n,n2) in model.coeff_B.keys():
-                    rhs += model.coeff_B[n,n2]*model.varVoltageAngle[n2]
+                    rhs -= model.coeff_B[n,n2]*model.varVoltageAngle[n2]
             expr = (lhs == rhs)
             return expr
 
@@ -190,6 +190,7 @@ class LpProblem(object):
         #6 Power balance (power flow vs voltage angle)                               
         def flowangle_rule(model,b):
             lhs = model.varAcBranchFlow[b]
+            lhs = lhs/const.baseMVA
             rhs = 0
             for n2 in model.NODE:
                 if (b,n2) in model.coeff_DA.keys():
@@ -340,18 +341,8 @@ class LpProblem(object):
         # Creating local variables to keep track of storage
         self._grid = grid
         self.timeDelta = grid.timeDelta
-        #self.num_nodes = grid.numNodes()        
-        #self.num_generators = grid.numGenerators()
-        #self.num_branches = grid.numBranches()
-        #self.num_dc_branches = grid.numDcBranches()
         self._idx_generatorsWithPumping = grid.getIdxGeneratorsWithPumping()        
         self._idx_generatorsWithStorage = grid.getIdxGeneratorsWithStorage()
-        #self._idx_generatorsStorageProfileFilling = asarray(
-        #    [grid.generator['storval_filling_ref'][i] 
-        #    for i in self._idx_generatorsWithStorage])
-        #self._idx_generatorsStorageProfileTime = asarray(
-        #    [grid.generator['storval_time_ref'][i] 
-        #    for i in self._idx_generatorsWithStorage])
 
         self._idx_consumersWithFlexLoad = (
             grid.getIdxConsumersWithFlexibleLoad() )
@@ -363,9 +354,6 @@ class LpProblem(object):
         self._storage = (
             grid.generator['storage_ini']*grid.generator['storage_cap'] )
 
-        # Marginal costs for storage generators will be updated later on
-        #self._marginalcosts = grid.generator['fuelcost']
-        
         self._storage_flexload = (
                 grid.consumer['flex_storagelevel_init']
                 * grid.consumer['flex_storage']
@@ -375,17 +363,6 @@ class LpProblem(object):
                 
         self._energyspilled = grid.generator['storage_cap'].copy(deep=True)
         self._energyspilled[:]=0
-
-        #self._idx_consumersStorageProfileFilling = asarray(
-        #    [grid.consumer['flex_storval_filling'][i]
-        #    for i in self._idx_consumersWithFlexLoad])
-        #self._idx_consumersStorageProfileTime = asarray(
-        #    [grid.consumer['flex_storval_time'][i] 
-        #    for i in self._idx_consumersWithFlexLoad])
-
-        
-#        # Bounds on maximum and minimum production (power inflow)
-#        self._setLpGeneratorMaxMin(timestep)
         
         return       
 
@@ -545,17 +522,17 @@ class LpProblem(object):
         for j in self._idx_branchesWithConstraints:
         #for j in self.concretemodel.BRANCH_AC:
             c = self.concretemodel.cMaxFlowAc[j]            
-            senseB.append(self.concretemodel.dual[c])
+            senseB.append(self.concretemodel.dual[c]/const.baseMVA )
         senseDcB = []
         for j in self.concretemodel.BRANCH_DC:
             c = self.concretemodel.cMaxFlowDc[j]            
-            senseDcB.append(self.concretemodel.dual[c])
+            senseDcB.append(self.concretemodel.dual[c]/const.baseMVA )
 
         # 4b. node demand sensitivity (energy balance)
         senseN = []
         for j in self.concretemodel.NODE:
-            c = self.concretemodel.cPowerbalance[j]            
-            senseN.append(self.concretemodel.dual[c])
+            c = self.concretemodel.cPowerbalance[j]         
+            senseN.append(self.concretemodel.dual[c]/const.baseMVA )
             
         # consider spilled energy only for generators with storage<infinity
         #energyspilled = zeros(energyStorable.shape)
@@ -639,6 +616,7 @@ class LpProblem(object):
        
         # Check if solver is available
         self.initialiseSolver(self.solver)
+        opt = pyo.SolverFactory(self.solver)
         
         #Enable access to dual values
         self.concretemodel.dual = pyo.Suffix(direction=pyo.Suffix.IMPORT)
@@ -650,8 +628,6 @@ class LpProblem(object):
             self._updateLpProblem(timestep)
           
             # solve the LP problem
-            #self.prob.solve(self.solver,use_mps=True)
-            opt = pyo.SolverFactory(self.solver)
             res = opt.solve(self.concretemodel, 
                     tee=False, #stream the solver output
                     keepfiles=False, #print the LP file for examination
@@ -664,28 +640,14 @@ class LpProblem(object):
                     == pyomo.opt.TerminationCondition.infeasible):
                 warnings.warn("t={}: No feasible solution found."
                                 .format(timestep))
-                
-            
-            #PULP:        
-            #self.prob.solve(self.solver)
-            #solver_status = self.prob.status            
-#            if solver_status != pulp.LpStatusOptimal:
-#                print("SOLVE -> status = {}".
-#                      format(pulp.LpStatus[solver_status]))
-#                warnings.warn("t={}: No optimal solution found: {}."
-#                                .format(timestep,pulp.LpStatus[solver_status]))
-            
-            # print result summary            
-            #value_costfunction = pulp.value(self.prob.objective)
+                            
             self._update_progress(timestep,numTimesteps)
-            #print "Timestep=",timestep, " => ",  \
-            #    pulp.LpStatus[self.prob.status], \
-            #    "<> cost=",value_costfunction
        
             # store results and update storage levels
             self._storeResultsAndUpdateStorage(timestep,results)
         
         return results
+
 
     def _update_progress(self,n,maxn):
         if self._fancy_progressbar:
