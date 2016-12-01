@@ -511,7 +511,8 @@ class LpProblem(object):
                 for i in self.concretemodel.NODE]
         #load shedding is aggregated to nodes (due to old code)
         Ploadshed = pd.Series(index=self._grid.node.id,
-                                 data=[0]*len(self._grid.node.id))
+                                 data=[0]*len(self._grid.node.id),
+                                 dtype=float)
         for j in self.concretemodel.LOAD:
             node = self._grid.consumer['node'][j]
             Ploadshed[node] += self.concretemodel.varLoadShed[j].value
@@ -522,17 +523,18 @@ class LpProblem(object):
         for j in self._idx_branchesWithConstraints:
         #for j in self.concretemodel.BRANCH_AC:
             c = self.concretemodel.cMaxFlowAc[j]            
-            senseB.append(self.concretemodel.dual[c]/const.baseMVA )
+            senseB.append(-self.concretemodel.dual[c]/const.baseMVA )
         senseDcB = []
         for j in self.concretemodel.BRANCH_DC:
             c = self.concretemodel.cMaxFlowDc[j]            
             senseDcB.append(self.concretemodel.dual[c]/const.baseMVA )
 
         # 4b. node demand sensitivity (energy balance)
+        # TODO: Without abs(...) the value jumps between pos and neg. Why?
         senseN = []
         for j in self.concretemodel.NODE:
             c = self.concretemodel.cPowerbalance[j]         
-            senseN.append(self.concretemodel.dual[c]/const.baseMVA )
+            senseN.append(abs(self.concretemodel.dual[c]/const.baseMVA ))
             
         # consider spilled energy only for generators with storage<infinity
         #energyspilled = zeros(energyStorable.shape)
@@ -548,7 +550,6 @@ class LpProblem(object):
         
         # TODO: Only keep track of inflow spilled for generators with 
         # nonzero inflow
-        
         
         results.addResultsFromTimestep(
             timestep = self._grid.timerange[0]+timestep,
@@ -628,6 +629,8 @@ class LpProblem(object):
             self._updateLpProblem(timestep)
           
             # solve the LP problem
+            #self.concretemodel.pprint('concretemodel_{}.txt'.format(timestep))        
+
             res = opt.solve(self.concretemodel, 
                     tee=False, #stream the solver output
                     keepfiles=False, #print the LP file for examination

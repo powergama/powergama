@@ -86,7 +86,7 @@ class LpProblem(object):
         self._storage = (
             asarray(grid.generator['storage_ini'])
             *asarray(grid.generator['storage_cap']) )
-        self._marginalcosts = array(grid.generator['fuelcost'])        
+        self._marginalcosts = array(grid.generator['fuelcost'],dtype=float)        
         
         self._storage_flexload = (
                 asarray(grid.consumer['flex_storagelevel_init'])
@@ -94,7 +94,8 @@ class LpProblem(object):
                 * asarray(grid.consumer['flex_fraction'])
                 * asarray(grid.consumer['demand_avg'])
                 )
-        self._marginalcosts_flexload = asarray(grid.consumer['flex_basevalue'])      
+        self._marginalcosts_flexload = array(grid.consumer['flex_basevalue'],
+                                             dtype=float)      
         self._idx_consumersStorageProfileFilling = asarray(
             [grid.consumer['flex_storval_filling'][i]
             for i in self._idx_consumersWithFlexLoad])
