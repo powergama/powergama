@@ -30,6 +30,8 @@ import scipy.sparse
 import sys
 import warnings
 import pandas as pd
+import networkx as nx
+
 #needed for code to work both for python 2.7 and 3:
 try:
     from itertools import izip as zip
@@ -82,7 +84,7 @@ class LpProblem(object):
         model.pumpCapacity = pyo.Param(model.GEN_PUMP,within=pyo.Reals)
         model.flexloadMax = pyo.Param(model.LOAD_FLEX,
                                        within=pyo.NonNegativeReals)
-        model.refNode = pyo.Param(within=model.NODE)
+        model.refNodes = pyo.Param(model.NODE, within=pyo.Boolean)
 
         # helpers:
         model.genNode = pyo.Param(model.GEN,within=model.NODE)
@@ -216,11 +218,15 @@ class LpProblem(object):
         model.cFlowAngle = pyo.Constraint(model.BRANCH_AC, rule=flowangle_rule)
 
         #7 Reference voltag angle)        
-        def referenceNode_rule(model):
-            expr = (model.varVoltageAngle[model.refNode.value] == 0)
+        def referenceNode_rule(model,n):
+            if n in model.refNodes.keys():
+                expr = (model.varVoltageAngle[n] == 0)
+            else:
+                expr = pyo.Constraint.Skip
             return expr
         
-        model.cReferenceNode = pyo.Constraint(rule=referenceNode_rule)                       
+        model.cReferenceNode = pyo.Constraint(model.NODE,
+                                              rule=referenceNode_rule)                       
 
         # OBJECTIVE ##########################################################
     
@@ -295,8 +301,6 @@ class LpProblem(object):
                                 for i in di['LOAD_FLEX'][None] }
         # use fixed load shedding penalty of 1000 €/MWh
         di['loadShedCost'] = {None: 1000}
-        # use first node as voltage angle reference
-        di['refNode'] = {None: di['NODE'][None][0]}
 
         di['genNode'] = grid_data.generator['node'].to_dict()
         di['demNode'] = grid_data.consumer['node'].to_dict()
@@ -325,13 +329,29 @@ class LpProblem(object):
         for i,j,v in zip(cx.row, cx.col, cx.data):
             di['coeff_DA'][(b_i[i],n_i[j])] = v
 
+        # Find synchronous areas and specify reference node in each area
+        G = nx.Graph()
+        G.add_nodes_from(grid_data.node['id'])
+        G.add_edges_from(zip(grid_data.branch['node_from'],
+                             grid_data.branch['node_to']))
+
+        G_subs = nx.connected_component_subgraphs(G)
+        refnodes = []
+        for gr in G_subs:
+            refnode = gr.nodes()[0]
+            refnodes.append(refnode)
+            print("Found synchronous area (size = {}), using ref node = {}"
+                    .format(gr.order(),refnode))
+        # use first node as voltage angle reference
+        di['refNodes'] = {n:True for n in refnodes}
+
         return {'powergama':di}
 
 
 
 
 
-    def __init__(self,grid,solver='cbc', solver_path=None):
+    def __init__(self,grid,solver='cbc', solver_io='mps', solver_path=None):
         '''LP problem formulation
         
         Parameters
@@ -340,12 +360,15 @@ class LpProblem(object):
             grid data object
         solver : string (optional)
             name of solver to use ("cbc" or "gurobi")
+        solver_io : string
+            'mps', 'lp', 'python'
         solver_path :string (optional)
             path for solver executable
         '''
         
         self.solver=solver
         self.solver_path = solver_path
+        self.solver_io = solver_io
         
         # Pyomo
         # 1 create abstract pyomo model        
@@ -422,10 +445,12 @@ class LpProblem(object):
                 self.concretemodel.varGeneration[i].setub(P_inflow)
             else:
                 #generator has storage
+                # max(...) is used to get non-negative value
+                # (due to numerical effects, storage may be slightly <0)
                 self.concretemodel.varGeneration[i].setlb(
-                        min(P_inflow+P_storage[i], P_min[i]) )
+                        min(max(0,P_inflow+P_storage[i]), P_min[i]) )
                 self.concretemodel.varGeneration[i].setub(
-                        min(P_inflow+P_storage[i], P_max[i]) )
+                        min(max(0,P_inflow+P_storage[i]), P_max[i]) )
 
                     
         # 2. Update demand (which affects powr balance constraint)
@@ -548,11 +573,11 @@ class LpProblem(object):
         for j in self._idx_branchesWithConstraints:
         #for j in self.concretemodel.BRANCH_AC:
             c = self.concretemodel.cMaxFlowAc[j]            
-            senseB.append(-self.concretemodel.dual[c]/const.baseMVA )
+            senseB.append(-abs(self.concretemodel.dual[c]/const.baseMVA ))
         senseDcB = []
         for j in self.concretemodel.BRANCH_DC:
             c = self.concretemodel.cMaxFlowDc[j]            
-            senseDcB.append(self.concretemodel.dual[c]/const.baseMVA )
+            senseDcB.append(-abs(self.concretemodel.dual[c]/const.baseMVA ))
 
         # 4b. node demand sensitivity (energy balance)
         # TODO: Without abs(...) the value jumps between pos and neg. Why?
@@ -611,8 +636,11 @@ class LpProblem(object):
         #    print("Only 'cbc' and 'gurobi' solvers can be used. Returning.")
         #    raise Exception("Solver must be 'cbc' or 'gurobi'")
             
-        opt = pyo.SolverFactory(self.solver,executable=self.solver_path)
-        if opt.available():
+        opt = pyo.SolverFactory(self.solver,executable=self.solver_path,
+                                solver_io=self.solver_io)
+        if self.solver_io=='python':
+            print(":) Using direct python interface to solver")
+        elif opt.available():
             print (":) Found solver here: {}".format(opt.executable()))
         else:
             print(":( Could not find solver {}. Returning."
@@ -679,7 +707,7 @@ class LpProblem(object):
                 
             
             if (res.solver.status != pyomo.opt.SolverStatus.ok):
-                raise Exception("Something went wrong with LP solver: {}"
+                warnings.warn("Something went wrong with LP solver: {}"
                                 .format(res.solver.status))
             elif (res.solver.termination_condition 
                     == pyomo.opt.TerminationCondition.infeasible):

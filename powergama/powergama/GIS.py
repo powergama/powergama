@@ -18,7 +18,7 @@ def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,
     grid_data : powergama.GridData
         grid data object
     nodetype : string
-        how to plot nodes - 'areaprice','powergim_type'
+        how to plot nodes - 'nodalprice','powergim_type'
     branchtype : string
         how to plot branches - 'flow','powergim_type'
     res : powergama.Results (optional)
@@ -183,11 +183,7 @@ def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,
         description = name
         color = None
         
-        if branchtype==None:
-            lin = branchfolder.newlinestring(name=name,
-                  description = description,
-                  coords=[(startbuslon,startbuslat),(endbuslon,endbuslat)])
-        elif branchtype=='flow':
+        if branchtype=='flow':
             # Determine category        
             branch_category=numCat        
             for category in range(numCat):        
@@ -219,8 +215,40 @@ def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,
             lin = branchlevelfolder[typ].newlinestring(name=name,
                   description = description,
                   coords=[(startbuslon,startbuslat),(endbuslon,endbuslat)])
-            pass
+        else:
+            lin = branchfolder.newlinestring(name=name,
+                  description = description,
+                  coords=[(startbuslon,startbuslat),(endbuslon,endbuslat)])
+                  
         lin.style.linestyle.color = color
+        lin.style.linestyle.width = 1.5    
+
+    # DC BRANCHES ############################################################
+    if grid_data.dcbranch.shape[0] > 0:    
+        dcbranchfolder = kml.newfolder(name="DC branch")
+        
+    for i in grid_data.dcbranch.index:
+        startbus = grid_data.dcbranch.node_from[i]
+        endbus = grid_data.dcbranch.node_to[i]
+        startbusIndx = grid_data.node.index[grid_data.node.id==startbus][0]
+        endbusIndx = grid_data.node.index[grid_data.node.id==endbus][0]
+        startbuslon = grid_data.node.lon[startbusIndx]
+        startbuslat = grid_data.node.lat[startbusIndx]
+        endbuslon = grid_data.node.lon[endbusIndx]
+        endbuslat = grid_data.node.lat[endbusIndx]
+        capacity = grid_data.dcbranch.capacity[i]
+        name = "{}=={}".format(startbus,endbus)
+
+        description = """
+        Startbus .. {}          <br/>
+        Endbus .. {}            <br/>
+        Capacity .. {}          <br/>
+        """.format(startbus,endbus,capacity)
+        lin = dcbranchfolder.newlinestring(name=name,
+              description = description,
+              coords=[(startbuslon,startbuslat),(endbuslon,endbuslat)])
+                  
+        lin.style.linestyle.color = None
         lin.style.linestyle.width = 1.5    
         
     kml.save(kmlfile)
