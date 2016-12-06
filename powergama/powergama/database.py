@@ -49,7 +49,7 @@ class Database(object):
         
         if os.path.isfile(self.filename):
             #delete existing file
-            print("OBS: Deleting existing SQLite file ""%s"""%self.filename )
+            print('Replacing existing SQLite file "{}'.format(self.filename) )
             os.remove(self.filename)
             #Must use a new file
             #raise IOError('Cannot append existing file. Choose new file name.')

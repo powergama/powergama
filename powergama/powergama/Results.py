@@ -828,7 +828,7 @@ class Results(object):
         storageTypes = self.grid.generator.type
         nodeNames = self.grid.generator.node
         nodeAreas = self.grid.node.area
-        storCapacities = self.grid.generator.storage
+        storCapacities = self.grid.generator.storage_cap
         generators = []
         capacity = 0
         for gen in storageGen:
@@ -1313,7 +1313,7 @@ class Results(object):
             flexdemand = [0]*len(self.timerange)
             consumers = self.grid.getConsumersPerArea()[co]
             for i in consumers:
-                ref_profile = consumer.load_profile[i]
+                ref_profile = consumer['demand_ref'][i]
                 # accumulate demand for all consumers in this area:
                 dem = [dem[t-self.timerange[0]] + consumer['demand_avg'][i] 
                     * (1 - consumer['flex_fraction'][i])

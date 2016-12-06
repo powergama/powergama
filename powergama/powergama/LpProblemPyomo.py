@@ -45,10 +45,6 @@ class LpProblem(object):
     Class containing problem definition as a LP problem, and function calls
     to solve the problem
     
-    Parameters
-    ----------
-    grid : DataGrid
-        PowerGAMA grid model object
     '''
 
     def _createAbstractModel(self):    
@@ -254,7 +250,7 @@ class LpProblem(object):
 
 
 
-    def createModelData(self,grid_data):
+    def _createModelData(self,grid_data):
         '''Create model data in dictionary format
 
         Parameters
@@ -351,31 +347,21 @@ class LpProblem(object):
 
 
 
-    def __init__(self,grid,solver='cbc', solver_io='mps', solver_path=None):
+    def __init__(self,grid):
         '''LP problem formulation
         
         Parameters
         ==========
         grid : GridData
             grid data object
-        solver : string (optional)
-            name of solver to use ("cbc" or "gurobi")
-        solver_io : string
-            'mps', 'lp', 'python'
-        solver_path :string (optional)
-            path for solver executable
         '''
-        
-        self.solver=solver
-        self.solver_path = solver_path
-        self.solver_io = solver_io
         
         # Pyomo
         # 1 create abstract pyomo model        
         self.abstractmodel = self._createAbstractModel()
 
         # 2 create concrete instance using grid data
-        modeldata_dict = self.createModelData(grid)
+        modeldata_dict = self._createModelData(grid)
         print('Creating LP problem instance...')
         self.concretemodel = self.abstractmodel.create_instance(
                                 data=modeldata_dict,
@@ -621,36 +607,9 @@ class LpProblem(object):
             flexload_storagevalue = flexload_marginalprice)
 
         return
-    
-
-    def initialiseSolver(self):
-        '''
-        Initialise solver - normally not necessary
-		
-		Parameters
-		----------
-		solver : string
-		   PName of solver (cbc,gurobi)
-        '''
-        #if not solver in ['cbc','gurobi']:
-        #    print("Only 'cbc' and 'gurobi' solvers can be used. Returning.")
-        #    raise Exception("Solver must be 'cbc' or 'gurobi'")
-            
-        opt = pyo.SolverFactory(self.solver,executable=self.solver_path,
-                                solver_io=self.solver_io)
-        if self.solver_io=='python':
-            print(":) Using direct python interface to solver")
-        elif opt.available():
-            print (":) Found solver here: {}".format(opt.executable()))
-        else:
-            print(":( Could not find solver {}. Returning."
-                    .format(self.solver))     
-            raise Exception("Could not find LP solver {}"
-                            .format(self.solver))
-        return opt
-                
+               
         
-    def solve(self,results,warmstart=False):
+    def solve(self,results,solver='cbc',solver_path=None,warmstart=False):
         '''
         Solve LP problem for each time step in the time range
         
@@ -658,6 +617,11 @@ class LpProblem(object):
         ----------
         results : Results
             PowerGAMA Results object reference
+        solver : string (optional)
+            name of solver to use ("cbc" or "gurobi"). Gurobi uses python
+            interface, whilst CBC uses command line executable
+        solver_path :string (optional, only relevant for cbc)
+            path for solver executable
         warmstart : Boolean
             Use warmstart option (only some solvers, e.g. gurobi)
             
@@ -667,12 +631,19 @@ class LpProblem(object):
             PowerGAMA Results object reference
         '''
 
-        #if results == None:
-        #    results = Results(self._grid)      
-       
-        # Check if solver is available
-        opt = self.initialiseSolver()
-        #opt = pyo.SolverFactory(self.solver,executable=self.solver_path)
+        # Initalise solver, and check it is available
+        if solver=="gurobi":
+            opt = pyo.SolverFactory('gurobi',solver_io='python')
+            print(":) Using direct python interface to solver")
+        else:
+            opt = pyo.SolverFactory(solver,executable=solver_path)                    
+            if opt.available():
+                print (":) Found solver here: {}".format(opt.executable()))
+            else:
+                print(":( Could not find solver {}. Returning."
+                        .format(self.solver))     
+                raise Exception("Could not find LP solver {}"
+                                .format(self.solver))
         
         #Enable access to dual values
         self.concretemodel.dual = pyo.Suffix(direction=pyo.Suffix.IMPORT)
@@ -688,7 +659,7 @@ class LpProblem(object):
             # solve the LP problem
             #self.concretemodel.pprint('concretemodel_{}.txt'.format(timestep))        
 
-            if warmstart:  
+            if warmstart and opt.warm_start_capable():  
                 #warmstart available (does not work with cbc)
                 if count>0:
                     warmstart_now=warmstart
@@ -698,12 +669,15 @@ class LpProblem(object):
                         keepfiles=False, #print the LP file for examination
                         warmstart=warmstart_now,
                         symbolic_solver_labels=True) # use human readable names 
-            else:
+            elif not warmstart:
                 #no warmstart option
                 res = opt.solve(self.concretemodel, 
                         tee=False, #stream the solver output
                         keepfiles=False, #print the LP file for examination
                         symbolic_solver_labels=True) # use human readable names 
+            else:
+                raise Exception("Solver ({}) is not capable of warm start"
+                                    .format(opt.name))
                 
             
             if (res.solver.status != pyomo.opt.SolverStatus.ok):
