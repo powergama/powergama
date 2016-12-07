@@ -1,15 +1,50 @@
 # -*- coding: utf-8 -*-
 """
 Visualization of results using Google Earth
+
+
+Attributes
+----------
+category_colours : list
+    list of colour codes (aabbggrr) used for nodes and branches. The second 
+    last value is for NaN, and the last value is default colour. So with
+    e.g. 5 colour categories, the list should have 7 elements.
+    
+    Colour codes are strings on the format aabbggrr (8-digit hex) - alpha,
+    blue, green, red
+
+Example
+-------
+powergama.GIS.makekml("output.kml",grid_data=data,res=res,
+                      nodetype="nodalprice",branchtype="flow")
 """
+
 
 import simplekml
 import math
 import numpy
 
+# Default category colours
+category_colours=["ffff6666","ffffff66","ff66ff66","ff66ffff",
+            "f6666fff","ffaaaaaa","ff000000"]
+
+dcbranch_colour = "ffffffff" #white
+generator_colour = "ff0000ff" #red
+consumer_colour = "ffff00ff" #purple
+
+# Default line width
+linewidth = 1.5
+
+point_icon_href = "http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png"
+
+
+
+            
 def makekml(kmlfile, grid_data,nodetype=None, branchtype=None, 
             res=None,timeMaxMin=None,title='PowerGAMA Results'):
     '''Export KML file for Google Earth plot of data
+    
+    Colours can be controlled via the module variable "colours"
     
     Parameters
     ==========
@@ -27,18 +62,49 @@ def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,
         time range used when plotting results from simulation
     title : string
         title of KML document
-    
     '''
     kml = simplekml.Kml()
     kml.document.name = title
-    circle = "http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png"
     
-    # Colours, 5 categories + NaN category
-    colorbgr = ["ffff6666","ffffff66","ff66ff66","ff66ffff","f6666fff",
-                "ffaaaaaa"] 
-    numCat = len(colorbgr)-1
+    # Colours, X categories + NaN category + black(default)
+    colorbgr = category_colours
+    numCat = len(colorbgr)-2
+    defaultCat = numCat+1
+    balloontext = "<h3>$[name]</h3> $[description]"
     
+    styleNodes = []
+    for col in colorbgr:    
+        styleNode = simplekml.Style()
+        styleNode.iconstyle.color = col
+        styleNode.iconstyle.icon.href = point_icon_href
+        styleNode.labelstyle.scale = 0.0 #hide
+        styleNode.balloonstyle.text = balloontext 
+        styleNodes.append(styleNode)
+        
+    styleGenerator = simplekml.Style()
+    styleGenerator.iconstyle.icon.href = point_icon_href
+    styleGenerator.iconstyle.color  = generator_colour 
+    styleGenerator.labelstyle.scale = 0.0 #hide
+    styleGenerator.balloonstyle.text = balloontext
     
+    styleConsumer = simplekml.Style()
+    styleConsumer.iconstyle.icon.href = point_icon_href
+    styleConsumer.iconstyle.color  = consumer_colour 
+    styleConsumer.labelstyle.scale = 0.0 #hide
+    styleConsumer.balloonstyle.text = balloontext
+    
+    styleBranches = []
+    for col in colorbgr:    
+        styleBranch = simplekml.Style()
+        styleBranch.linestyle.color = col
+        styleBranch.linestyle.width = linewidth   
+        styleBranches.append(styleBranch)
+    
+    styleDcBranch = simplekml.Style()
+    styleDcBranch.linestyle.color = dcbranch_colour
+    styleDcBranch.linestyle.width = linewidth   
+
+
     # NODES ##################################################################   
     nodefolder = kml.newfolder(name="Node")
     #nodecount = len(grid_data.node.id)
@@ -72,7 +138,9 @@ def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,
         name = grid_data.node.id[i]
         lon = grid_data.node.lon[i]
         lat = grid_data.node.lat[i]
-        color = None
+        area = grid_data.node.area[i]
+        node_category=defaultCat
+        #color = None
         description="ID: {}".format(name)
         if nodetype==None:
             pnt = nodefolder.newpoint(name=name,coords=[(lon,lat)],
@@ -86,12 +154,14 @@ def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,
                     node_category=category
                     break
             
-            color = colorbgr[node_category]
+            #color = colorbgr[node_category]
             description = """
+            Index .. %s             <br/>
             Busname .. %s           <br/>
+            Area .. %s              <br/>
             Lon .. %s, Lat .. %s    <br/>
             Price .. %s             <br/>
-            """%(name,lon,lat,nodalprice)
+            """%(str(i),name,area,lon,lat,nodalprice)
             pnt = nodalpricelevelfolder[node_category].newpoint(
                 name=name,
                 description=description,
@@ -100,13 +170,14 @@ def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,
             typ = grid_data.node.type[i]
             description="ID: {}</br>Type: {}".format(name,typ)
             node_category = nodetypes.index(typ)
-            color = colorbgr[node_category]
+            #color = colorbgr[node_category]
             pnt = nodetypefolder[typ].newpoint(name=name,
                                             description=description,
                                             coords=[(lon,lat)])
-        pnt.style.iconstyle.color = color
-        pnt.style.iconstyle.icon.href = circle
-        pnt.style.labelstyle.color = "00000000"
+        pnt.style = styleNodes[node_category]
+        #pnt.style.iconstyle.color = color
+        #pnt.style.iconstyle.icon.href = circle
+        #pnt.style.labelstyle.color = "00000000"
             
 
     # GENERATORS #############################################################
@@ -129,17 +200,36 @@ def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,
         nodeIndx = grid_data.node.index[grid_data.node.id==node][0]
         lon = grid_data.node.lon[nodeIndx]
         lat = grid_data.node.lat[nodeIndx]
-        description = """ 
+        description = """
+            Index .. %s <br/>
             Busname .. %s           <br/>
             Fuel .. %s         <br/>
             Capacity .. %s         <br/>
             Lon .. %s, Lat .. %s    <br/>
-            """ % (node,typ,str(cap),str(lon),str(lat))
+            """ % (str(i),node,typ,str(cap),str(lon),str(lat))
         pnt = gentypefolders[typ].newpoint(
             name=name,description=description, coords=[(lon,lat)])
-        pnt.style.iconstyle.icon.href = circle
-        pnt.style.iconstyle.color  = "ff0000ff"
-        pnt.style.labelstyle.color = "00000000"
+        pnt.style = styleGenerator
+        
+    # CONSUMERS #############################################################
+    consfolder = kml.newfolder(name="Consumer")
+
+    for i in grid_data.consumer.index:
+        avg = grid_data.consumer.demand_avg[i]
+        name = "Consumer"
+        node = grid_data.consumer.node[i]
+        nodeIndx = grid_data.node.index[grid_data.node.id==node][0]
+        lon = grid_data.node.lon[nodeIndx]
+        lat = grid_data.node.lat[nodeIndx]
+        description = """
+            Index .. %s <br/>
+            Busname .. %s           <br/>
+            Avg demand .. %s         <br/>
+            Lon .. %s, Lat .. %s    <br/>
+            """ % (str(i),node,str(avg),str(lon),str(lat))
+        pnt = consfolder.newpoint(
+            name=name,description=description, coords=[(lon,lat)])
+        pnt.style = styleConsumer
         
 
     # BRANCHES ###############################################################
@@ -181,7 +271,7 @@ def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,
         capacity = grid_data.branch.capacity[i]
         name = "{}=={}".format(startbus,endbus)
         description = name
-        color = None
+        branch_category=defaultCat
         
         if branchtype=='flow':
             # Determine category        
@@ -191,22 +281,22 @@ def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,
                     branch_category=category
                     break
             
-            color = colorbgr[branch_category]
             reactance = grid_data.branch.reactance[i]
             description = """
+            Index .. %s <br/>
+            Type .. AC <br/>
             Startbus .. %s          <br/>
             Endbus .. %s            <br/>
             Capacity .. %s          <br/>
             Reactance .. %s         <br/>
             Mean flow .. %s         <br/>
-            """ % (startbus,endbus,capacity,reactance,absbranchflow[i])
+            """ % (str(i),startbus,endbus,capacity,reactance,absbranchflow[i])
             lin = branchlevelfolder[branch_category].newlinestring(name=name,
                   description = description,
                   coords=[(startbuslon,startbuslat),(endbuslon,endbuslat)])
         elif branchtype=='powergim_type':
             typ = grid_data.branch.type[i]
             branch_category = branchtypes.index(typ)
-            color = colorbgr[branch_category]
             description= """
             {}=={} </br>
             Branch type: {} </br>
@@ -220,8 +310,7 @@ def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,
                   description = description,
                   coords=[(startbuslon,startbuslat),(endbuslon,endbuslat)])
                   
-        lin.style.linestyle.color = color
-        lin.style.linestyle.width = 1.5    
+        lin.style = styleBranches[branch_category]
 
     # DC BRANCHES ############################################################
     if grid_data.dcbranch.shape[0] > 0:    
@@ -240,16 +329,17 @@ def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,
         name = "{}=={}".format(startbus,endbus)
 
         description = """
+        Index .. {} <br/>
+        Type .. DC <br/>
         Startbus .. {}          <br/>
         Endbus .. {}            <br/>
         Capacity .. {}          <br/>
-        """.format(startbus,endbus,capacity)
+        """.format(i,startbus,endbus,capacity)
         lin = dcbranchfolder.newlinestring(name=name,
               description = description,
               coords=[(startbuslon,startbuslat),(endbuslon,endbuslat)])
                   
-        lin.style.linestyle.color = None
-        lin.style.linestyle.width = 1.5    
+        lin.style = styleDcBranch
         
     kml.save(kmlfile)
 

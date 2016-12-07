@@ -12,7 +12,7 @@ class Database(object):
     '''    
 
     def __init__(self,filename):
-        self.filename = filename
+        self.filename = os.path.abspath(filename)
         self.sqlite_version = db.sqlite_version
 
     def createTables(self,data):
@@ -22,8 +22,6 @@ class Database(object):
         num_nodes = data.numNodes()
         num_branches = data.numBranches()
         num_generators = data.numGenerators()
-        num_consumers = data.numConsumers()
-        num_dcbranches = data.numDcBranches()
         # convert from lists to tuple of tuples
         nodes = tuple((
             i,
@@ -49,7 +47,7 @@ class Database(object):
         
         if os.path.isfile(self.filename):
             #delete existing file
-            print('Replacing existing SQLite file "{}'.format(self.filename) )
+            print('Replacing existing SQLite file "{}"'.format(self.filename) )
             os.remove(self.filename)
             #Must use a new file
             #raise IOError('Cannot append existing file. Choose new file name.')

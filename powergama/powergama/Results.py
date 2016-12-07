@@ -404,9 +404,8 @@ class Results(object):
         utilisation = np.asarray(utilisation)
         return utilisation
             
-    def getSystemCost(self,timeMaxMin=None):
+    def getSystemCostOBSOLETE(self,timeMaxMin=None):
         '''
-        Description
         Calculates system cost for energy produced by using generator fuel cost. 
         
         Parameters
@@ -436,9 +435,8 @@ class Results(object):
         return systemcost
         
         
-    def getSystemCostFast(self,timeMaxMin=None):
+    def getSystemCost(self,timeMaxMin=None):
         '''
-        Description
         Calculates system cost for energy produced by using generator fuel cost. 
         
         Parameters
@@ -447,7 +445,7 @@ class Results(object):
             [min, max] - lower and upper time interval
         
         Returns
-        =======
+        -------
         array of dictionary of cost of generation sorted per area
         '''
         if timeMaxMin is None:
@@ -680,7 +678,6 @@ class Results(object):
         ----------
         filename : string, optional
             if a filename is given then the information is stored to file.
-            else the information is printed to console
         timeMaxMin : list with two integer values, or None, optional
             time interval for the calculation [start,end]
             
@@ -713,9 +710,9 @@ class Results(object):
                 writer.writerow(headers)
                 for row in results:
                     writer.writerow(row) 
-        else:
-            for x in results:
-                print(x)
+        #else:
+        #    for x in results:
+        #        print(x)
             
         return results
 
@@ -773,7 +770,9 @@ class Results(object):
         prod = pd.DataFrame()
         genTypes = self.grid.getAllGeneratorTypes()
         generators = self.grid.getGeneratorsPerAreaAndType()[area]
-        pumpIdx = self.grid.getGeneratorsWithPumpByArea()[area]
+        pumpIdx = self.grid.getGeneratorsWithPumpByArea()
+        if len(pumpIdx)>0:
+            pumpIdx = pumpIdx[area]
         storageGen = self.grid.getIdxGeneratorsWithStorage()
         areaGen = [item for sublist in list(
                     generators.values()) for item in sublist]
@@ -1104,7 +1103,7 @@ class Results(object):
         timerange = range(timeMaxMin[0],timeMaxMin[-1])
 
         # Fixed load 
-        profile = self.grid.consumer.load_profile[consumer_index]
+        profile = self.grid.consumer['demand_ref'][consumer_index]
         ax1.plot(timerange,[self.grid.profiles[profile][t-self.timerange[0]]
             *self.grid.consumer['demand_avg'][consumer_index]
             *(1 - self.grid.consumer['flex_fraction'][consumer_index]) 
@@ -1164,7 +1163,7 @@ class Results(object):
 
         plt.figure()
         generators = self.grid.getGeneratorsPerAreaAndType()
-        cap = self.grid.generator.storage
+        cap = self.grid.generator['storage_cap']
         for gentype in generators[area].keys():
             idxGen = generators[area][gentype]
             idx_storage = [
