@@ -38,6 +38,9 @@ else:
     res = powergama.Results(data,resultpath+sqlfile,replace=False)
 
 # SOME PLOTS:
+powergama.GIS.makekml(resultpath+"2014Europe.kml",data,res=res,
+                      nodetype="nodalprice",branchtype="flow",
+                      title="2014 Europe")
 
 #res.plotMapGrid(nodetype="nodalprice",branchtype="",
 #                show_node_labels=False, dotsize=10, draw_par_mer=False
