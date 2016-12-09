@@ -24,7 +24,7 @@ import pyomo.environ as pyo
 import pyomo.opt
 import numpy as np
 #from numpy import pi, array, asarray, vstack, zeros
-from datetime import datetime as datetime
+import datetime
 from . import constants as const
 import scipy.sparse
 import sys
@@ -50,7 +50,7 @@ class LpProblem(object):
     def _createAbstractModel(self):    
         model = pyo.AbstractModel()
         model.name = 'PowerGAMA abstract model {}'.format(
-            datetime.now().strftime("%Y-%m-%dT%H%M%S"))
+            datetime.datetime.now().strftime("%Y-%m-%dT%H%M%S"))
         
         # SETS ###############################################################        
         model.NODE = pyo.Set(ordered=True)
@@ -106,8 +106,11 @@ class LpProblem(object):
         model.varFlexLoad = pyo.Var(model.LOAD_FLEX, 
                                     within = pyo.NonNegativeReals)
         model.varLoadShed = pyo.Var(model.LOAD, within = pyo.NonNegativeReals) 
-        model.varVoltageAngle = pyo.Var(model.NODE, within = pyo.Reals,
-                                        bounds = (-np.pi,np.pi)) 
+        model.varVoltageAngle = pyo.Var(model.NODE, within = pyo.Reals)
+# I wonder if these bound on voltage angle creates infeasibility
+# - is it really needed
+# TODO: Verify voltage angle bounds required
+#                                        bounds = (-np.pi,np.pi)) 
         
 #        # not needed because limit is set by constraint        
 #        def ubFlexLoad_rule(model,i):
@@ -609,7 +612,8 @@ class LpProblem(object):
         return
                
         
-    def solve(self,results,solver='cbc',solver_path=None,warmstart=False):
+    def solve(self,results,solver='cbc',solver_path=None,warmstart=False,
+              savefiles=False):
         '''
         Solve LP problem for each time step in the time range
         
@@ -624,6 +628,9 @@ class LpProblem(object):
             path for solver executable
         warmstart : Boolean
             Use warmstart option (only some solvers, e.g. gurobi)
+        savefiles : Boolean
+            Save Pyomo model file and LP problem MPS file for each timestep
+            This may be useful for debugging.
             
         Returns
         -------
@@ -657,7 +664,9 @@ class LpProblem(object):
             self._updateLpProblem(timestep)
           
             # solve the LP problem
-            #self.concretemodel.pprint('concretemodel_{}.txt'.format(timestep))        
+            if savefiles:
+                self.concretemodel.pprint('concretemodel_{}.txt'.format(timestep))        
+                self.concretemodel.write("LPproblem_{}.mps".format(timestep))
 
             if warmstart and opt.warm_start_capable():  
                 #warmstart available (does not work with cbc)

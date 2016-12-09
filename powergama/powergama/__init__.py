@@ -66,7 +66,8 @@ Plot results
 '''
 
 from .GridData import GridData
-from .LpProblem import LpProblem
+from .LpProblemPyomo import LpProblem
+#from .LpProblemPulp import LpProblem #Can use this if pyomo unavailable, or for error checking
 from .Results import Results
 #from . import constants
 #from . import scenarios 
