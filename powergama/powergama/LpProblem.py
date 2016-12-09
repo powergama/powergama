@@ -48,7 +48,7 @@ class LpProblem(object):
     solver = None
 
 
-    def __init__(self,grid,solver='cbc', solver_path=None):
+    def __init__(self,grid):
         '''LP problem formulation
         
         Parameters
@@ -114,7 +114,6 @@ class LpProblem(object):
         self.prob = pulp.LpProblem(
             "PowerGAMA_"+datetime.now().strftime("%Y-%m-%dT%H%M%S"), 
             pulp.LpMinimize)
-        self.initialiseSolver(solver,solver_path)
 
         # Define (and keep track of) LP problem variables
         self._var_generation = [
@@ -599,7 +598,7 @@ class LpProblem(object):
         return
     
         
-    def solve(self,results):
+    def solve(self,results,solver='cbc', solver_path=None):
         '''
         Solve LP problem for each time step in the time range
         
@@ -617,6 +616,8 @@ class LpProblem(object):
         #if results == None:
         #    results = Results(self._grid)      
             
+        self.initialiseSolver(solver,solver_path)
+
         print("Solving...")
         #prob0 = pulp.LpProblem("Grid Market Power - base", pulp.LpMinimize)
         numTimesteps = len(self._grid.timerange)

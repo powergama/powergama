@@ -37,9 +37,9 @@ def saveScenario(base_grid_data, scenario_file):
         
         # Demand
         if co in consumers:
-            loads_this_area = [base_grid_data.consumer.load[i] 
+            loads_this_area = [base_grid_data.consumer.demand_avg[i] 
                 for i in consumers[co]]
-            load_profile = [base_grid_data.consumer.load_profile[i] 
+            load_profile = [base_grid_data.consumer.demand_ref[i] 
                 for i in consumers[co]]
             demand_sum_MW = float(sum(loads_this_area))
             demandprofiles_set = set(load_profile)
@@ -60,9 +60,9 @@ def saveScenario(base_grid_data, scenario_file):
         for gentype in gentypes_grid:            
             if co in generators and gentype in generators[co]:
                         
-                inflow_this_area = [base_grid_data.generator.inflow_factor[i] 
+                inflow_this_area = [base_grid_data.generator.inflow_fac[i] 
                     for i in generators[co][gentype]]
-                inflow_profile = [base_grid_data.generator.inflow_profile[i] 
+                inflow_profile = [base_grid_data.generator.inflow_ref[i] 
                     for i in generators[co][gentype]]
                 inflowprofiles_set = set(inflow_profile)
                 inflow_ref = " ".join(str(x) for x in inflowprofiles_set)
@@ -71,25 +71,25 @@ def saveScenario(base_grid_data, scenario_file):
                 else:
                     inflow_avg = None
 
-                storagelevel_this_area = [base_grid_data.generator.storagelevel_init[i] for i in generators[co][gentype]]
+                storagelevel_this_area = [base_grid_data.generator.storage_ini[i] for i in generators[co][gentype]]
                 if len(storagelevel_this_area)>0:
                     storagelevel_avg = float(sum(storagelevel_this_area))/len(storagelevel_this_area)
                 else:
                     storagelevel_avg = None
 					
-                storval_filling_refs = [base_grid_data.generator.storagevalue_profile_filling[i] 
+                storval_filling_refs = [base_grid_data.generator.storval_filling_ref[i] 
                     for i in generators[co][gentype]]
                 storval_filling_refs_set = set(storval_filling_refs)
                 storval_filling_ref = " ".join(str(x) for x in storval_filling_refs_set)
-                storval_time_refs = [base_grid_data.generator.storagevalue_profile_time[i] for i in generators[co][gentype]]
+                storval_time_refs = [base_grid_data.generator.storval_time_ref[i] for i in generators[co][gentype]]
                 storval_time_refs_set = set(storval_time_refs)
                 storval_time_ref = " ".join(str(x) for x in storval_time_refs_set)
 
-                gencap_this_area = [base_grid_data.generator.prodMax[i] 
+                gencap_this_area = [base_grid_data.generator.pmax[i] 
                     for i in generators[co][gentype]]
                 gencap_MW = float(sum(gencap_this_area))
                 
-                storagecap_this_area = [base_grid_data.generator.storage[i] 
+                storagecap_this_area = [base_grid_data.generator.storage_cap[i] 
                     for i in generators[co][gentype]]
                 storagecap_MWh = float(sum(storagecap_this_area))                
 
@@ -98,9 +98,9 @@ def saveScenario(base_grid_data, scenario_file):
                 gencost_avg = float(sum(gencost_this_area))/len(gencost_this_area)
                                 
                 storval_this_area = [
-                    base_grid_data.generator.storagevalue_abs[i] 
+                    base_grid_data.generator.storage_price[i] 
                     for i in generators[co][gentype]
-                    if base_grid_data.generator.storagevalue_abs[i] != 0]
+                    if base_grid_data.generator.storage_price[i] != 0]
                 if not storval_this_area:
                     storval_avg = None
                 else:

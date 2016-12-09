@@ -70,7 +70,8 @@ def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,
     colorbgr = category_colours
     numCat = len(colorbgr)-2
     defaultCat = numCat+1
-    balloontext = "<h3>$[name]</h3> $[description]"
+    #balloonstyle messes up Google Earth sidebar, for some reason
+    #balloontext = "<h3>$[name]</h3> $[description]"
     
     styleNodes = []
     for col in colorbgr:    
@@ -78,20 +79,20 @@ def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,
         styleNode.iconstyle.color = col
         styleNode.iconstyle.icon.href = point_icon_href
         styleNode.labelstyle.scale = 0.0 #hide
-        styleNode.balloonstyle.text = balloontext 
+        #styleNode.balloonstyle.text = balloontext
         styleNodes.append(styleNode)
         
     styleGenerator = simplekml.Style()
     styleGenerator.iconstyle.icon.href = point_icon_href
     styleGenerator.iconstyle.color  = generator_colour 
     styleGenerator.labelstyle.scale = 0.0 #hide
-    styleGenerator.balloonstyle.text = balloontext
+    #styleGenerator.balloonstyle.text = balloontext
     
     styleConsumer = simplekml.Style()
     styleConsumer.iconstyle.icon.href = point_icon_href
     styleConsumer.iconstyle.color  = consumer_colour 
     styleConsumer.labelstyle.scale = 0.0 #hide
-    styleConsumer.balloonstyle.text = balloontext
+    #styleConsumer.balloonstyle.text = balloontext
     
     styleBranches = []
     for col in colorbgr:    
@@ -141,7 +142,7 @@ def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,
         area = grid_data.node.area[i]
         node_category=defaultCat
         #color = None
-        description="ID: {}".format(name)
+        description="ID: {} <br/> AREA: {}".format(name,area)
         if nodetype==None:
             pnt = nodefolder.newpoint(name=name,coords=[(lon,lat)],
                                       description=description)
@@ -270,7 +271,7 @@ def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,
         endbuslat = grid_data.node.lat[endbusIndx]
         capacity = grid_data.branch.capacity[i]
         name = "{}=={}".format(startbus,endbus)
-        description = name
+        description = "{}<br/>CAPACITY: {}".format(name,capacity)
         branch_category=defaultCat
         
         if branchtype=='flow':
