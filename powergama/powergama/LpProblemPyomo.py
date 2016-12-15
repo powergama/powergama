@@ -187,14 +187,14 @@ class LpProblem(object):
             lhs = lhs/const.baseMVA
             
             rhs = 0
-            #TODO speed up- remove for loop
             n2s = [k[1]  for k in model.coeff_B.keys() if k[0]==n]
             for n2 in n2s:
                 rhs -= model.coeff_B[n,n2]*model.varVoltageAngle[n2]                
-            #for n2 in model.NODE:
-            #    if (n,n2) in model.coeff_B.keys():
-            #        rhs -= model.coeff_B[n,n2]*model.varVoltageAngle[n2]
             expr = (lhs == rhs)
+            #Skip constraint if it is trivial (otherwise run-time error)
+            #TODO: Check if this is safe
+            if ((type(expr) is bool) and (expr==True)):
+                expr = pyo.Constraint.Skip
             return expr
 
         model.cPowerbalance = pyo.Constraint(model.NODE,rule=powerbalance_rule)

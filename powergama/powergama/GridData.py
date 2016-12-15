@@ -7,8 +7,9 @@ Grid data and time-dependent profiles
 
 import pandas as pd
 import numpy
-from scipy.sparse import csr_matrix as sparse
+import scipy.sparse
 import math                                 # Used in myround
+import networkx as nx
 
 
 ##=============================================================================
@@ -467,7 +468,7 @@ class GridData(object):
         return [-1/self.branch['reactance'][i]*baseOhm 
                 for i in self.branch.index.tolist()]
 
-    def computePowerFlowMatrices(self,baseZ):
+    def computePowerFlowMatricesOBSOLETE(self,baseZ):
         """
         Compute and return dc power flow matrices B' and DA
                 
@@ -487,17 +488,57 @@ class GridData(object):
         data = numpy.r_[numpy.ones(num_branches),-numpy.ones(num_branches)]
         row = numpy.r_[range(num_branches),range(num_branches)]
         col = numpy.r_[fromIdx, toIdx]
-        A_incidence_matrix = sparse( (data, (row,col)),(num_branches,num_nodes))
+        A_incidence_matrix = scipy.sparse.csr_matrix( (data, (row,col)),
+                                                     (num_branches,num_nodes))
         
         # Diagonal matrix
         b = numpy.asarray(self._susceptancePu(baseZ))
-        D = sparse(numpy.eye(num_branches)*b*(-1))
+        D = scipy.sparse.csr_matrix(numpy.eye(num_branches)*b*(-1))
         DA = D*A_incidence_matrix
         
         # Bprime matrix
         ## build Bf such that Bf * Va is the vector of real branch powers injected
         ## at each branch's "from" bus
-        Bf = sparse((numpy.r_[b, -b],(row, numpy.r_[fromIdx, toIdx])))
+        Bf = scipy.sparse.csr_matrix((numpy.r_[b, -b],
+                                      (row, numpy.r_[fromIdx, toIdx])),
+                                       shape=(num_branches,num_nodes))
+        Bprime = A_incidence_matrix.T * Bf
+        
+        return Bprime, DA
+
+    def computePowerFlowMatrices(self,baseZ):
+        """
+        Compute and return dc power flow matrices B' and DA
+                
+        Returns sparse matrices (csr - compressed sparse row matrix)              
+        """
+        
+        b = numpy.asarray(self._susceptancePu(baseZ))
+        # MultiDiGraph to allow parallel lines
+        G = nx.MultiDiGraph()
+        edges = [(self.branch['node_from'][i],
+                  self.branch['node_to'][i],
+                  i,{'i':i,'b':b[i]})
+                  for i in self.branch.index]
+        G.add_nodes_from(self.node['id'])
+        G.add_edges_from(edges)   
+    
+        #G.add_edges_from(zip(data.branch['node_from'],
+        #                     data.branch['node_to'],data.branch.index,{}))                         
+        A_incidence_matrix = -nx.incidence_matrix(G,oriented=True,
+                                                 nodelist=self.node['id'],
+                                                 edgelist=edges).T
+    
+        # Diagonal matrix
+        D = scipy.sparse.diags(-b,offsets=0)
+        DA = D*A_incidence_matrix
+        
+        # Bf constructed from incidence matrix with branch susceptance
+        # used as weight (this is quite fast)
+        Bf = -nx.incidence_matrix(G,oriented=True,
+                                 nodelist=self.node['id'],
+                                 edgelist=edges,
+                                 weight='b').T
         Bprime = A_incidence_matrix.T * Bf
         
         return Bprime, DA
