@@ -1742,11 +1742,12 @@ class Results(object):
                 
         return
         # End plotGridMap
+
  
     def plotEnergyMix(self,areas=None,timeMaxMin=None,relative=False,
-                      showTitle=True):
+                      showTitle=True,variable="energy",gentypes=None):
         '''
-        Plot generation mix for specified areas as stacked bars
+        Plot energy, generation capacity or spilled energy as stacked bars
         
         Parameters
         ----------
@@ -1756,21 +1757,35 @@ class Results(object):
             Time range, [min,max]
         relative : boolean
             Whether to plot absolute (false) or relative (true) values
-        '''        
+        variable : string ("energy","capacity","spilled")
+            Which variable to plot (default is energy production)
+        gentypes : list
+            List of generator types to include. None gives all.
+        '''   
+        
         if timeMaxMin is None:
             timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
         #timerange = range(timeMaxMin[0],timeMaxMin[-1])
         #fillfrom=[0]*len(timerange)
         #count = 0
-        print("Getting energy output from all generators...")
-        gen_output=self.db.getResultGeneratorPowerSum(timeMaxMin)
-        print("Sorting and plotting...")
+        if variable=="energy":
+            print("Getting energy output from all generators...")
+            gen_output=self.db.getResultGeneratorPowerSum(timeMaxMin)
+            title = "Energy mix"
+        elif variable=="capacity":
+            gen_output = self.grid.generator.pmax
+            title = "Capacity mix"
+        elif variable=="spilled":
+            gen_output=self.db.getResultGeneratorSpilledSums(timeMaxMin)
+            title = "Energy spilled"
+        else:
+            print("Variable not valid")
+            return
         all_generators = self.grid.getGeneratorsPerAreaAndType()
         if areas is None:
             areas = all_generators.keys()
-        #gentypes_ordered = self._gentypes_ordered_by_fuelcost(area)
-        gentypes = self.grid.getAllGeneratorTypes()
-        #gentypes = self._gentypes_ordered_by_fuelcost()
+        if gentypes is None:
+            gentypes = self.grid.getAllGeneratorTypes()
         if relative:
             prodsum={}
             for ar in areas:
@@ -1797,6 +1812,7 @@ class Results(object):
                     A.append(prod)
                 else:
                     A.append(0)
+    
                 
             plt.bar(ind,A, width,label=typ,
                     bottom=previous,color=colours[count])
@@ -1810,79 +1826,9 @@ class Results(object):
                    bbox_to_anchor=(1.05,1), borderaxespad=0.0)
         plt.xticks(np.arange(len(areas))+width/2., tuple(areas) )
         if showTitle:
-            plt.title("Energy mix")
+            plt.title(title)
         plt.show()
-        
 
-    def plotEnergySpilled(self,areas=None,gentypes=None,
-                          timeMaxMin=None,relative=False,showTitle=True):
-        '''
-        spilled energy for specified areas, as stacked bars
-        
-        Parameters
-        ----------
-        areas : list of strings
-            which areas to include, default=None means include all
-        gentypes : list of strings
-            which generator types to include, default=None means include all
-        timeMaxMin : list of integers
-            time range [min,max] 
-        relative : boolean
-            whether to plot absolute (false) or relative (true) values
-        '''        
-        if timeMaxMin is None:
-            timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
-
-        gen_spilled=self.db.getResultGeneratorSpilledSums(timeMaxMin)
-
-        all_generators = self.grid.getGeneratorsPerAreaAndType()
-        if areas is None:
-            areas = all_generators.keys()
-        if gentypes is None:
-            #gentypes = self._gentypes_ordered_by_fuelcost()
-            gentypes = self.grid.getAllGeneratorTypes(sort='fuelcost')
-        if relative:
-            prodsum={}
-            for ar in areas:
-                flatlist = [v for sublist in all_generators[ar].values() 
-                            for v in sublist]
-                prodsum[ar] = sum([gen_spilled[i] for i in flatlist])
-                                
-        plt.figure()
-        ax = plt.subplot(111)
-        width = 0.8
-        previous = [0]*len(areas)
-        numCurves = len(gentypes)+1
-        colours = cm.hsv(np.linspace(0, 1, numCurves))
-        count=0
-        ind = range(len(areas))
-        for typ in gentypes:
-            A=[]
-            for ar in areas:
-                if typ in all_generators[ar]:
-                    prod = sum([gen_spilled[i] 
-                                    for i in all_generators[ar][typ]])
-                    if relative:
-                        prod = prod/prodsum[ar]
-                    A.append(prod)
-                else:
-                    A.append(0)
-                
-            plt.bar(ind,A, width,label=typ,
-                    bottom=previous,color=colours[count])
-            previous = [previous[i]+A[i] for i in range(len(A))]
-            count = count+1
-        plt.legend()
-        handles, labels = ax.get_legend_handles_labels()
-        handles.reverse()
-        labels.reverse()
-        plt.legend(handles, labels, loc=2,
-                   bbox_to_anchor=(1.05,1), borderaxespad=0.0)
-        plt.xticks(np.arange(len(areas))+width/2., tuple(areas) )
-        if showTitle:
-            plt.title("Energy spilled")
-        plt.show()
-        
     
     def plotTimeseriesColour(self,areas,value='nodalprice'):
         '''
@@ -2308,20 +2254,6 @@ class Results(object):
         plt.xlim(xmin = -0.5, xmax = mainCount + 0.5)
         plt.xticks(range(mainCount + 1), tickLabel)
    
-        
-    def OBSOLETE_gentypes_ordered_by_fuelcost(self):
-        '''Return a list of generator types ordered by their mean fuel cost'''
-        generators = self.grid.getGeneratorsPerType()
-        gentypes = generators.keys()
-        fuelcosts = []
-        for k in gentypes:
-            gen_this_type = generators[k]
-            fuelcosts.append(np.mean([self.grid.generator.fuelcost[i] 
-                                     for i in gen_this_type]) )
-        sorted_list = [x for (y,x) in 
-                       sorted(zip(fuelcosts,gentypes))]    
-        return sorted_list
-        
         
         
 def _myround(x, base=1,method='round'):

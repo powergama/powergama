@@ -236,20 +236,30 @@ def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,
     # BRANCHES ###############################################################
     branchfolder = kml.newfolder(name="Branch")
 
-    if branchtype=='flow':
-        meanflows = res.getAverageBranchFlows(timeMaxMin)
-        absbranchflow = meanflows[2]
-        maxabsbranchflow =  max(absbranchflow)
-        minabsbranchflow =  min(absbranchflow)
-        steprange = (maxabsbranchflow - minabsbranchflow) / float(numCat)
-        categoryMax = [math.ceil(minabsbranchflow+steprange*(n+1) )
+    if branchtype in ['capacity','flow']:        
+        if res is not None:
+            meanflows = res.getAverageBranchFlows(timeMaxMin)
+            absbranchflow = meanflows[2]            
+        if branchtype=='flow':
+            categoryValue = numpy.asarray(absbranchflow)
+            categoryTitle = "Flow"
+        elif branchtype=="capacity":
+            categoryValue = grid_data.branch['capacity']
+            categoryTitle = "Capacity"
+            
+        #Max/min non-infinite value:
+        max_value =  max(categoryValue[numpy.isfinite(categoryValue)])
+        min_value =  min(categoryValue[numpy.isfinite(categoryValue)])
+        steprange = (max_value - min_value) / float(numCat)
+        categoryMax = [math.ceil(min_value+steprange*(n+1) )
             for n in range(numCat)]        
         branchlevelfolder=[]
         for level in range(numCat):
             branchlevelfolder.append(branchfolder.newfolder(
-                name="Flow <= %s" % (str(categoryMax[level]))))
+                name="{} <= {}".format(categoryTitle,
+                                       str(categoryMax[level]))))
         branchlevelfolder.append(branchfolder.newfolder(
-                name="Flow NaN" ))
+                name="{} NaN".format(categoryTitle) ))
     elif branchtype=="powergim_type":
         branchtypes = grid_data.branch.type.unique().tolist()
         branchlevelfolder=dict()
@@ -274,24 +284,27 @@ def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,
         description = "{}<br/>CAPACITY: {}".format(name,capacity)
         branch_category=defaultCat
         
-        if branchtype=='flow':
+        if branchtype in ['capacity','flow']:
             # Determine category        
             branch_category=numCat        
             for category in range(numCat):        
-                if absbranchflow[i] <= categoryMax[category]:
+                if categoryValue[i] <= categoryMax[category]:
                     branch_category=category
                     break
             
             reactance = grid_data.branch.reactance[i]
             description = """
-            Index .. %s <br/>
-            Type .. AC <br/>
-            Startbus .. %s          <br/>
-            Endbus .. %s            <br/>
-            Capacity .. %s          <br/>
-            Reactance .. %s         <br/>
-            Mean flow .. %s         <br/>
-            """ % (str(i),startbus,endbus,capacity,reactance,absbranchflow[i])
+                Index .. {} <br/>
+                Type .. AC <br/>
+                Startbus .. {}          <br/>
+                Endbus .. {}            <br/>
+                Capacity .. {}          <br/>
+                Reactance .. {}         <br/>
+                """.format(str(i),startbus,endbus,capacity,reactance)
+            if res is not None:
+                description = """{}
+                Mean flow .. {}         <br/>
+                """.format(description,absbranchflow[i])
             lin = branchlevelfolder[branch_category].newlinestring(name=name,
                   description = description,
                   coords=[(startbuslon,startbuslat),(endbuslon,endbuslat)])
