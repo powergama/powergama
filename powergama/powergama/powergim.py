@@ -19,16 +19,23 @@ class SipModel():
     _NUMERICAL_THRESHOLD_ZERO = 1e-6
     _HOURS_PER_YEAR = 8760
     
-    def __init__(self, maxNewBranchNum, M_const = 1000, CO2price=False):
-        """Create Abstract Pyomo model for PowerGIM"""
-        self.abstractmodel = self._createAbstractModel(maxNewBranchNum,
-                                                       CO2price)
+    def __init__(self, M_const = 1000, CO2price=False):
+        """Create Abstract Pyomo model for PowerGIM
+        
+        Parameters
+        ----------
+        M_const : int
+            large constant
+        CP2price : boolean
+            whether to include CO2 price in objective function
+        """
+        self.abstractmodel = self._createAbstractModel(CO2price)
         self.M_const = M_const
 
         
         
     
-    def _createAbstractModel(self,maxNewBranchNum,CO2price):    
+    def _createAbstractModel(self,CO2price):    
         model = pyo.AbstractModel()
         model.name = 'PowerGIM abstract model'
         
@@ -72,6 +79,7 @@ class SipModel():
         model.CO2price = pyo.Param(within=pyo.NonNegativeReals)
         model.VOLL = pyo.Param(within=pyo.NonNegativeReals)
         model.stage2TimeDelta = pyo.Param(within=pyo.NonNegativeReals)
+        model.maxNewBranchNum = pyo.Param(within=pyo.NonNegativeReals)
         
         #investment costs and limits:        
         model.branchtypeMaxCapacity = pyo.Param(model.BRANCHTYPE,
@@ -151,7 +159,7 @@ class SipModel():
                                           bounds = branchNewCapacity_bounds)
         # investment: new branch cables
         def branchNewCables_bounds(model,j):
-            return (0,maxNewBranchNum)                                  
+            return (0,model.maxNewBranchNum)                                  
         model.branchNewCables1 = pyo.Var(model.BRANCH_EXPAND1, 
                                         within = pyo.NonNegativeIntegers,
                                         bounds = branchNewCables_bounds)
@@ -766,7 +774,8 @@ class SipModel():
         return concretemodel
 
 
-    def createModelData(self,grid_data,datafile,maxNewBranchCap):
+    def createModelData(self,grid_data,datafile,
+                        maxNewBranchNum, maxNewBranchCap):
         '''Create model data in dictionary format
 
         Parameters
@@ -775,6 +784,10 @@ class SipModel():
             contains grid model
         datafile : string
             name of XML file containing additional parameters
+        maxNewBranchNum : int
+            upper limit on parallel branches to consider (e.g. 10)
+        maxNewBranchCap : float (MW)
+            upper limit on new capacity to consider (e.g. 10000)
         
         Returns
         --------
@@ -838,6 +851,7 @@ class SipModel():
         di['NODE_EXPAND2'] = {None:node_expand2}
         
         #Parameters:
+        di['maxNewBranchNum'] = {None: maxNewBranchNum}
         di['samplefactor'] = {None: self._HOURS_PER_YEAR/len(grid_data.timerange)}
         di['nodeOffshore'] = {}
         di['nodeType'] = {}

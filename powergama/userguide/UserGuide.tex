@@ -13,7 +13,7 @@
 \usepackage{fancyhdr}
 
 
-\title{PowerGAMA\\User guide (v1.0.4)}
+\title{PowerGAMA\\User guide (v1.1)}
 \author{Harald G Svendsen}
 \date{\today}
 
@@ -557,6 +557,81 @@ Since these are arbitrary and don't influence the results, the reference is chos
 
 
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Scenario generation tool}
+
+In order to simplify the process of generating scenarios with differeng generation mix and demand, the package includes a scenario module that can be used to save the loaded grid model to a scenario file. This is a summary file that includes demand per area, generation capacities per type and area etc. Exporting the grid model to a scenario file can be very useful for checking that the dataset is consistent with the scenario being studied.
+
+The key functions are :
+\begin{itemize}
+\item powergama.scenarios.saveScenario(...)
+\item powergama.scenarios.newScenario(...)
+\end{itemize}
+
+
+\subsection{Saving grid model to scenario file}
+To load an existing grid model and export a scenario file (``scenario.csv'''), run code similar to the following:
+
+\begin{lstlisting}
+>>>import powergama
+>>>import powergama.scenarios
+
+>>>gridmodel = powergama.GridData()
+>>>gridmodel.readGridData(nodes="nodes.csv",
+                          ac_branches="branches.csv",
+                          dc_branches="hvdc.csv",
+                          generators="generators.csv",
+                          consumers="consumers.csv")
+>>>gridmodel.readProfileData(filename="profiles.csv",
+               storagevalue_filling="profiles_storval_filling.csv",
+               storagevalue_time="profiles_storval_time.csv",
+               timerange=range(0,8760), 
+               timedelta=1.0)
+
+>>>powergama.scenarios.saveScenario(gridmodel, 
+                                    scenario_file= "scenario.csv")
+\end{lstlisting}
+
+\subsection{Create modified dataset using scenario file}
+In order to create a scenario file, the simplest is to to save an existing grid model to scenario file as shown above. Then, it can be open in a spreadsheet editor and modified according to the specifications of the new scenario. Values that should not be modified should be left blank. Irrelevant rows can be removed. In general, the newScenario function only modifies data where information is provided in the scenario file.
+
+Be careful with profile reference data, as the output created by saveScenario will join together all references present for each country, and cannot be used directly when creating new scenarios. The information may be useful in validating the dataset, but is not useful for creating new scenarios. If a single reference is used for the country (e.g. all wind generators in a country), then it is ok to include this (e.g. demand reference), but for generator inflow and storage value references, it may be necessary to modify these values directly in the data file (if modification is required). If no modifications are required, these rows should be removed. This concerns the following rows in the scenario file:
+\begin{itemize}
+\item demand\_ref
+\item inflow\_ref\_<gentype>
+\item storval\_time\_ref \_<gentype> 
+\item storval\_filling\_ref\_<gentype>
+\end{itemize}
+ 
+
+Once a modified scenario file has been created (``scenario\_new.csv''), run code similar to the following in order to create new input data files:
+
+\begin{lstlisting}
+>>>import powergama
+>>>import powergama.scenarios
+
+>>>gridmodel = powergama.GridData()
+>>>gridmodel.readGridData(nodes="nodes.csv",
+                          ac_branches="branches.csv",
+                          dc_branches="hvdc.csv",
+                          generators="generators.csv",
+                          consumers="consumers.csv")
+>>>gridmodel.readProfileData(filename="profiles.csv",
+               storagevalue_filling="profiles_storval_filling.csv",
+               storagevalue_time="profiles_storval_time.csv",
+               timerange=range(0,8760), 
+               timedelta=1.0)
+            
+>>>powergama.scenarios.newScenario(gridmodel, 
+                                   scenario\_file="scenario\_new.csv", 
+                                   new_file_prefix="new_")
+\end{lstlisting}
+The new input files will have the same names as the original, but with the prefix ``new\_'', e.g. ``new\_nodes..csv''.
+
+Now, you can run a new simulation with these new input files instead of the original ones.
+
+
+
 \section{Input data formats}
 Input files are comma separated text files (CSV), with a comma as delimiter and period as the decimal symbol. The first line in the files contains a header, with unique keys associated with each column. The ordering of columns is arbitrary. Keys are case sensitive and should be all lower case.
 
@@ -859,153 +934,138 @@ It should be noted that PowerGAMA does not include any power market subtleties (
 See the online  powergama source code documentation for a complete overview of plotting functions and other functions to retreive simulation results for further analysis.
 
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\section{Scenario generation tool}
-
-In order to simplify the process of generating scenarios with differeng generation mix and demand, the package includes a scenario module that can be used to save the loaded grid model to a scenario file. This is a summary file that includes demand per area, generation capacities per type and area etc. Exporting the grid model to a scenario file can be very useful for checking that the dataset is consistent with the scenario being studied.
-
-The key function are :
-\begin{itemize}
-\item powergama.scenarios.saveScenario(...)
-\item powergama.scenarios.newScenario(...)
-\end{itemize}
-
-
-\subsection{Saving grid model to scenario file}
-To load an existing grid model and export a scenario file (``scenario.csv'''), run code similar to the following:
-
-\begin{lstlisting}
->>>import powergama
->>>import powergama.scenarios
-
->>>gridmodel = powergama.GridData()
->>>gridmodel.readGridData(nodes="nodes.csv",
-                          ac_branches="branches.csv",
-                          dc_branches="hvdc.csv",
-                          generators="generators.csv",
-                          consumers="consumers.csv")
->>>gridmodel.readProfileData(filename="profiles.csv",
-               storagevalue_filling="profiles_storval_filling.csv",
-               storagevalue_time="profiles_storval_time.csv",
-               timerange=range(0,8760), 
-               timedelta=1.0)
-
->>>powergama.scenarios.saveScenario(gridmodel, 
-                                    scenario_file= "scenario.csv")
-\end{lstlisting}
-
-\subsection{Create modified dataset using scenario file}
-In order to create a scenario file, the simplest is to to save an existing grid model to scenario file as shown above. Then, it can be open in a spreadsheet editor and modified according to the specifications of the new scenario. Values that should not be modified should be left blank.
-
-Note that certain rows created with the saveScenario method  should be removed before using it as 
-
-Once a modified scenario file has been created (``scenario\_new.csv''), run code similar to the following in order to create new input data files:
-
-\begin{lstlisting}
->>>import powergama
->>>import powergama.scenarios
-
->>>gridmodel = powergama.GridData()
->>>gridmodel.readGridData(nodes="nodes.csv",
-                          ac_branches="branches.csv",
-                          dc_branches="hvdc.csv",
-                          generators="generators.csv",
-                          consumers="consumers.csv")
->>>gridmodel.readProfileData(filename="profiles.csv",
-               storagevalue_filling="profiles_storval_filling.csv",
-               storagevalue_time="profiles_storval_time.csv",
-               timerange=range(0,8760), 
-               timedelta=1.0)
-            
->>>powergama.scenarios.newScenario(gridmodel, 
-                                   scenario\_file="scenario\_new.csv", 
-                                   new_file_prefix="new_")
-\end{lstlisting}
-The new input files will have the same names as the original, but with the prefix ``new\_'', e.g. ``new\_nodes..csv''.
-
-Now, you can run a new simulation with these new input files instead of the original ones.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section{Power Grid Investment Module (PowerGIM)}
 The PowerGAMA includes a grid investment module for determining socio-economically beneficial grid investments (connections and generators). This module is documented separately.
 
+However, an overview of the input data format is provided in the following.
+
+
+\subsection{PowerGIM grid data input}
+PowerGIM input have the same format as PowerGAMA data (see above), but some fields (columns) differ.
+
+\subsubsection{Nodes}
+Nodes need to have unique identifier string. Area information is used for scenario generation (preprosessing), and for plotting and presentation of results.
+Latitude and longitude information is only used for plotting the grid on a map.
+
+\medskip
+%\begin{table}
+%\caption{Input data: Nodes}
+\begin{tabular}{llll}
+	\hline
+	column key & description & type & units \\
+	\hline
+	``id"	&	Unique string identifier 	& string	& \\
+	``lat"	&	Latitude				& float 	& degrees \\
+	``lon"	&	Longitude				& float	& degrees \\
+	``area" &	Area/country code		& string	& \\
+	``existing" &	Whether node already exists		& boolean (0/1)	& \\
+	``cost\_scaling"	&	Cost scaling factor & float	&  \\
+	``type"	&	Node (cost) type & string	&  \\
+	\hline
+\end{tabular}
+%\end{table}
+
+
+\subsubsection{Branches}
+Branches have from and to references that must match a node identifier in the list of nodes.
+
+\texttt{expand} is 0 if no expansion should be considered, 1 if expansion in stage 1 should be considered, and 2 if expansion in stage 2 should be considered. (If expansion in both stage 1 and 2 should be considered, add a new branch with 0 existing capacity).
+\texttt{distance} may be left blank. Then distance is computed as the shortest distance between the associated nodes (based on lat/lon coordinates)
+\texttt{capacity2} is already decided additional branch capacity that will be added at stage two (optional input). It may be relevant to include this as an uncertain parameter in a stochastic optimisation.
+
+\medskip
+%\begin{table}
+%\caption{Input data: AC Branches}
+\begin{tabular}{llll}
+	\hline
+	column key & description & type & units \\
+	\hline
+	``node\_from"	&	Node identifier 	& string	& \\
+	``node\_to"		&	Node identifier	& string	& \\
+	``capacity"		&	Existing capacity & float		& MW \\
+	``capacity2"		&	Capacity added stage 2 (OPT) & float		& MW \\
+	``expand"			&	Consider expansion & int (0,1,2)		& \\
+	``distance"		&	Branch length (OPT) & float		& km \\
+	``max\_newCap"		&	Max new capacity (OPT) & float		& km \\
+	``cost\_scaling"	&	Cost scaling factor & float	&  \\
+	``type"			&	Branch (cost) type & string		&  \\
+
+	\hline
+\end{tabular}
+%\end{table}
+
+
+\subsubsection{Consumers}
+Consumers are loads connected to nodes. There may be any number of consumers per node, although zero or one is typical.
+
+\texttt{demand\_avg} gives the average demand, which is easily computed from the annual demand if necessary.
+\texttt{demand\_ref} gives the name of the demand profile which gives the variation over time. Demand profiles should be normalised and have an annual average of 1.
+
+\medskip
+%\begin{table}
+%\caption{Input data: Consumers}
+\begin{tabular}{llll}
+	\hline
+	column key & description & type & units \\
+	\hline
+	``node"			& Node identifier 	& string		& \\
+	``demand\_avg"		& Average demand	& float		& MW \\
+	``demand\_ref"		& Profile reference	& string	&  \\
+	``emission\_cap"		& Maximum CO2 emission allowed	(OPT) & float	&   kg\\	\hline
+\end{tabular}
+%\end{table}
+
+
+\subsubsection{Generators}
+Generators are the most complex data structure and require the most input data.
+
+An average power constraint (\texttt{pavg}) is used to represent generators with large storage.
+\texttt{pavg}=0 means no constraint on average output is used (no storage constraint). 
+Already decided increase in generator capacity in stage 2 may be specified with \texttt{pmax2} parameter. 
+
+
+\medskip
+%\begin{table}
+%\caption{Input data: Generators}
+\begin{tabular}{llll}
+	\hline
+	 column key & description & type & units \\
+	\hline
+	``node"			& Node identifier 		& string	& \\
+	``desc"			& Description or name (OPT)	& string	& \\
+	``type"			& Generator type		& string	& \\
+	``pmax"			& Generator capacity 	& float	& MW \\
+	``pmax2"			& Generator capacity stage 2 (OPT) 	& float	& MW \\
+	``pmin"			& Minimum production	& float	& MW \\
+	``expand"			& Consider capacity expansion & int (0,1,2)		& \\
+	``fuelcost"		& Cost of generation		& float	& €/MWh \\
+	``fuelcost\_ref"	& Cost profile		& string \\
+	``inflow\_fac"	& Inflow factor			& float	& MW \\
+	``inflow\_ref"		& Inflow profile reference	& string & \\
+	``pavg"			& Maximum average power (OPT)		& float	& MW \\
+	``p\_maxNew"	& Maximum new capacity (OPT)		& float	& MW \\	
+	``cost\_scaling"	& Cost scaling factor (OPT) & float	&  \\
+	\hline
+\end{tabular}
+%\end{table}
+
+\subsection{PowerGIM parameter data input}
+In addition to the network data, PowerGIM requires additional parameters (mostly cost parameters) that are specified in a separate XML file.
+
+The format of this file may be seen from the examples.
+
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\section{Example}
+\section{Examples}
 
-The following example runs the simulation for the first two weeks of January, using simplified input data (same demand and inflow profiles in all areas).
-
-The Python script is as follows: 
-
-\begin{lstlisting}
-
->>> import powergama
-
->>> timerange=range(0,24*14)
->>> data = powergama.GridData()
-
->>> data.readGridData(nodes="nodes.csv",
-          ac\_branches="branches.csv",
-          dc\_branches=''dcbranches.csv'',
-          generators="generators.csv",
-          consumers="consumers.csv")
->>> data.readProfileData(filename="profiles.csv",
-           storagevalue_filling="profiles_storval_filling.csv",
-           storagevalue_time="profiles_storval_time.csv",
-           timerange=timerange, timedelta=1.0)
-
->>> lp = powergama.LpProblem(data)
->>> res = powergama.Results(data,''results.sqlite3'',replace=True)
->>> lp.solve(res)
-
->>> res.plotDemandPerArea(['FR', 'ES'])
->>> res.plotMapGrid(nodetype='area',branchtype='area')
->>> res.plotGenerationPerArea('ES')
->>> res.plotGenerationPerArea('FR')
->>> res.plotMapGrid(nodetype='nodalprices')
-
-\end{lstlisting}
+Examples are provided on the web site \cite{powergamauserguide}:\\
+\url{https://bitbucket.org/harald_g_svendsen/powergama/wiki/Home}
 
 
-\begin{figure}
-\centering
-\includegraphics[scale=0.6]{example_2w_map_areas.png}
-\caption{Power system included in analysis, coloured by area.}
-\label{fig:example_map_areas}
-\end{figure}
-
-\begin{figure}
-\centering
-\includegraphics[scale=0.6]{example_2w_demand.png}
-\caption{Power demand in France and Spain.}
-\label{fig:example_demandl}
-\end{figure}
-
-\begin{figure}
-\centering
-\includegraphics[scale=0.6]{example_2w_generationES.png}
-\caption{Results: Power generation mix in Spain.}
-\label{fig:example_generationES}
-\end{figure}
-
-\begin{figure}
-\centering
-\includegraphics[scale=0.6]{example_2w_generationFR.png}
-\caption{Results: Power generation mix in France.}
-\label{fig:example_generationFR}
-\end{figure}
-
-\begin{figure}
-\centering
-\includegraphics[scale=0.6]{example_2w_map_nodalprices.png}
-\caption{Results: Average nodal prices. South-western Europe has lower prices due to relatively cheap nuclear power. }
-\label{fig:example_map_prices}
-\end{figure}
-
-
-
-\newpage
-\appendix
+%\newpage
+%\appendix
 
 
 
