@@ -346,8 +346,6 @@ class SipModel():
                 if model.demNode[c]==n:
                     expr += -model.demandAvg[c]*model.demandProfile[c,t]
             
-            
-            
             expr = (expr == 0)
             return expr
         model.cPowerbalance = pyo.Constraint(model.NODE,model.TIME,
@@ -426,7 +424,7 @@ class SipModel():
         model.firstStageCost = pyo.Expression(rule=firstStageCost_rule)
     
         def secondStageCost_rule(model):
-            """Operational costs: cost of gen, load shed and curtailment"""
+            """Operational costs: cost of gen and load shed"""
 
             if CO2price:            
                 expr = sum(model.generation[i,t]*model.sampleFrequency[t]*(
@@ -442,10 +440,7 @@ class SipModel():
             #            for i in model.NODE for t in model.TIME)
             expr += sum(model.curtailment[i,t]*model.sampleFrequency[t]*model.curtailmentCost 
                         for i in model.GEN for t in model.TIME)           
-            # annual costs of operation
-            #samplefactor = 8760/len(model.TIME)
-            #expr = samplefactor*expr
-            
+
             # 2nd stage investment costs in generation capacity
             if genExpansion:
                 for g in model.GEN:
@@ -899,22 +894,22 @@ class SipModel():
                             model.financeYears))
         return cost
 
-    def computeGenerationCost(self,model,g):
+    def computeCostGen(self,model,g):
         '''compute NPV cost of generation (+ curtailment and CO2 emissions)
         
         This corresponds to secondStageCost in abstract model        
         '''
         expr = sum(model.generation[g,t].value
-                    *model.genCostAvg[g]*model.genCostProfile[g,t] 
+                    *model.genCostAvg[g]*model.genCostProfile[g,t]*model.sampleFrequency[t] 
                      for t in model.TIME)
-        expr += sum(model.curtailment[g,t].value*model.curtailmentCost 
+        expr += sum(model.curtailment[g,t].value*model.curtailmentCost*model.sampleFrequency[t]
                      for t in model.TIME)
         expr += sum(model.generation[g,t].value*
-                            model.genTypeEmissionRate[model.genType[g]]*model.CO2price
+                            model.genTypeEmissionRate[model.genType[g]]*model.CO2price*model.sampleFrequency[t]
                             for t in model.TIME)
         # lifetime cost
-        samplefactor = 8760/len(model.TIME)
-        expr = samplefactor*expr*annuityfactor(model.financeInterestrate,
+
+        expr = expr*annuityfactor(model.financeInterestrate,
                                                model.financeYears)
         return expr
      
@@ -939,29 +934,27 @@ class SipModel():
         
         for t in model.TIME:
             deltaP.append(abs(self.computeAreaPrice(model, area1, t) 
-                         - self.computeAreaPrice(model, area2, t)))
+                         - self.computeAreaPrice(model, area2, t))*model.sampleFrequency[t])
             flow.append(model.branchFlow21[b,t].value + model.branchFlow12[b,t].value)
         
-        samplefactor = 8760/len(model.TIME)
-        
-        return sum(deltaP[i]*flow[i] for i in range(len(deltaP)))*samplefactor
+        return sum(deltaP[i]*flow[i] for i in range(len(deltaP)))
         
     def computeAreaEmissions(self,model,c, cost=False):
-        '''compute total emissions from a load/country'''
+        '''compute annual emissions from a load/country'''
         # TODO: ensure that all nodes are mapped to a country/load
         n = model.demNode[c]
         expr = 0
-        samplefactor = 8760/len(model.TIME)
+
         for g in model.GEN:
             if model.genNode[g]==n:
                 expr += sum(model.generation[g,t].value*
-                            model.genTypeEmissionRate[model.genType[g]]
+                            model.genTypeEmissionRate[model.genType[g]]*
+                            model.sampleFrequency[t]
                             for t in model.TIME)
         if cost:
-            expr = expr*samplefactor*model.CO2price*annuityfactor(model.financeInterestrate,
+            expr = expr*model.CO2price*annuityfactor(model.financeInterestrate,
                                                                   model.financeYears)
-        else:
-            expr = expr*samplefactor
+
         return expr
                                 
     def computeAreaRES(self, model,j,shareof):
@@ -970,13 +963,13 @@ class SipModel():
         area = model.nodeArea[node]
         Rgen = 0
         gen = 0
-        dem = sum(model.demandAvg[j]*model.demandProfile[j,t] for t in model.TIME)
+        dem = sum(model.demandAvg[j]*model.demandProfile[j,t]*model.sampleFrequency[t] for t in model.TIME)
         for g in model.GEN:
             if model.nodeArea[model.genNode[g]]==area:
                 if model.genCostAvg[g] <= 1:
-                    Rgen += sum(model.generation[g,t].value for t in model.TIME)
+                    Rgen += sum(model.generation[g,t].value*model.sampleFrequency[t] for t in model.TIME)
                 else:
-                    gen += sum(model.generation[g,t].value for t in model.TIME)
+                    gen += sum(model.generation[g,t].value*model.sampleFrequency[t] for t in model.TIME)
         if shareof=='dem':
            return Rgen/dem
         elif shareof=='gen':
@@ -1124,7 +1117,7 @@ class SipModel():
                                         'price_avg','RES%dem','RES%gen', 'IM', 'EX',
                                         'CS', 'PS', 'CR','CC','Welfare',
                                         'branch_CAPEX_npv','gen_CAPEX_a'])
-        samplefactor=8760/len(model.TIME)
+        
         # All monetary values in NPV
         for j in model.BRANCH:
             df_branches.loc[j,'num'] = j
@@ -1166,8 +1159,7 @@ class SipModel():
             df_gen.loc[j,'type'] = model.genType[j]
             df_gen.loc[j,'emission_rate[ton/MWh]'] = model.genTypeEmissionRate[model.genType[j]]
             df_gen.loc[j,'emissions[ton]'] = (model.genTypeEmissionRate[model.genType[j]]*sum(
-                                        model.generation[j,t].value for t in model.TIME)
-                                        *samplefactor)
+                                        model.generation[j,t].value*model.sampleFrequency[t] for t in model.TIME))
             if hasattr(model, 'genNewCapacity'):
                 df_gen.loc[j,'newCapacity'] = model.genNewCapacity[j].value
                 df_gen.loc[j,'CAPEX'] = model.genTypeCost[model.genType[j]]*model.genNewCapacity[j].value*model.genCostScale[j]*annuityfactor(0.05,30)
@@ -1179,7 +1171,7 @@ class SipModel():
                 model.generation[(j,t)].value for t in model.TIME])
             df_gen.loc[j,'curtailed_avg'] = np.mean([
                 model.curtailment[(j,t)].value for t in model.TIME])
-            df_gen.loc[j,'cost_NPV'] = self.computeGenerationCost(model,j)
+            df_gen.loc[j,'cost_NPV'] = self.computeCostGen(model,j)
 
         for j in model.LOAD:
             df_load.loc[j,'num'] = j
@@ -1200,20 +1192,20 @@ class SipModel():
             df_load.loc[j,'RES%dem'] = self.computeAreaRES(model,j,shareof='dem')
             df_load.loc[j,'RES%gen'] = self.computeAreaRES(model,j,shareof='gen')
             # OBS: Welfare data without considering investment costs
-            df_load.loc[j,'Welfare'] = sum(self.computeAreaWelfare(model,j,t)['W']
-                                            for t in model.TIME)*samplefactor*annuityfactor(0.05,30)
-            df_load.loc[j,'PS'] = sum(self.computeAreaWelfare(model,j,t)['PS']
-                                            for t in model.TIME)*samplefactor*annuityfactor(0.05,30)
-            df_load.loc[j,'CS'] = sum(self.computeAreaWelfare(model,j,t)['CS']
-                                            for t in model.TIME)*samplefactor*annuityfactor(0.05,30)
-            df_load.loc[j,'CC'] = sum(self.computeAreaWelfare(model,j,t)['CC']
-                                            for t in model.TIME)*samplefactor*annuityfactor(0.05,30)
-            df_load.loc[j,'CR'] = sum(self.computeAreaWelfare(model,j,t)['CR']
-                                            for t in model.TIME)*samplefactor*annuityfactor(0.05,30)
-            df_load.loc[j,'IM'] = sum(self.computeAreaWelfare(model,j,t)['IM']
-                                            for t in model.TIME)*samplefactor*annuityfactor(0.05,30) 
-            df_load.loc[j,'EX'] = sum(self.computeAreaWelfare(model,j,t)['X']
-                                            for t in model.TIME)*samplefactor*annuityfactor(0.05,30) 
+            df_load.loc[j,'Welfare'] = sum(self.computeAreaWelfare(model,j,t)['W']*model.sampleFrequency[t]
+                                            for t in model.TIME)*annuityfactor(0.05,30)
+            df_load.loc[j,'PS'] = sum(self.computeAreaWelfare(model,j,t)['PS']*model.sampleFrequency[t]
+                                            for t in model.TIME)*annuityfactor(0.05,30)
+            df_load.loc[j,'CS'] = sum(self.computeAreaWelfare(model,j,t)['CS']*model.sampleFrequency[t]
+                                            for t in model.TIME)*annuityfactor(0.05,30)
+            df_load.loc[j,'CC'] = sum(self.computeAreaWelfare(model,j,t)['CC']*model.sampleFrequency[t]
+                                            for t in model.TIME)*annuityfactor(0.05,30)
+            df_load.loc[j,'CR'] = sum(self.computeAreaWelfare(model,j,t)['CR']*model.sampleFrequency[t]
+                                            for t in model.TIME)*annuityfactor(0.05,30)
+            df_load.loc[j,'IM'] = sum(self.computeAreaWelfare(model,j,t)['IM']*model.sampleFrequency[t]
+                                            for t in model.TIME)*annuityfactor(0.05,30) 
+            df_load.loc[j,'EX'] = sum(self.computeAreaWelfare(model,j,t)['X']*model.sampleFrequency[t]
+                                            for t in model.TIME)*annuityfactor(0.05,30) 
             # TODO: have to separate CAPEX for domestic and multinational (wrt cost sharing)
             df_load.loc[j,'branch_CAPEX'] = self.computeAreaCostBranch(model,j,include_om=True)
             if hasattr(model, 'genNewCapacity'):
