@@ -903,7 +903,7 @@ class SipModel():
                     *model.genCostAvg[g]*model.genCostProfile[g,t]*model.sampleFrequency[t] 
                      for t in model.TIME)
         expr += sum(model.curtailment[g,t].value*model.curtailmentCost*model.sampleFrequency[t]
-                     for t in model.TIME)
+                     for t in model.TIME if model.curtailment[g,t].value is not None)
         expr += sum(model.generation[g,t].value*
                             model.genTypeEmissionRate[model.genType[g]]*model.CO2price*model.sampleFrequency[t]
                             for t in model.TIME)
@@ -940,7 +940,7 @@ class SipModel():
         return sum(deltaP[i]*flow[i] for i in range(len(deltaP)))
         
     def computeAreaEmissions(self,model,c, cost=False):
-        '''compute annual emissions from a load/country'''
+        '''compute annual emissions or NPV emission costs from a load/country'''
         # TODO: ensure that all nodes are mapped to a country/load
         n = model.demNode[c]
         expr = 0
@@ -952,7 +952,7 @@ class SipModel():
                             model.sampleFrequency[t]
                             for t in model.TIME)
         if cost:
-            expr = expr*model.CO2price*annuityfactor(model.financeInterestrate,
+            expr = expr*model.CO2price.value*annuityfactor(model.financeInterestrate,
                                                                   model.financeYears)
 
         return expr
@@ -1163,14 +1163,20 @@ class SipModel():
             if hasattr(model, 'genNewCapacity'):
                 df_gen.loc[j,'newCapacity'] = model.genNewCapacity[j].value
                 df_gen.loc[j,'CAPEX'] = model.genTypeCost[model.genType[j]]*model.genNewCapacity[j].value*model.genCostScale[j]*annuityfactor(0.05,30)
+                if model.genCostAvg[j]:                
+                    df_gen.loc[j,'curtailed_avg'] = np.mean([
+                        model.genCapacityProfile[(j,t)]*(model.genCapacity[j] + model.genNewCapacity[j].value)-model.generation[(j,t)].value for t in model.TIME])
+            else:
+                if model.genCostAvg[j]:
+                    df_gen.loc[j,'curtailed_avg'] = np.mean([
+                        (model.genCapacityProfile[(j,t)]*model.genCapacity[j]-model.generation[(j,t)].value) for t in model.TIME])
             df_gen.loc[j,'Pavg'] = np.mean([
                 model.generation[(j,t)].value for t in model.TIME])
             df_gen.loc[j,'Pmin'] = np.min([
                 model.generation[(j,t)].value for t in model.TIME])
             df_gen.loc[j,'Pmax'] = np.max([
                 model.generation[(j,t)].value for t in model.TIME])
-            df_gen.loc[j,'curtailed_avg'] = np.mean([
-                model.curtailment[(j,t)].value for t in model.TIME])
+            
             df_gen.loc[j,'cost_NPV'] = self.computeCostGen(model,j)
 
         for j in model.LOAD:
