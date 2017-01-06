@@ -1505,7 +1505,7 @@ class Results(object):
             branch_value = utilisation
             branch_colormap = plt.get_cmap('hot')
             branch_label = 'Branch utilisation'
-        elif branchtype=='capacity':
+        elif branchtype=='capacity':         
             cap = data.branch.capacity
             branch_plot_colorbar = False
             branch_label = 'Branch capacity'
@@ -1519,7 +1519,10 @@ class Results(object):
                     filter_branch = [0,np.round(maxcap,-2)+100]
             if 't' in branch_style:
                 avgcap = np.mean(cap)
-                lwidths = [2*f/avgcap for f in cap]     
+                if avgcap == 0:
+                    lwidths = [0 for f in cap]  
+                else:
+                    lwidths = [2*f/avgcap for f in cap]  
         elif branchtype=='flow':
             avgflow = self.getAverageBranchFlows(timeMaxMin)[2]
             if 'c' in branch_style:
@@ -1560,14 +1563,17 @@ class Results(object):
 
         ls = [[(x1[i],y1[i]),(x2[i],y2[i])] for i in range(len(x1))]
         #ls = [[(x1[i],y1[i]),(x2[i],y2[i])] for i in range(num_branches)]
-        line_segments_ac = mpl.collections.LineCollection(
-                ls, linewidths=lwidths,cmap=branch_colormap)
-    
-        if filter_branch is not None:
-            line_segments_ac.set_clim(filter_branch)
-        line_segments_ac.set_array(branch_value)
         ax=plt.axes()    
-        ax.add_collection(line_segments_ac)
+        if not lwidths:
+            print("No new data")
+        else:
+            line_segments_ac = mpl.collections.LineCollection(
+                    ls, linewidths=lwidths,cmap=branch_colormap)
+        
+            if filter_branch is not None:
+                line_segments_ac.set_clim(filter_branch)
+            line_segments_ac.set_array(branch_value)
+            ax.add_collection(line_segments_ac)
       
 
         # DC Branches

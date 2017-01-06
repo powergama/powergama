@@ -1257,7 +1257,7 @@ class SipModel():
         expr = sum(gen[g,t].value
                     *model.genCostAvg[g]*model.genCostProfile[g,t] 
                      for t in model.TIME)
-        expr += sum(curt[g,t].value*model.curtailmentCost for t in model.TIME)
+        expr += sum(curt[g,t].value*model.curtailmentCost for t in model.TIME if curt[g,t].value is not None)
         expr += sum(gen[g,t].value*
                             model.genTypeEmissionRate[model.genType[g]]*model.CO2price
                             for t in model.TIME)
@@ -1667,7 +1667,7 @@ class SipModel():
 
     def extractResultingGridData(self,grid_data,
                                  model=None,file_ph=None,
-                                 stage=1,scenario=None):
+                                 stage=1,scenario=None, newData=False):
         '''Extract resulting optimal grid layout from simulation results
         
         Parameters
@@ -1684,6 +1684,9 @@ class SipModel():
             2: both stage one and stage two investments included
         scenario : int
             which stage 2 scenario to get data for (only relevant when stage=2)
+        newData : Boolean
+            Choose whether to use only new data (True) or add new data to 
+            existing data (False)
             
         Use either model or file_ph parameter        
         
@@ -1697,11 +1700,16 @@ class SipModel():
         res_brC = pd.DataFrame(data=grid_res.branch['capacity']) 
         res_N = pd.DataFrame(data=grid_res.node['existing'])
         res_G = pd.DataFrame(data=grid_res.generator['pmax'])
+        if newData:
+            res_brC[res_brC>0] = 0
+            #res_N[res_N>0] = 0
+            res_G[res_G>0] = 0
+            
         if model is not None:
             #res_brC = pd.DataFrame(0,index=model.BRANCH,columns=['val'])  
             #res_N = pd.DataFrame(0,index=model.NODE,columns=['val'])
             #res_G = pd.DataFrame(0,index=model.GEN,columns=['val'])
-            if stage >= 1:
+            if stage == 1:
                 for j in model.BRANCH_EXPAND1:
                     res_brC['capacity'][j] += model.branchNewCapacity1[j].value
                 for j in model.NODE_EXPAND1:
@@ -1728,7 +1736,7 @@ class SipModel():
             df_ph = pd.read_csv(file_ph,header=None,skipinitialspace=True,
                                 names=['stage','node',
                                        'var','var_indx','value'])
-            if stage>=1:
+            if stage==1:
                 df_branchNewCapacity = df_ph[df_ph['var']=='branchNewCapacity1']
                 df_newNodes = df_ph[df_ph['var']=='newNodes1']
                 df_newGen = df_ph[df_ph['var']=='genNewCapacity1']
