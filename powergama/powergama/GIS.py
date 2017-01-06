@@ -31,12 +31,13 @@ category_colours=["ffff6666","ffffff66","ff66ff66","ff66ffff",
 dcbranch_colour = "ffffffff" #white
 generator_colour = "ff0000ff" #red
 consumer_colour = "ffff00ff" #purple
+flowarrow_colour = "ff0000ff" #red
 
 # Default line width
 linewidth = 1.5
 
 point_icon_href = "http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png"
-
+arrow_icon_href = "http://maps.google.com/mapfiles/kml/shapes/donut.png"
 
 
             
@@ -92,6 +93,7 @@ def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,
     styleConsumer.iconstyle.icon.href = point_icon_href
     styleConsumer.iconstyle.color  = consumer_colour 
     styleConsumer.labelstyle.scale = 0.0 #hide
+    #styleConsumer.iconstyle.visibility = 0 #doesn't work
     #styleConsumer.balloonstyle.text = balloontext
     
     styleBranches = []
@@ -104,6 +106,12 @@ def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,
     styleDcBranch = simplekml.Style()
     styleDcBranch.linestyle.color = dcbranch_colour
     styleDcBranch.linestyle.width = linewidth   
+
+    styleFlowArrow = simplekml.Style()
+    styleFlowArrow.iconstyle.icon.href = arrow_icon_href
+    styleFlowArrow.iconstyle.color = flowarrow_colour
+    styleFlowArrow.iconstyle.scale = 0.5
+    styleFlowArrow.labelstyle.scale = 0.0 #hide
 
 
     # NODES ##################################################################   
@@ -239,7 +247,9 @@ def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,
     if branchtype in ['capacity','flow']:        
         if res is not None:
             meanflows = res.getAverageBranchFlows(timeMaxMin)
-            absbranchflow = meanflows[2]            
+            absbranchflow = meanflows[2]
+            brancharrowfolder = branchfolder.newfolder(
+                name="Flow direction",visibility=0)
         if branchtype=='flow':
             categoryValue = numpy.asarray(absbranchflow)
             categoryTitle = "Flow"
@@ -302,12 +312,32 @@ def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,
                 Reactance .. {}         <br/>
                 """.format(str(i),startbus,endbus,capacity,reactance)
             if res is not None:
+                flowAB = meanflows[0][i]
+                flowBA = meanflows[1][i]
                 description = """{}
-                Mean flow .. {}         <br/>
-                """.format(description,absbranchflow[i])
+                Mean flow .. {:.6g}         <br/>
+                Mean flow A to B .. {:.6g}    <br/>
+                Mean flow B to A .. {:.6g}    <br/>
+                """.format(description,absbranchflow[i],flowAB,flowBA)
             lin = branchlevelfolder[branch_category].newlinestring(name=name,
                   description = description,
                   coords=[(startbuslon,startbuslat),(endbuslon,endbuslat)])
+            
+            # Branch flow direction indicator        
+            if res is not None:
+                if (flowAB+flowBA)==0:
+                    d = 0.5
+                else:
+                    d = min(0.9,max(0.1,flowAB/(flowAB+flowBA)))
+                arrowcoord = _pointBetween(nodeA=(startbuslon,startbuslat),
+                                           nodeB=(endbuslon,endbuslat),
+                                           weight=d)
+                arrowpoint = brancharrowfolder.newpoint(name=None,
+                                                        description=None, 
+                                                        coords=[arrowcoord],
+                                                        visibility=0)
+                arrowpoint.style = styleFlowArrow
+
         elif branchtype=='powergim_type':
             typ = grid_data.branch.type[i]
             branch_category = branchtypes.index(typ)
@@ -325,6 +355,7 @@ def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,
                   coords=[(startbuslon,startbuslat),(endbuslon,endbuslat)])
                   
         lin.style = styleBranches[branch_category]
+        
 
     # DC BRANCHES ############################################################
     if grid_data.dcbranch.shape[0] > 0:    
@@ -357,3 +388,63 @@ def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,
         
     kml.save(kmlfile)
 
+
+def _pointBetween(nodeA,nodeB,weight):
+    '''computes coords on the line between two points
+    
+     [lat lon] = pointBetween(self,lat1,lon1,lat2,lon2,d)
+    
+    Parameters
+    ----------
+        nodeA: dublet (lat,lon)
+            latitude/longitude of nodeA (degrees)
+        nodeB: dublet (lat,lon)
+            latitude/longitude of nodeB (degrees)
+        weight: double
+            weight=0 is node A, 0.5 is halfway between, and 1 is node B
+    
+    Returns
+    -------
+        (lat,lon): dublet
+            coordinates of the point inbetween nodeA and nodeB (degrees)
+    
+    
+     ref: http://www.movable-type.co.uk/scripts/latlong.html
+    '''
+    lat1 = nodeA[0]
+    lon1 = nodeA[1]
+    lat2 = nodeB[0]
+    lon2 = nodeB[1]
+    if ((lat1==lat2) and (lon1==lon2)):
+        lat = lat1
+        lon = lon1
+    else:
+        #transform to radians
+        lat1 = lat1*math.pi/180
+        lat2 = lat2*math.pi/180
+        lon1 = lon1*math.pi/180
+        lon2 = lon2*math.pi/180
+        
+        #initial bearing
+        y = math.sin(lon2-lon1) * math.cos(lat2)
+        x = (math.cos(lat1)*math.sin(lat2) 
+             - math.sin(lat1)*math.cos(lat2)*math.cos(lon2-lon1) )
+        bearing = math.atan2(y, x)
+        
+        #angular distance from A to B
+        d_tot = (math.acos(math.sin(lat1)*math.sin(lat2) 
+                 + math.cos(lat1)*math.cos(lat2)*math.cos(lon2-lon1)) )
+        d = d_tot*weight
+        
+        lat = math.asin(math.sin(lat1)*math.cos(d) 
+                        +math.cos(lat1)*math.sin(d)*math.cos(bearing) )
+        lon = lon1 + math.atan2(math.sin(bearing)*math.sin(d)*math.cos(lat1),
+                           math.cos(d)-math.sin(lat1)*math.sin(lat))
+        
+        #tansform to degrees
+        lat = lat*180/math.pi
+        lon = lon*180/math.pi
+    return (lat,lon)
+
+
+    
