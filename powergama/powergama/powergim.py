@@ -694,12 +694,18 @@ class SipModel():
                 investment += costNode(model,n,var_num=model.newNodes2)            
             for g in model.GEN_EXPAND2:
                 investment += costGen(model, g,var_cap=model.genNewCapacity2)
-            
+            #discount back to t=0 ?
+            investment = investment*(1/((1+model.financeInterestrate)**model.stage2TimeDelta))
+
             # add O&M costs (NPV of lifetime costs)
             omcost = investment*model.omRate*(
                 annuityfactor(model.financeInterestrate,model.financeYears)
                 -annuityfactor(model.financeInterestrate,model.stage2TimeDelta))
-
+            
+            #subtract estimated salvage value of investments with remaining lifetime
+            investment -= investment*(model.stage2TimeDelta/model.financeYears)*(
+                1/((1+model.financeInterestrate)**(model.financeYears-model.stage2TimeDelta)))
+                
             expr = opcost1 + opcost2 + investment + omcost         
             return expr
         model.secondStageCost = pyo.Expression(rule=secondStageCost_rule)
