@@ -686,7 +686,7 @@ class SipModel():
                 investment += costNode(model,n,var_num=model.newNodes2)            
             for g in model.GEN_EXPAND2:
                 investment += costGen(model, g,var_cap=model.genNewCapacity2)
-            #discount back to t=0 ?
+            #discount back to t=0?
             investment = investment*(1/((1+model.financeInterestrate)**model.stage2TimeDelta))
 
             # add O&M costs (NPV of lifetime costs)
