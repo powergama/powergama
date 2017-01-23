@@ -2182,7 +2182,7 @@ class Results(object):
             loadColour = 'b'
         else:
             loadColour = 'w'
-        m.scatter(x, y, marker='o', c=loadColour, zorder=2, s=relativeCap)
+        m.scatter(x, y, marker='s', c=loadColour, zorder=2, s=relativeCap)
         
         # Show names of nodes
         if show_node_labels:
