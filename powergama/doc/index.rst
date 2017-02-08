@@ -27,6 +27,7 @@ Code documentation:
    code_constants
    code_scenarios
    code_GIS
+   code_powergim
 
 
 Indices and tables

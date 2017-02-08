@@ -13,17 +13,13 @@ setup(name='powergama',
       packages=['powergama'],
       zip_safe = True,
 	  classifiers = [
-		'Development Status :: 3 - Alpha',
+		'Development Status :: 4 - Beta',
 		'Intended Audience :: Science/Research',
 		'License :: OSI Approved :: MIT License',
-		'Programming Language :: Python :: 2.7',
 		'Programming Language :: Python :: 3',
 		'Programming Language :: Python :: 3.3',
 		'Programming Language :: Python :: 3.4',
 		'Programming Language :: Python :: 3.5'
 	  ],
 	  keywords = 'power systems, grid integration, renewable energy',
-	  install_requires = [
-		'PuLP>=1.6.0'
-		],
 	 )

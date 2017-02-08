@@ -9,6 +9,7 @@ Created on Tue Aug 16 13:21:21 2016
 import pyomo.environ as pyo
 import pandas as pd
 import numpy as np
+import sklearn
 
 
 class SipModel():
@@ -19,16 +20,23 @@ class SipModel():
     _NUMERICAL_THRESHOLD_ZERO = 1e-6
     _HOURS_PER_YEAR = 8760
     
-    def __init__(self, maxNewBranchNum, M_const = 1000, CO2price=False):
-        """Create Abstract Pyomo model for PowerGIM"""
-        self.abstractmodel = self._createAbstractModel(maxNewBranchNum,
-                                                       CO2price)
+    def __init__(self, M_const = 1000, CO2price=False):
+        """Create Abstract Pyomo model for PowerGIM
+        
+        Parameters
+        ----------
+        M_const : int
+            large constant
+        CP2price : boolean
+            whether to include CO2 price in objective function
+        """
+        self.abstractmodel = self._createAbstractModel(CO2price)
         self.M_const = M_const
 
         
         
     
-    def _createAbstractModel(self,maxNewBranchNum,CO2price):    
+    def _createAbstractModel(self,CO2price):    
         model = pyo.AbstractModel()
         model.name = 'PowerGIM abstract model'
         
@@ -72,6 +80,7 @@ class SipModel():
         model.CO2price = pyo.Param(within=pyo.NonNegativeReals)
         model.VOLL = pyo.Param(within=pyo.NonNegativeReals)
         model.stage2TimeDelta = pyo.Param(within=pyo.NonNegativeReals)
+        model.maxNewBranchNum = pyo.Param(within=pyo.NonNegativeReals)
         
         #investment costs and limits:        
         model.branchtypeMaxCapacity = pyo.Param(model.BRANCHTYPE,
@@ -151,7 +160,7 @@ class SipModel():
                                           bounds = branchNewCapacity_bounds)
         # investment: new branch cables
         def branchNewCables_bounds(model,j):
-            return (0,maxNewBranchNum)                                  
+            return (0,model.maxNewBranchNum)                                  
         model.branchNewCables1 = pyo.Var(model.BRANCH_EXPAND1, 
                                         within = pyo.NonNegativeIntegers,
                                         bounds = branchNewCables_bounds)
@@ -772,7 +781,8 @@ class SipModel():
         return concretemodel
 
 
-    def createModelData(self,grid_data,datafile,maxNewBranchCap):
+    def createModelData(self,grid_data,datafile,
+                        maxNewBranchNum, maxNewBranchCap):
         '''Create model data in dictionary format
 
         Parameters
@@ -781,6 +791,10 @@ class SipModel():
             contains grid model
         datafile : string
             name of XML file containing additional parameters
+        maxNewBranchNum : int
+            upper limit on parallel branches to consider (e.g. 10)
+        maxNewBranchCap : float (MW)
+            upper limit on new capacity to consider (e.g. 10000)
         
         Returns
         --------
@@ -844,6 +858,7 @@ class SipModel():
         di['NODE_EXPAND2'] = {None:node_expand2}
         
         #Parameters:
+        di['maxNewBranchNum'] = {None: maxNewBranchNum}
         di['samplefactor'] = {None: self._HOURS_PER_YEAR/len(grid_data.timerange)}
         di['nodeOffshore'] = {}
         di['nodeType'] = {}
@@ -1932,10 +1947,26 @@ def sampleProfileData(data, samplesize, sampling_method):
             size of sample
         sampling_method : str
             'kmeans', 'lhs', 'uniform', ('mmatching', 'meanshift')
+            'kmeans_norm'
         
         Returns:
             reduced data matrix according to sample size and method
         """
+        
+        """
+        Harald:
+        TODO:
+        -Note: Profiles may also include generator cost profile, not only
+        generation and consumption
+        -Should we cluster the profiles, or all consumers and generators? This
+        is different sine many generators/consumers may use the same profile.
+        Using all generators/consumers is more difficult, but probably more 
+        correct
+        -How to determine weight between different types of variations, i.e.
+        generation/consumption (MW) vs marginal costs (€)? Using normalised
+        profiles with no weighing is one such choice.
+        """
+        
         X = data.profiles.copy()
         
         if sampling_method == 'kmeans':
@@ -1986,6 +2017,28 @@ def sampleProfileData(data, samplesize, sampling_method):
                 else:
                     X_sample[ref] = X_sample[ref] / pmax
             X_sample['const'] = 1
+            return X_sample
+
+        elif sampling_method == 'kmeans_norm':
+            # Harald preferred method:            
+            # Scale all profiles to unit box (0-1), then cluster,
+            # then scale back
+            # Which profiles are used in the model:
+            profiles_in_use= (
+                data.generator['inflow_ref'].unique().tolist()
+                +data.generator['fuelcost_ref'].unique().tolist()
+                +data.consumer['demand_ref'].unique().tolist())
+            X = X[profiles_in_use]
+            #scaler = sklearn.preprocessing.MinMaxScaler()
+            scaler = sklearn.preprocessing.RobustScaler()
+            x_scaled = scaler.fit_transform(X)
+            X = pd.DataFrame(data=x_scaled, columns=X.columns, 
+                          index=X.index)
+            km_norm2=sklearn.cluster.KMeans(n_clusters=samplesize,
+                                            init='k-means++')
+            km_norm2.fit(X)
+            km_orig=scaler.inverse_transform(km_norm2.cluster_centers_)
+            X_sample = pd.DataFrame(data=km_orig,columns=X.columns)
             return X_sample
 
         elif sampling_method == 'mmatching':

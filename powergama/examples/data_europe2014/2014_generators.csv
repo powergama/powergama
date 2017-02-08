@@ -503,7 +503,7 @@ Antwerpen II,gas,B_meerho,1268.852459,0,70,0.8,const,,,,,,,,
 Amercoeur,coal,B_Moncea,47.48894783,0,60,0.8,const,,,,,,,,
 Doel,nuclear,B-8,3133.942308,0,11,0.616,const,,,,,,,,
 Hydro Liege,hydro,B-18,1428,0,0.5,0.020868381,hydro_1,300000,80,0.45,hydro,const,1177,0.75,2.1
-Tihage,nuclear,B_15,2792.057692,0,11,0.616,const,,,,,,,,
+Tihage,nuclear,B_15x,2792.057692,0,11,0.616,const,,,,,,,,
 Awirs,gas,B-15,1586.065574,0,70,0.8,const,,,,,,,,
 Rodenhuize,other_res,B-2,163.6481242,0,50,0.75,const,,,,,,,,
 Ruien,other_res,B-12Avel,646.4100905,0,50,0.75,const,,,,,,,,

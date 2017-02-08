@@ -2,6 +2,11 @@ v1.1.0
 -added Power Grid Investment Module (PowerGIM)
 -small changes in input data format
 
+v1.0.4
+-using pandas to read/write to file, and storing grid model data
+-minor changes in input data format (csv file column headers)
+-misc minor improvements
+
 v1.0.3 2016-05-31 -- Version 1.
 -added possibility for time dependence on flexible demand strategy (new column in input file)
 
