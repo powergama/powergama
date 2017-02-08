@@ -9,7 +9,10 @@ Created on Tue Aug 16 13:21:21 2016
 import pyomo.environ as pyo
 import pandas as pd
 import numpy as np
-import sklearn
+import sklearn.cluster
+import sklearn.preprocessing
+import pyomo.pysp.scenariotree.tree_structure_model as tsm
+import networkx
 
 
 class SipModel():
@@ -1019,25 +1022,39 @@ class SipModel():
         return dat_str
         
         
-    def createScenarioTreeModel(self,num_scenarios):
+    def createScenarioTreeModel(self,num_scenarios,probabilities=None):
         '''Generate model instance with data. Alternative to .dat files
         
         Parameters
         ----------
         num_scenarios : int
             number of scenarios. Each with the same probability
+        probabilities : list of int
+            probabilities of each scenario (must sum to 1)
         
         Returns
         -------
-        PySP scenario tree model
+        PySP 2-stage scenario tree model
         
         This method may be called by "pysp_scenario_tree_model_callback()" in
         the model input file instead of using input .dat files
         '''
-        from pyomo.pysp.scenariotree.tree_structure_model \
-            import CreateConcreteTwoStageScenarioTreeModel
+        
+        if probabilities is None:
+            st_model = tsm.CreateConcreteTwoStageScenarioTreeModel(
+                                num_scenarios)
+        else:
+            G = networkx.DiGraph() 
+            G.add_node("root")
+            for i in range(len(probabilities)):
+                G.add_edge("root","Scenario{}".format(i+1),
+                           probability=probabilities[i])
+            stage_names=['Stage1','Stage2']
     
-        st_model = CreateConcreteTwoStageScenarioTreeModel(num_scenarios)
+            st_model = tsm.ScenarioTreeModelFromNetworkX(G,
+                             edge_probability_attribute="probability",
+                             stage_names=stage_names)
+            
     
         first_stage = st_model.Stages.first()
         second_stage = st_model.Stages.last()
@@ -1063,42 +1080,7 @@ class SipModel():
         st_model.StageVariables[second_stage].add('newNodes2')
             
         st_model.ScenarioBasedData=False
-    
-        # Alternative, using networkx to create scenario tree:
-        # TODO: implement this alternative
-        if False:
-            from pyomo.pysp.scenariotree.tree_structure_model  \
-               import ScenarioTreeModelFromNetworkX
-            import networkx
-           
-            G = networkx.DiGraph()
-            G.add_node("R")
-            G.add_node("u0")
-            G.add_edge("R", "u0", probability=0.1)
-            G.add_node("u1")
-            G.add_edge("R", "u1", probability=0.5)
-            G.add_node("u2")
-            G.add_edge("R", "u2", probability=0.4)
-    
-            stm = ScenarioTreeModelFromNetworkX(G,
-                             edge_probability_attribute="probability",
-                             stage_names=["T1", "T2"])
-                             
-            # Declare the variables for each node (or stage)
-            stm.StageVariables["T1"].add("x")
-            stm.StageDerivedVariables["T1"].add("z")
-            # for this example, variables in the second and
-            # third time-stage change for each node
-            stm.NodeVariables["u0"].add("y0")
-            stm.NodeDerivedVariables["u0"].add("xu0")
-            
-            # Declare the Var or Expression object that
-            # reports the cost at each time stage
-            stm.StageCost["T1"] = "firstStageCost"
-            stm.StageCost["T2"] = "secondStageCost"
-            
-            st_model = stm
-            
+                
         return st_model
 
     def computeCostBranch(self,model,b,include_om=False):
@@ -1762,7 +1744,7 @@ def annuityfactor(rate,years):
         
             
 
-def sample_kmeans(X, samplesize):
+def _TMPsample_kmeans(X, samplesize):
     """K-means sampling
 
     Parameters
@@ -1796,7 +1778,7 @@ def sample_kmeans(X, samplesize):
     return k_means_cluster_centers
 
     
-def sample_mmatching(X, samplesize):
+def _TMPsample_mmatching(X, samplesize):
     """
     The idea is to make e.g. 10000 randomsample-sets of size=samplesize 
     from the originial datasat X. 
@@ -1810,7 +1792,7 @@ def sample_mmatching(X, samplesize):
     return
 
 
-def sample_meanshift(X, samplesize):
+def _TMPsample_meanshift(X, samplesize):
     """M matching sampling
 
     Parameters
@@ -1827,13 +1809,14 @@ def sample_meanshift(X, samplesize):
     These candidates are then filtered in a post-processing stage to 
     eliminate near-duplicates to form the final set of centroids.
     """
-    from sklearn.cluster import MeanShift, estimate_bandwidth
+    #from sklearn.cluster import MeanShift, estimate_bandwidth
     #from sklearn.datasets.samples_generator import make_blobs
 
     # The following bandwidth can be automatically detected using
-    bandwidth = estimate_bandwidth(X, quantile=0.2, n_samples=samplesize)
+    bandwidth = sklearn.cluster.estimate_bandwidth(X, quantile=0.2, 
+                                                   n_samples=samplesize)
     
-    ms = MeanShift(bandwidth=bandwidth, bin_seeding=True)
+    ms = sklearn.cluster.MeanShift(bandwidth=bandwidth, bin_seeding=True)
     ms.fit(X)
     #labels = ms.labels_
     cluster_centers = ms.cluster_centers_
@@ -1846,7 +1829,7 @@ def sample_meanshift(X, samplesize):
     return cluster_centers
 
 
-def sample_latinhypercube(X, samplesize):
+def _TMPsample_latinhypercube(X, samplesize):
     """Latin hypercube sampling
 
     Parameters
@@ -1898,21 +1881,26 @@ def sampleProfileData(data, samplesize, sampling_method):
         
         Parameters
         ==========
-        X : matrix
-            data matrix to sample from
+        data : GridData object
+            Sample from data.profiles
         samplesize : int
             size of sample
         sampling_method : str
-            'kmeans', 'lhs', 'uniform', ('mmatching', 'meanshift')
-            'kmeans_norm'
+            'kmeans', 'uniform', 
+            EXPERIMENTAL: 'kmeans_scale', 'lhs',  ('mmatching', 'meanshift')
+            
         
-        Returns:
+        Returns
+        =======
             reduced data matrix according to sample size and method
+        
+        
+        
         """
         
         """
         Harald:
-        TODO:
+        TODO: Tidy up - remove irrelevant code.
         -Note: Profiles may also include generator cost profile, not only
         generation and consumption
         -Should we cluster the profiles, or all consumers and generators? This
@@ -1927,7 +1915,32 @@ def sampleProfileData(data, samplesize, sampling_method):
         X = data.profiles.copy()
         
         if sampling_method == 'kmeans':
-            print("Using k-means...")
+            """
+            Harald preferred method:            
+            Scale all profiles to have similar variability, 
+            then cluster, and finally scale back
+            """
+            # Consider only those profiles which are used in the model:
+            profiles_in_use = data.generator['inflow_ref'].append(
+                data.generator['fuelcost_ref']).append(
+                data.consumer['demand_ref']).unique().tolist()
+            X = X[profiles_in_use]
+
+            #scaler = sklearn.preprocessing.MinMaxScaler()
+            scaler = sklearn.preprocessing.RobustScaler()
+            x_scaled = scaler.fit_transform(X)
+            X = pd.DataFrame(data=x_scaled, columns=X.columns, 
+                          index=X.index)
+            km_norm2=sklearn.cluster.KMeans(n_clusters=samplesize,
+                                            init='k-means++')
+            km_norm2.fit(X)
+            km_orig=scaler.inverse_transform(km_norm2.cluster_centers_)
+            X_sample = pd.DataFrame(data=km_orig,columns=X.columns)
+            return X_sample
+
+        elif sampling_method == 'kmeans_scale':
+            print("Using k-means with scaled profiles -> IN PROGRESS")
+            #TODO: How to scale prices?
             # Multiply time series for load and VRES with their respective 
             # maximum capacities in order to get the correct clusters/samples
 
@@ -1948,7 +1961,7 @@ def sampleProfileData(data, samplesize, sampling_method):
                 ref = row['demand_ref']
                 X[ref] = data.profiles[ref] * pmax
                 
-                X_sample = sample_kmeans(X, samplesize)
+                X_sample = _TMPsample_kmeans(X, samplesize)
                 X_sample = pd.DataFrame(data=X_sample,
                         columns=X.columns)
 
@@ -1976,37 +1989,15 @@ def sampleProfileData(data, samplesize, sampling_method):
             X_sample['const'] = 1
             return X_sample
 
-        elif sampling_method == 'kmeans_norm':
-            # Harald preferred method:            
-            # Scale all profiles to unit box (0-1), then cluster,
-            # then scale back
-            # Which profiles are used in the model:
-            profiles_in_use= (
-                data.generator['inflow_ref'].unique().tolist()
-                +data.generator['fuelcost_ref'].unique().tolist()
-                +data.consumer['demand_ref'].unique().tolist())
-            X = X[profiles_in_use]
-            #scaler = sklearn.preprocessing.MinMaxScaler()
-            scaler = sklearn.preprocessing.RobustScaler()
-            x_scaled = scaler.fit_transform(X)
-            X = pd.DataFrame(data=x_scaled, columns=X.columns, 
-                          index=X.index)
-            km_norm2=sklearn.cluster.KMeans(n_clusters=samplesize,
-                                            init='k-means++')
-            km_norm2.fit(X)
-            km_orig=scaler.inverse_transform(km_norm2.cluster_centers_)
-            X_sample = pd.DataFrame(data=km_orig,columns=X.columns)
-            return X_sample
-
         elif sampling_method == 'mmatching':
-            print("Using moment matching...")
+            print("Using moment matching... -> NOT IMPLEMENTED")
         elif sampling_method == 'meanshift':
-            print("Using Mean-Shift...")
-            X_sample = sample_meanshift(X, samplesize)
+            print("Using Mean-Shift... -> EXPERIMENTAL")
+            X_sample = _TMPsample_meanshift(X, samplesize)
             return X_sample
         elif sampling_method == 'lhs':
-            print("Using Latin-Hypercube...")
-            X_sample = sample_latinhypercube(X, samplesize)
+            print("Using Latin-Hypercube... -> EXPERIMENTAL")
+            X_sample = _TMPsample_latinhypercube(X, samplesize)
             X_sample = pd.DataFrame(data=X_sample,
                         columns=X.columns)
             X_sample['const'] = 1
@@ -2014,10 +2005,15 @@ def sampleProfileData(data, samplesize, sampling_method):
             return X_sample
         elif sampling_method == 'uniform':
             print("Using uniform sampling (consider changing sampling method!)...")
-            import random
-            timerange = random.sample(range(8760),samplesize)
+            #Use numpy random in order to have control of ranom seed from
+            # top level script (np.random.seed(..))
+            timerange=pd.np.random.choice(data.profiles.shape[0],
+                                        size=samplesize,replace=False)
+
+            #timerange = random.sample(range(8760),samplesize)
             X_sample = data.profiles.loc[timerange, :]
             X_sample.index = list(range(len(X_sample.index)))
             return X_sample
-                             
+        else:
+            raise Exception("Unknown sampling method")                     
         return
