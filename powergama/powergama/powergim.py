@@ -20,23 +20,21 @@ class SipModel():
     _NUMERICAL_THRESHOLD_ZERO = 1e-6
     _HOURS_PER_YEAR = 8760
     
-    def __init__(self, M_const = 1000, CO2price=False):
+    def __init__(self, M_const = 1000):
         """Create Abstract Pyomo model for PowerGIM
         
         Parameters
         ----------
         M_const : int
             large constant
-        CP2price : boolean
-            whether to include CO2 price in objective function
         """
-        self.abstractmodel = self._createAbstractModel(CO2price)
+        self.abstractmodel = self._createAbstractModel()
         self.M_const = M_const
 
         
         
     
-    def _createAbstractModel(self,CO2price):    
+    def _createAbstractModel(self):    
         model = pyo.AbstractModel()
         model.name = 'PowerGIM abstract model'
         
@@ -76,7 +74,6 @@ class SipModel():
         model.financeInterestrate = pyo.Param(within=pyo.Reals)
         model.financeYears = pyo.Param(within=pyo.Reals)
         model.omRate = pyo.Param(within=pyo.Reals)
-        model.curtailmentCost = pyo.Param(within=pyo.NonNegativeReals)
         model.CO2price = pyo.Param(within=pyo.NonNegativeReals)
         model.VOLL = pyo.Param(within=pyo.NonNegativeReals)
         model.stage2TimeDelta = pyo.Param(within=pyo.NonNegativeReals)
@@ -212,11 +209,6 @@ class SipModel():
         #model.loadShed = pyo.Var(model.NODE, model.TIME, 
         #                         domain = pyo.NonNegativeReals) 
         
-        # bounds are given in the curtailment restriction
-        model.curtailment1  = pyo.Var(model.GEN, model.TIME, 
-                                    domain = pyo.NonNegativeReals)
-        model.curtailment2  = pyo.Var(model.GEN, model.TIME, 
-                                    domain = pyo.NonNegativeReals)
         
         
         # CONSTRAINTS ########################################################
@@ -421,8 +413,8 @@ class SipModel():
 
         # Emissions restriction per country/load
         # TODO: deal with situation when no emission cap has been given (-1)
-        if CO2price:
-            def emissionCap_rule1(model,a):
+        def emissionCap_rule1(model,a):
+            if model.CO2price > 0:
                 expr = 0
                 for n in model.NODE:
                     if model.nodeArea[n]==a:
@@ -432,8 +424,11 @@ class SipModel():
                 samplefactor = model.samplefactor
                 expr = (expr*samplefactor <= sum(model.emissionCap[c] 
                     for c in model.LOAD if model.nodeArea[model.demNode[c]]==a))
-                return expr
-            def emissionCap_rule2(model,a):
+            else:
+                expr = pyo.Constraint.Skip
+            return expr
+        def emissionCap_rule2(model,a):
+            if model.CO2price > 0:
                 expr = 0
                 for n in model.NODE:
                     if model.nodeArea[n]==a:
@@ -444,56 +439,14 @@ class SipModel():
                 expr = (expr*samplefactor <= sum(model.emissionCap[c] 
                     for c in model.LOAD if model.nodeArea[model.demNode[c]]==a))
                 return expr
-            model.cEmissionCap1 = pyo.Constraint(model.AREA, 
-                                                 rule=emissionCap_rule1)
-            model.cEmissionCap2 = pyo.Constraint(model.AREA, 
-                                                 rule=emissionCap_rule2)
-            
-
-        def curtailment_rule1(model,g,t):
-            # Only consider curtailment cost for zero cost generators
-            if model.genCostAvg[g] == 0:
-                gencap = model.genCapacity[g] 
-                if g in model.GEN_EXPAND1:
-                    gencap += + model.genNewCapacity1[g]
-                expr =  (model.curtailment1[g,t] == (
-                        model.genCapacityProfile[g,t]*gencap 
-                        - model.generation1[g,t]))
-                return expr
             else:
-                return pyo.Constraint.Skip
+                expr = pyo.Constraint.Skip
+                
+        model.cEmissionCap1 = pyo.Constraint(model.AREA, 
+                                             rule=emissionCap_rule1)
+        model.cEmissionCap2 = pyo.Constraint(model.AREA, 
+                                             rule=emissionCap_rule2)
 
-        def curtailment_rule2(model,g,t):
-            # Only consider curtailment cost for zero cost generators
-            if model.genCostAvg[g] == 0:
-                gencap = model.genCapacity[g] + model.genCapacity2[g] 
-                if g in model.GEN_EXPAND1:
-                    gencap += model.genNewCapacity1[g]
-                if g in model.GEN_EXPAND2:
-                    gencap += model.genNewCapacity2[g]
-                expr =  (model.curtailment2[g,t] == (
-                        model.genCapacityProfile[g,t]*gencap 
-                            - model.generation2[g,t]))
-                return expr
-            else:
-                return pyo.Constraint.Skip
-
-        model.genCurtailment_phase1 = pyo.Constraint(model.GEN, model.TIME, 
-                                              rule=curtailment_rule1)
-        model.genCurtailment_phase2 = pyo.Constraint(model.GEN, model.TIME, 
-                                              rule=curtailment_rule2)
-#        else:
-#            def curtailment_rule(model,g,t):
-#                # Only consider curtailment cost for zero cost generators
-#                if model.genCostAvg[g] == 0:
-#                    expr =  (model.curtailment[g,t] 
-#                        == model.genCapacityProfile[g,t]*(model.genCapacity[g]) 
-#                            - model.generation[g,t])
-#                    return expr
-#                else:
-#                    return pyo.Constraint.Skip
-#            model.genCurtailment = pyo.Constraint(model.GEN, model.TIME, 
-#                                                  rule=curtailment_rule)
        
         # Power balance in nodes : gen+demand+flow into node=0
         def powerbalance_rule1(model,n,t):
@@ -652,15 +605,13 @@ class SipModel():
         model.firstStageCost = pyo.Expression(rule=firstStageCost_rule)
     
         def secondStageCost_rule(model):
-            """Operational costs: cost of gen, load shed and curtailment (NPV)"""
+            """Operational costs: cost of gen, load shed (NPV)"""
 
             # Operational costs phase 1 (if stage2DeltaTime>0)
             opcost1 = sum(model.generation1[i,t]*(
                             model.genCostAvg[i]*model.genCostProfile[i,t]
                             +model.genTypeEmissionRate[model.genType[i]]*model.CO2price)
                             for i in model.GEN for t in model.TIME)
-            opcost1 += sum(model.curtailment1[i,t]*model.curtailmentCost 
-                        for i in model.GEN for t in model.TIME)
             opcost1 = model.samplefactor*opcost1
             opcost1 = opcost1*annuityfactor(model.financeInterestrate,
                                           model.stage2TimeDelta)
@@ -669,9 +620,7 @@ class SipModel():
             opcost2 = sum(model.generation2[i,t]*(
                             model.genCostAvg[i]*model.genCostProfile[i,t]
                             +model.genTypeEmissionRate[model.genType[i]]*model.CO2price)
-                            for i in model.GEN for t in model.TIME)
-            opcost2 += sum(model.curtailment2[i,t]*model.curtailmentCost 
-                        for i in model.GEN for t in model.TIME)           
+                            for i in model.GEN for t in model.TIME)         
             opcost2 = model.samplefactor*opcost2
             opcost2 = opcost2*(annuityfactor(model.financeInterestrate,
                                model.financeYears)
@@ -987,8 +936,6 @@ class SipModel():
             di['genTypeEmissionRate'][name] = float(i.attrib['CO2'])                                               
         
         for i in root.findall('./parameters'):
-            di['curtailmentCost'] = {None: 
-                float(i.attrib['curtailmentCost'])}
             di['financeInterestrate'] = {None: 
                 float(i.attrib['financeInterestrate'])}
             di['financeYears'] = {None: 
@@ -1105,11 +1052,9 @@ class SipModel():
         # Second Stage
         st_model.StageCost[second_stage] = 'secondStageCost'
         st_model.StageVariables[second_stage].add('generation1')
-        st_model.StageVariables[second_stage].add('curtailment1')
         st_model.StageVariables[second_stage].add('branchFlow12_1')
         st_model.StageVariables[second_stage].add('branchFlow21_1')
         st_model.StageVariables[second_stage].add('generation2')
-        st_model.StageVariables[second_stage].add('curtailment2')
         st_model.StageVariables[second_stage].add('branchFlow12_2')
         st_model.StageVariables[second_stage].add('branchFlow21_2')
         st_model.StageVariables[second_stage].add('genNewCapacity2')
@@ -1249,22 +1194,20 @@ class SipModel():
         if include_om:
             cost = cost*(1 + model.omRate * ar)
         return cost
-
-
+                
+                
     def computeGenerationCost(self,model,g,phase):
-        '''compute NPV cost of generation (+ curtailment and CO2 emissions)
+        '''compute NPV cost of generation (+ CO2 emissions)
         
         This corresponds to secondStageCost in abstract model        
         '''
         ar = 1
         if phase == 1:
             gen = model.generation1
-            curt = model.curtailment1
             ar = annuityfactor(model.financeInterestrate,
                                model.stage2TimeDelta)
         elif phase==2:
             gen = model.generation2
-            curt = model.curtailment2
             ar = (
                 annuityfactor(model.financeInterestrate,model.financeYears)
                 -annuityfactor(model.financeInterestrate,model.stage2TimeDelta)
@@ -1272,7 +1215,6 @@ class SipModel():
         expr = sum(gen[g,t].value
                     *model.genCostAvg[g]*model.genCostProfile[g,t] 
                      for t in model.TIME)
-        expr += sum(curt[g,t].value*model.curtailmentCost for t in model.TIME if curt[g,t].value is not None)
         expr += sum(gen[g,t].value*
                             model.genTypeEmissionRate[model.genType[g]]*model.CO2price
                             for t in model.TIME)
@@ -1285,6 +1227,23 @@ class SipModel():
     def computeDemand(self,model,c,t):
         '''compute demand at specified load ant time'''
         return model.demandAvg[c]*model.demandProfile[c,t]
+    
+    
+    
+    def computeCurtailment(self, model, g, t, phase):
+        '''compute curtailment [MWh] per generator per hour'''
+        cur = 0
+        gen_max = 0
+        if phase == 1:
+            gen_max = model.genCapacity[g] + model.genNewCapacity1[g].value
+            cur = gen_max*model.genCapacityProfile[g,t] - model.generation1[g,t].value
+        elif phase == 2:
+            gen_max = (model.genCapacity[g] + model.genNewCapacity1[g].value
+                        +model.genNewCapacity2[g].value)
+            cur = gen_max*model.genCapacityProfile[g,t] - model.generation2[g,t].value
+        return cur
+        
+        
 
         
     def computeAreaEmissions(self,model,c, phase, cost=False):
@@ -1586,9 +1545,8 @@ class SipModel():
                 model.generation1[(j,t)].value for t in model.TIME])
             df_gen.loc[j,'Pmax1'] = np.max([
                 model.generation1[(j,t)].value for t in model.TIME])
-            if model.genCostAvg[j] == 0:
-                df_gen.loc[j,'curtailed_avg1'] = np.mean([
-                    model.curtailment1[(j,t)].value for t in model.TIME])
+            df_gen.loc[j,'curtailed_avg1'] = np.mean([
+                self.computeCurtailment(model,j,t,phase=1) for t in model.TIME])
             #Phase 2:
             df_gen.loc[j,'emission2'] = (model.genTypeEmissionRate[model.genType[j]]*sum(
                                         model.generation2[j,t].value for t in model.TIME)
@@ -1599,9 +1557,8 @@ class SipModel():
                 model.generation2[(j,t)].value for t in model.TIME])
             df_gen.loc[j,'Pmax2'] = np.max([
                 model.generation2[(j,t)].value for t in model.TIME])
-            if model.genCostAvg[j] == 0:
-                df_gen.loc[j,'curtailed_avg2'] = np.mean([
-                    model.curtailment2[(j,t)].value for t in model.TIME])
+            df_gen.loc[j,'curtailed_avg2'] = np.mean([
+                self.computeCurtailment(model,j,t,phase=2) for t in model.TIME])
                 
             if j in model.GEN_EXPAND1:                
                 df_gen.loc[j,'newCapacity'] = model.genNewCapacity1[j].value
