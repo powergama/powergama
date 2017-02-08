@@ -96,15 +96,20 @@ class GridData(object):
     def readGridData(self,nodes,ac_branches,dc_branches,generators,consumers):
         '''Read grid data from files into data variables'''
         
-        self.node = pd.read_csv(nodes)
-        self.branch = pd.read_csv(ac_branches)
+        self.node = pd.read_csv(nodes,
+                                dtype={'id':str, 'area':str})
+        self.branch = pd.read_csv(ac_branches,
+                                  dtype={'node_from':str,'node_to':str})
         if not dc_branches is None:
-            self.dcbranch = pd.read_csv(dc_branches)
+            self.dcbranch = pd.read_csv(dc_branches,
+                                        dtype={'node_from':str,'node_to':str})
         else:
             self.dcbranch = pd.DataFrame(
                 columns=self.keys_powergama['dcbranch'].keys())
-        self.generator = pd.read_csv(generators)
-        self.consumer = pd.read_csv(consumers)
+        self.generator = pd.read_csv(generators,
+                                     dtype={'node':str,'type':str})
+        self.consumer = pd.read_csv(consumers,
+                                    dtype={'node':str})
 
         self._checkGridDataFields(self.keys_powergama)
                 
