@@ -1217,12 +1217,14 @@ class SipModel():
         cur = 0
         gen_max = 0
         if phase == 1:
-            gen_max = model.genCapacity[g] + model.genNewCapacity1[g].value
-            cur = gen_max*model.genCapacityProfile[g,t] - model.generation1[g,t].value
-        elif phase == 2:
-            gen_max = (model.genCapacity[g] + model.genNewCapacity1[g].value
-                        +model.genNewCapacity2[g].value)
-            cur = gen_max*model.genCapacityProfile[g,t] - model.generation2[g,t].value
+            if g in model.GEN_EXPAND1:
+                gen_max = model.genCapacity[g] + model.genNewCapacity1[g].value
+                cur = gen_max*model.genCapacityProfile[g,t] - model.generation1[g,t].value
+        if phase == 2:
+            if g in model.GEN_EXPAND2:
+                gen_max = (model.genCapacity[g] + model.genNewCapacity1[g].value
+                            +model.genNewCapacity2[g].value)
+                cur = gen_max*model.genCapacityProfile[g,t] - model.generation2[g,t].value
         return cur
         
         
