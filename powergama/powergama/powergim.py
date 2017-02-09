@@ -73,7 +73,7 @@ class SipModel():
         
 
         # PARAMETERS #########################################################
-        model.samplefactor = pyo.Param(within=pyo.NonNegativeReals)
+        model.samplefactor = pyo.Param(model.TIME, within=pyo.NonNegativeReals)
         model.financeInterestrate = pyo.Param(within=pyo.Reals)
         model.financeYears = pyo.Param(within=pyo.Reals)
         model.omRate = pyo.Param(within=pyo.Reals)
@@ -421,11 +421,10 @@ class SipModel():
                 expr = 0
                 for n in model.NODE:
                     if model.nodeArea[n]==a:
-                        expr += sum(model.generation1[g,t]*model.genTypeEmissionRate[model.genType[g]] 
+                        expr += sum(model.generation1[g,t]*model.genTypeEmissionRate[model.genType[g]]*model.samplefactor[t]
                                     for t in model.TIME for g in model.GEN 
                                     if model.genNode[g]==n)
-                samplefactor = model.samplefactor
-                expr = (expr*samplefactor <= sum(model.emissionCap[c] 
+                expr = (expr <= sum(model.emissionCap[c] 
                     for c in model.LOAD if model.nodeArea[model.demNode[c]]==a))
             else:
                 expr = pyo.Constraint.Skip
@@ -435,11 +434,10 @@ class SipModel():
                 expr = 0
                 for n in model.NODE:
                     if model.nodeArea[n]==a:
-                        expr += sum(model.generation2[g,t]*model.genTypeEmissionRate[model.genType[g]] 
+                        expr += sum(model.generation2[g,t]*model.genTypeEmissionRate[model.genType[g]]*model.samplefactor[t] 
                                     for t in model.TIME for g in model.GEN 
                                     if model.genNode[g]==n)
-                samplefactor = model.samplefactor
-                expr = (expr*samplefactor <= sum(model.emissionCap[c] 
+                expr = (expr <= sum(model.emissionCap[c] 
                     for c in model.LOAD if model.nodeArea[model.demNode[c]]==a))
                 return expr
             else:
@@ -611,20 +609,18 @@ class SipModel():
             """Operational costs: cost of gen, load shed (NPV)"""
 
             # Operational costs phase 1 (if stage2DeltaTime>0)
-            opcost1 = sum(model.generation1[i,t]*(
+            opcost1 = sum(model.generation1[i,t]*model.samplefactor[t]*(
                             model.genCostAvg[i]*model.genCostProfile[i,t]
                             +model.genTypeEmissionRate[model.genType[i]]*model.CO2price)
                             for i in model.GEN for t in model.TIME)
-            opcost1 = model.samplefactor*opcost1
             opcost1 = opcost1*annuityfactor(model.financeInterestrate,
                                           model.stage2TimeDelta)
                                           
             # Operational costs phase 2 (disounted)
-            opcost2 = sum(model.generation2[i,t]*(
+            opcost2 = sum(model.generation2[i,t]*model.samplefactor[t]*(
                             model.genCostAvg[i]*model.genCostProfile[i,t]
                             +model.genTypeEmissionRate[model.genType[i]]*model.CO2price)
                             for i in model.GEN for t in model.TIME)         
-            opcost2 = model.samplefactor*opcost2
             opcost2 = opcost2*(annuityfactor(model.financeInterestrate,
                                model.financeYears)
                                -annuityfactor(model.financeInterestrate,
@@ -811,7 +807,12 @@ class SipModel():
         
         #Parameters:
         di['maxNewBranchNum'] = {None: maxNewBranchNum}
-        di['samplefactor'] = {None: self._HOURS_PER_YEAR/len(grid_data.timerange)}
+        di['samplefactor'] = {}
+        if hasattr(grid_data.profiles, 'frequency'):
+            di['samplefactor'] = grid_data.profiles['frequency']
+        else:
+            for t in grid_data.timerange:
+                di['samplefactor'][t] = self._HOURS_PER_YEAR/len(grid_data.timerange)
         di['nodeOffshore'] = {}
         di['nodeType'] = {}
         di['nodeExistingNumber'] = {}
@@ -1082,6 +1083,28 @@ class SipModel():
         st_model.ScenarioBasedData=False
                 
         return st_model
+        
+        
+    def computeBranchCongestionRent(self, model, b):
+        '''
+        Compute annual congestion rent for a given branch
+        '''
+        # TODO: use nodal price, not area price.
+        N1 = model.branchNodeFrom[b]
+        N2 = model.branchNodeTo[b]
+
+        area1 = model.nodeArea[N1]
+        area2 = model.nodeArea[N2]
+        
+        flow = []
+        deltaP = []
+        
+        for t in model.TIME:
+            deltaP.append(abs(self.computeAreaPrice(model, area1, t) 
+                         - self.computeAreaPrice(model, area2, t))*model.sampleFrequency[t])
+            flow.append(model.branchFlow21[b,t].value + model.branchFlow12[b,t].value)
+        
+        return sum(deltaP[i]*flow[i] for i in range(len(deltaP)))
 
     def computeCostBranch(self,model,b,include_om=False):
         '''Investment cost of single branch
@@ -1194,15 +1217,14 @@ class SipModel():
                 annuityfactor(model.financeInterestrate,model.financeYears)
                 -annuityfactor(model.financeInterestrate,model.stage2TimeDelta)
                 )
-        expr = sum(gen[g,t].value
-                    *model.genCostAvg[g]*model.genCostProfile[g,t] 
+        expr = sum(gen[g,t].value*model.samplefactor[t]*
+                    model.genCostAvg[g]*model.genCostProfile[g,t] 
                      for t in model.TIME)
-        expr += sum(gen[g,t].value*
+        expr += sum(gen[g,t].value*model.samplefactor[t]*
                             model.genTypeEmissionRate[model.genType[g]]*model.CO2price
                             for t in model.TIME)
         # lifetime cost
-        samplefactor = model.samplefactor.value
-        expr = expr*samplefactor*ar
+        expr = expr*ar
         return expr
      
                 
@@ -1235,7 +1257,6 @@ class SipModel():
         # TODO: ensure that all nodes are mapped to a country/load
         n = model.demNode[c]
         expr = 0
-        samplefactor = model.samplefactor.value
         if phase==1:
             gen=model.generation1
             ar = annuityfactor(model.financeInterestrate,model.stage2TimeDelta)
@@ -1246,11 +1267,9 @@ class SipModel():
                 
         for g in model.GEN:
             if model.genNode[g]==n:
-                expr += sum(gen[g,t].value*
+                expr += sum(gen[g,t].value*model.samplefactor[t]*
                             model.genTypeEmissionRate[model.genType[g]]
                             for t in model.TIME)
-                    
-        expr = expr*samplefactor
         if cost:
             expr = expr * model.CO2price * ar
         return expr
@@ -1446,7 +1465,6 @@ class SipModel():
 #                                        'emissions','emissionCap', 'emission_cost',
 #                                        'price_avg','RES%dem','RES%gen', 'IM', 'EX',
 #                                        'CS', 'PS', 'CR', 'CAPEX', 'Welfare'])
-        samplefactor=model.samplefactor.value
         
         for j in model.BRANCH:
             df_branches.loc[j,'num'] = j
@@ -1473,8 +1491,8 @@ class SipModel():
             df_branches.loc[j,'cost'] = self.computeCostBranch(model,j)
             df_branches.loc[j,'cost_withOM'] = self.computeCostBranch(
                         model,j,include_om=True)
-            df_branches.loc[j,'congestion_rent'] = self.computeCostBranch(
-                        model,j)
+            df_branches.loc[j,'congestion_rent'] = self.computeBranchCongestionRent(
+                        model,j)*annuityfactor(0.05,30)
             # Phase 1
             df_branches.loc[j,'flow12avg_1'] = np.mean([
                 model.branchFlow12_1[(j,t)].value for t in model.TIME])
@@ -1521,8 +1539,7 @@ class SipModel():
             df_gen.loc[j,'emission_rate'] = model.genTypeEmissionRate[model.genType[j]]
             #Phase 1:
             df_gen.loc[j,'emission1'] = (model.genTypeEmissionRate[model.genType[j]]*sum(
-                                        model.generation1[j,t].value for t in model.TIME)
-                                        *samplefactor)
+                model.generation1[j,t].value*model.samplefactor[t] for t in model.TIME))
             df_gen.loc[j,'Pavg1'] = np.mean([
                 model.generation1[(j,t)].value for t in model.TIME])
             df_gen.loc[j,'Pmin1'] = np.min([
@@ -1533,8 +1550,7 @@ class SipModel():
                 self.computeCurtailment(model,j,t,phase=1) for t in model.TIME])
             #Phase 2:
             df_gen.loc[j,'emission2'] = (model.genTypeEmissionRate[model.genType[j]]*sum(
-                                        model.generation2[j,t].value for t in model.TIME)
-                                        *samplefactor)
+                model.generation2[j,t].value*model.samplefactor[t] for t in model.TIME))
             df_gen.loc[j,'Pavg2'] = np.mean([
                 model.generation2[(j,t)].value for t in model.TIME])
             df_gen.loc[j,'Pmin2'] = np.min([
@@ -1584,18 +1600,18 @@ class SipModel():
                                                             shareof='dem')
             df_load.loc[j,_n('RES%gen',phase)] = self.computeAreaRES(model,j,phase=phase,
                                                             shareof='gen')
-            df_load.loc[j,_n('Welfare',phase)] = sum(self.computeAreaWelfare(model,j,t,phase=phase)['W']
-                                            for t in model.TIME)*samplefactor
-            df_load.loc[j,_n('PS',phase)] = sum(self.computeAreaWelfare(model,j,t,phase=phase)['PS']
-                                            for t in model.TIME)*samplefactor
-            df_load.loc[j,_n('CS',phase)] = sum(self.computeAreaWelfare(model,j,t,phase=phase)['CS']
-                                            for t in model.TIME)*samplefactor
-            df_load.loc[j,_n('CR',phase)] = sum(self.computeAreaWelfare(model,j,t,phase=phase)['CR']
-                                            for t in model.TIME)*samplefactor
-            df_load.loc[j,_n('IM',phase)] = sum(self.computeAreaWelfare(model,j,t,phase=phase)['IM']
-                                            for t in model.TIME)*samplefactor 
-            df_load.loc[j,_n('EX',phase)] = sum(self.computeAreaWelfare(model,j,t,phase=phase)['X']
-                                            for t in model.TIME)*samplefactor 
+            df_load.loc[j,_n('Welfare',phase)] = sum(self.computeAreaWelfare(model,j,t,phase=phase)['W']*model.samplefactor[t]
+                                            for t in model.TIME)
+            df_load.loc[j,_n('PS',phase)] = sum(self.computeAreaWelfare(model,j,t,phase=phase)['PS']*model.samplefactor[t]
+                                            for t in model.TIME)
+            df_load.loc[j,_n('CS',phase)] = sum(self.computeAreaWelfare(model,j,t,phase=phase)['CS']*model.samplefactor[t]
+                                            for t in model.TIME)
+            df_load.loc[j,_n('CR',phase)] = sum(self.computeAreaWelfare(model,j,t,phase=phase)['CR']*model.samplefactor[t]
+                                            for t in model.TIME)
+            df_load.loc[j,_n('IM',phase)] = sum(self.computeAreaWelfare(model,j,t,phase=phase)['IM']*model.samplefactor[t]
+                                            for t in model.TIME)
+            df_load.loc[j,_n('EX',phase)] = sum(self.computeAreaWelfare(model,j,t,phase=phase)['X']*model.samplefactor[t]
+                                            for t in model.TIME)
             df_load.loc[j,_n('CAPEX1',phase)] = self.computeAreaCostBranch(model,j,
                                             include_om=False)
         
@@ -1733,6 +1749,11 @@ class SipModel():
         grid_res.node = grid_res.node[grid_res.node['existing'] 
             > self._NUMERICAL_THRESHOLD_ZERO]
         return grid_res
+    
+    def loadResults(self, filename):
+        '''load results from excel into pandas dataframe'''
+        df_res = pd.read_excel(filename)
+        return df_res
         
         
         
@@ -2019,3 +2040,191 @@ def sampleProfileData(data, samplesize, sampling_method):
         else:
             raise Exception("Unknown sampling method")                     
         return
+        
+        
+        
+        
+class CostBenefit(object):
+    '''
+    Experimental class for cost-benefit calculations. 
+    
+    Currently including allocation schemes based on "cooperative game theory"
+    '''
+
+    
+    def __init__(self):
+        """Collect value-functions for each player in the expansion-game
+        
+        Parameters
+        ----------
+        
+        
+        Creat CostBenefit object:
+        """
+        self.players = None
+        self.coalitions = None
+        self.valueFunction = None
+        self.payoff = None
+
+    def power_set(self,List):
+        """
+        function to return the powerset of a list, i.e. all possible subsets ranging
+        from length of one, to the length of the larger list
+        """
+        from itertools import combinations
+        
+        subs = [list(j) for i in range(len(List)) for j in combinations(List, i+1)]
+        return subs  
+                
+    def nCr(self,n,r):
+        '''
+        calculate the binomial coefficient, i.e. how many different possible 
+        subsets can be made from the larger set n
+        '''
+        import math
+        f = math.factorial
+        return f(n) / f(r) / f(n-r)
+        
+    
+    def gameSetup(self, grid_data):    
+        self.players = grid_data.node.area.unique().tolist()
+        self.coalitions = self.power_set(self.players)
+        
+        
+    def getBinaryCombinations(self,num):
+        '''
+        Returns a sequence of different combinations 1/0 for a number of
+        decision variables. E.g. three cable investments;
+        (0,0,0), (1,0,0), (0,1,0), and so on. 
+        '''
+        import itertools
+        combinations = list(itertools.product([0,1], repeat=num))
+        return combinations
+
+        
+    def gameShapleyValue(self,player_list, values):
+        '''compute the Shapley Value from cooperative game theory
+       
+       Parameters:
+        ===========
+        player_list: list of all players in the game
+        values: characteristic function for each subset of N players, i.e. 
+                possible coaltions/cooperations among players.
+                
+        Returns the Shapley value, i.e. a fair cost/benefit allocation based
+        on the average marginal contribution from each player. 
+        
+        '''
+                    
+        if type(values) is not dict:
+            raise TypeError("characteristic function must be a dictionary")
+        for key in values:
+            if len(str(key)) == 1 and type(key) is not tuple:
+                values[(key,)] = values.pop(key)
+            elif type(key) is not tuple:
+                raise TypeError("key must be a tuple")
+        for key in values:
+            sortedkey = tuple(sorted(list(key)))
+            values[sortedkey] = values.pop(key)
+    
+        player_list = max(values.keys(), key=lambda key: len(key))
+        for coalition in self.power_set(player_list):
+            if tuple(sorted(list(coalition))) not in sorted(values.keys()):
+                raise ValueError("characteristic function must be the power set")
+        
+        payoff_vector = {}
+        n = len(player_list)
+        for player in player_list:
+            weighted_contribution = 0
+            for coalition in self.power_set(player_list):
+                if coalition:  # If non-empty
+                    k = len(coalition)
+                    weight = 1/(self.nCr(n,k)*k)
+                    t = tuple(p for p in coalition if p != player)
+                    weighted_contribution += weight * (values[tuple(coalition)]
+                                                       - values[t])
+            payoff_vector[player] = weighted_contribution
+    
+        return payoff_vector
+            
+    def gameIsMonotone(self, values):        
+        '''
+        Returns true if the game/valueFunction is monotonic.
+        A game G = (N, v) is monotonic if it satisfies the value function
+        of a subset is less or equal then the value function from its
+        union set:
+        v(C_2) \geq v(C_1) for all C_1 \subseteq C_2
+        '''
+        import itertools
+        return not any([set(p1) <= set(p2) and values[p1] > values[p2]
+            for p1, p2 in itertools.permutations(values.keys(), 2)])
+    
+        
+    def gameIsSuperadditive(self, values):
+        '''
+        Returns true if the game/valueFunction is superadditive.
+        A characteristic function game G = (N, v) is superadditive
+        if it the sum of two coalitions/subsets gives a larger value than the 
+        individual sum:
+        v(C_1 \cup C_2) \geq v(C_1) +  v(C_2) for
+        all C_1, C_2 \subseteq 2^{\Omega} such that C_1 \cap C_2
+        = \emptyset.
+        '''
+        import itertools
+        sets = values.keys()
+        for p1, p2 in itertools.combinations(sets, 2):
+            if not (set(p1) & set(p2)):
+                union = tuple(sorted(set(p1) | set(p2)))
+                if values[union] < values[p1] + values[p2]:
+                    return False
+        return True            
+    
+    def gamePayoffIsEfficient(self, player_list, values, payoff_vector):
+        '''
+        Return `true if the payoff vector is efficient. A payoff vector v is 
+        efficient if the sum of payments equal the total value provided by a 
+        set of players. 
+        \sum_{i=1}^N \lambda_i = v(\Omega);
+        '''
+        pl = tuple(sorted(list(player_list)))
+        return sum(payoff_vector.values()) == values[pl]
+    
+    def gamePayoffHasNullplayer(self, player_list, values, payoff_vector):
+        '''
+        Return true if the payoff vector possesses the nullplayer property.
+        A payoff vector v has the nullplayer property if there exists
+        an i such that v(C \cup i) = v(C) for all C \in 2^{\Omega}
+        then, \lambda_i = 0. In other words: if a player does not
+        contribute to any coalition then that player should receive no payoff.
+        '''
+        for player in player_list:
+            results = []
+            for coalit in values:
+                if player in coalit:
+                    t = tuple(sorted(set(coalit) - {player}))
+                    results.append(values[coalit] == values[t])
+            if all(results) and payoff_vector[player] != 0:
+                return False
+        return True
+    
+    def gamePayoffIsSymmetric(self, values, payoff_vector):
+        '''
+        Returns true if the resulting payoff vector possesses the symmetry property.
+        A payoff vector possesses the symmetry property if players with equal
+        marginal contribution receives the same payoff:
+        v(C \cup i) = v(C \cup j) for all
+        C \in 2^{\Omega} \setminus \{i,j\}, then x_i = x_j.
+        '''
+        import itertools
+        sets = values.keys()
+        element = [i for i in sets if len(i) == 1]
+        for c1, c2 in itertools.combinations(element, 2):
+            results = []
+            for m in sets:
+                junion = tuple(sorted(set(c1) | set(m)))
+                kunion = tuple(sorted(set(c2) | set(m)))
+                results.append(values[junion] == values[kunion])
+            if all(results) and payoff_vector[c1[0]] != payoff_vector[c2[0]]:
+                return False
+        return True
+        
