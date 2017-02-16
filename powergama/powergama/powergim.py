@@ -51,10 +51,6 @@ class SipModel():
         model.TIME = pyo.Set()
         model.STAGE = pyo.Set()
         
-        #TODO: could simplify if we had a set for phase/stage - instead of
-        # having double set of variables, e.g. generation1 and generation2
-        #generation(g,t,stage)
-        
         #A set for each stage i.e. a list with two sets
         model.NODE_EXPAND1 = pyo.Set()
         model.NODE_EXPAND2 = pyo.Set()
@@ -106,7 +102,9 @@ class SipModel():
         model.branchExistingCapacity2 = pyo.Param(model.BRANCH, 
                                                  within=pyo.NonNegativeReals)
         model.branchExpand = pyo.Param(model.BRANCH,
-                                       within=pyo.NonNegativeIntegers)         
+                                       within=pyo.Binary)  
+        model.branchExpand2 = pyo.Param(model.BRANCH,
+                                       within=pyo.Binary)
         model.branchDistance = pyo.Param(model.BRANCH, 
                                          within=pyo.NonNegativeReals)                                             
         model.branchType = pyo.Param(model.BRANCH,within=model.BRANCHTYPE)
@@ -130,7 +128,9 @@ class SipModel():
         model.genPAvg = pyo.Param(model.GEN,within=pyo.Reals)
         model.genType = pyo.Param(model.GEN, within=model.GENTYPE)
         model.genExpand = pyo.Param(model.GEN, 
-                                    within=pyo.NonNegativeIntegers)
+                                    within=pyo.Binary)
+        model.genExpand2 = pyo.Param(model.GEN, 
+                                    within=pyo.Binary)
         model.genTypeEmissionRate = pyo.Param(model.GENTYPE, within=pyo.Reals)
         
         #helpers:
@@ -152,14 +152,20 @@ class SipModel():
     
         # investment: new branch capacity
         def branchNewCapacity_bounds(model,j,h):
-            return (0,model.branchMaxNewCapacity[j])
+            if h>1:
+                return (0,model.branchMaxNewCapacity[j]*model.branchExpand2[j])
+            else:
+                return (0,model.branchMaxNewCapacity[j]*model.branchExpand[j])
         model.branchNewCapacity = pyo.Var(model.BRANCH, model.STAGE, 
                                           within = pyo.NonNegativeReals,
                                           bounds = branchNewCapacity_bounds)                                  
 
         # investment: new branch cables
         def branchNewCables_bounds(model,j,h):
-            return (0,model.maxNewBranchNum)                                  
+            if h>1:
+                return (0,model.maxNewBranchNum*model.branchExpand2[j])
+            else:
+                return (0,model.maxNewBranchNum*model.branchExpand[j])                                  
         model.branchNewCables = pyo.Var(model.BRANCH, model.STAGE, 
                                         within = pyo.NonNegativeIntegers,
                                         bounds = branchNewCables_bounds)
@@ -171,16 +177,25 @@ class SipModel():
         
         # investment: generation capacity
         def genNewCapacity_bounds(model,g,h):
-            return (0,model.genNewCapMax[g])
+            if h>1:
+                return (0,model.genNewCapMax[g]*model.genExpand2[g])
+            else:
+                return (0,model.genNewCapMax[g]*model.genExpand[g])
         model.genNewCapacity = pyo.Var(model.GEN, model.STAGE,
                                        within = pyo.NonNegativeReals,
                                        bounds = genNewCapacity_bounds)
 
         
-        # branch power flow (phase 1 and phase 2)
+        # branch power flow (also given by constraints??)
         def branchFlow_bounds(model,j,t,h):
-            ub = (model.branchExistingCapacity[j]+
-                    2*branchNewCapacity_bounds(model,j,h)[1])
+            if h == 1:
+                ub = (model.branchExistingCapacity[j]+
+                        branchNewCapacity_bounds(model,j,h)[1])
+            elif h == 2:
+                ub = (model.branchExistingCapacity[j]+
+                        model.branchExistingCapacity2[j]+
+                        branchNewCapacity_bounds(model,j,h-1)[1]+
+                        branchNewCapacity_bounds(model,j,h)[1])
             return (0,ub)
         model.branchFlow12 = pyo.Var(model.BRANCH, model.TIME,model.STAGE, 
                                      within = pyo.NonNegativeReals,
@@ -193,11 +208,16 @@ class SipModel():
         # generator output (bounds set by constraint)
         model.generation = pyo.Var(model.GEN, model.TIME,model.STAGE, 
                                    within = pyo.NonNegativeReals)
-
-
-        # load shedding (cf gen)
+        # load shedding
+        def loadShed_bounds(model, n, t, h):
+            ub = 0
+            for c in model.LOAD:
+                if model.demNode[c]==n:
+                    ub += model.demandAvg[c]*model.demandProfile[c,t]
+            return (0,ub)
         model.loadShed = pyo.Var(model.NODE, model.TIME, model.STAGE,
-                                 domain = pyo.NonNegativeReals) 
+                                 domain = pyo.NonNegativeReals,
+                                 bounds = loadShed_bounds) 
         
         
         
@@ -206,6 +226,8 @@ class SipModel():
         # Power flow limitations (in both directions)                
         def maxflow12_rule(model,j,t,h):
             cap = model.branchExistingCapacity[j]
+            if h >1:
+                cap += model.branchExistingCapacity2[j]
             for x in range(h):
                 cap += model.branchNewCapacity[j,x+1]
             expr = (model.branchFlow12[j,t,h] <= cap)
@@ -213,6 +235,8 @@ class SipModel():
             
         def maxflow21_rule(model,j,t,h):
             cap = model.branchExistingCapacity[j]
+            if h >1:
+                cap += model.branchExistingCapacity2[j]
             for x in range(h):
                 cap += model.branchNewCapacity[j,x+1]
             expr = (model.branchFlow21[j,t,h] <= cap)
@@ -230,7 +254,6 @@ class SipModel():
                     <= model.branchtypeMaxCapacity[typ]
                         *model.branchNewCables[j,h])
             return expr
-
         model.cmaxNewCapacity = pyo.Constraint(model.BRANCH, model.STAGE,
                                                rule=maxNewCap_rule)
 
@@ -248,19 +271,19 @@ class SipModel():
             if ((type(expr) is bool) and (expr==True)):
                 expr = pyo.Constraint.Skip
             return expr
-        
         model.cNewNodes = pyo.Constraint(model.NODE,model.STAGE,
                                           rule=newNodes_rule)
           
         # Generator output limitations
         def maxPgen_rule(model,g,t,h):
             cap = model.genCapacity[g]
+            if h>1:
+                cap += model.genCapacity2[g]
             for x in range(h):
                 cap += model.genNewCapacity[g,x+1]
             expr = model.generation[g,t,h] <= (
                 model.genCapacityProfile[g,t] * cap)
             return expr
-
         model.cMaxPgen = pyo.Constraint(model.GEN,model.TIME,model.STAGE,
                                         rule=maxPgen_rule)
         
@@ -268,6 +291,8 @@ class SipModel():
         # (e.g. for hydro with storage)
         def maxEnergy_rule(model,g,h):
             cap = model.genCapacity[g]
+            if h>1:
+                cap += model.genCapacity2[g]
             for x in range(h):
                 cap += model.genNewCapacity[g,x+1]
             if model.genPAvg[g]>0:
@@ -276,7 +301,6 @@ class SipModel():
             else:
                 expr = pyo.Constraint.Skip
             return expr
-
         model.cMaxEnergy = pyo.Constraint(model.GEN,model.STAGE,
                                                rule=maxEnergy_rule)
 
@@ -295,8 +319,7 @@ class SipModel():
                     for c in model.LOAD if model.nodeArea[model.demNode[c]]==a))
             else:
                 expr = pyo.Constraint.Skip
-            return expr
-                
+            return expr 
         model.cEmissionCap = pyo.Constraint(model.AREA,model.STAGE,
                                              rule=emissionCap_rule)
 
@@ -304,7 +327,6 @@ class SipModel():
         # Power balance in nodes : gen+demand+flow into node=0
         def powerbalance_rule(model,n,t,h):
             expr = 0
-
             # flow of power into node (subtrating losses)
             for j in model.BRANCH:
                 if model.branchNodeFrom[j]==n:
@@ -342,7 +364,6 @@ class SipModel():
                 # Trivial constraint
                 expr = pyo.Constraint.Skip
             return expr
-            
         model.cPowerbalance = pyo.Constraint(model.NODE,model.TIME,model.STAGE,
                                              rule=powerbalance_rule)
         
@@ -419,53 +440,66 @@ class SipModel():
     
         def secondStageCost_rule(model):
             """Operational costs: cost of gen, load shed (NPV)"""
-            stage=2
-
-            # Operational costs phase 1 (if stage2DeltaTime>0)
-            opcost1 = sum(model.generation[i,t,stage-1]*model.samplefactor[t]*(
+            opcost1 = 0
+            opcost2 = 0
+            investment = 0
+            omcost = 0
+            if len(model.STAGE)<2:
+                stage = 1
+                opcost1 = sum(model.generation[i,t,stage]*model.samplefactor[t]*(
                             model.genCostAvg[i]*model.genCostProfile[i,t]
                             +model.genTypeEmissionRate[model.genType[i]]*model.CO2price)
                             for i in model.GEN for t in model.TIME)
-            opcost1 += sum(model.loadShed[n,t,stage-1]*model.VOLL
-                            for n in model.NODE for t in model.TIME)
-            opcost1 = opcost1*annuityfactor(model.financeInterestrate,
-                                          model.stage2TimeDelta)
-                                          
-            # Operational costs phase 2 (disounted)
-            opcost2 = sum(model.generation[i,t,stage]*model.samplefactor[t]*(
-                            model.genCostAvg[i]*model.genCostProfile[i,t]
-                            +model.genTypeEmissionRate[model.genType[i]]*model.CO2price)
-                            for i in model.GEN for t in model.TIME)    
-            opcost2 += sum(model.loadShed[n,t,stage]*model.VOLL
-                            for n in model.NODE for t in model.TIME)
-            opcost2 = opcost2*(annuityfactor(model.financeInterestrate,
-                               model.financeYears)
-                               -annuityfactor(model.financeInterestrate,
-                                  model.stage2TimeDelta)
-                                  )
-            
-            # 2nd stage investment costs
-            investment = 0
-            for b in model.BRANCH:
-                investment += costBranch(model,b,
-                                   model.branchNewCables,
-                                   model.branchNewCapacity,stage)
-            for n in model.NODE:
-                investment += costNode(model,n,model.newNodes,stage)            
-            for g in model.GEN:
-                investment += costGen(model, g,model.genNewCapacity,stage)
-            #discount back to t=0?
-            investment = investment*(1/((1+model.financeInterestrate)**model.stage2TimeDelta))
-
-            # add O&M costs (NPV of lifetime costs)
-            omcost = investment*model.omRate*(
-                annuityfactor(model.financeInterestrate,model.financeYears)
-                -annuityfactor(model.financeInterestrate,model.stage2TimeDelta))
-            
-            #subtract estimated salvage value of investments with remaining lifetime
-            investment -= investment*(model.stage2TimeDelta/model.financeYears)*(
-                1/((1+model.financeInterestrate)**(model.financeYears-model.stage2TimeDelta)))
+                opcost1 += sum(model.loadShed[n,t,stage]*model.VOLL
+                                for n in model.NODE for t in model.TIME)
+                opcost1 = opcost1*annuityfactor(model.financeInterestrate,
+                                              model.financeYears)
+            else:
+                stage=2
+                # Operational costs phase 1 (if stage2DeltaTime>0)
+                opcost1 = sum(model.generation[i,t,stage-1]*model.samplefactor[t]*(
+                                model.genCostAvg[i]*model.genCostProfile[i,t]
+                                +model.genTypeEmissionRate[model.genType[i]]*model.CO2price)
+                                for i in model.GEN for t in model.TIME)
+                opcost1 += sum(model.loadShed[n,t,stage-1]*model.VOLL
+                                for n in model.NODE for t in model.TIME)
+                opcost1 = opcost1*annuityfactor(model.financeInterestrate,
+                                              model.stage2TimeDelta)
+                                              
+                # Operational costs phase 2 (disounted)
+                opcost2 = sum(model.generation[i,t,stage]*model.samplefactor[t]*(
+                                model.genCostAvg[i]*model.genCostProfile[i,t]
+                                +model.genTypeEmissionRate[model.genType[i]]*model.CO2price)
+                                for i in model.GEN for t in model.TIME)    
+                opcost2 += sum(model.loadShed[n,t,stage]*model.VOLL
+                                for n in model.NODE for t in model.TIME)
+                opcost2 = opcost2*(annuityfactor(model.financeInterestrate,
+                                   model.financeYears)
+                                   -annuityfactor(model.financeInterestrate,
+                                      model.stage2TimeDelta)
+                                      )
                 
+                # 2nd stage investment costs
+                for b in model.BRANCH:
+                    investment += costBranch(model,b,
+                                       model.branchNewCables,
+                                       model.branchNewCapacity,stage)
+                for n in model.NODE:
+                    investment += costNode(model,n,model.newNodes,stage)            
+                for g in model.GEN:
+                    investment += costGen(model, g,model.genNewCapacity,stage)
+                #discount back to t=0?
+                investment = investment*(1/((1+model.financeInterestrate)**model.stage2TimeDelta))
+    
+                # add O&M costs (NPV of lifetime costs)
+                omcost = investment*model.omRate*(
+                    annuityfactor(model.financeInterestrate,model.financeYears)
+                    -annuityfactor(model.financeInterestrate,model.stage2TimeDelta))
+                
+                #subtract estimated salvage value of investments with remaining lifetime
+                investment -= investment*(model.stage2TimeDelta/model.financeYears)*(
+                    1/((1+model.financeInterestrate)**(model.financeYears-model.stage2TimeDelta)))
+                    
             expr = opcost1 + opcost2 + investment + omcost         
             return expr
         model.secondStageCost = pyo.Expression(rule=secondStageCost_rule)
@@ -548,7 +582,7 @@ class SipModel():
         di['LOAD'] = {None: grid_data.consumer.index.tolist() }
         di['AREA'] = {None: grid_data.getAllAreas() }
         di['TIME'] = {None: grid_data.timerange}
-        di['STAGE'] = {None: grid_data.branch.expand[grid_data.branch['expand']>0].unique().tolist()}
+        #di['STAGE'] = {None: grid_data.branch.expand[grid_data.branch['expand']>0].unique().tolist()}
         
         br_expand1 = grid_data.branch[
                         grid_data.branch['expand']==1].index.tolist()
@@ -616,6 +650,7 @@ class SipModel():
         di['branchExistingCapacity'] = {}
         di['branchExistingCapacity2'] = {}
         di['branchExpand'] = {}
+        di['branchExpand2'] = {}
         di['branchDistance'] = {}
         di['branchType'] = {}
         di['branchCostScale'] = {}
@@ -633,6 +668,7 @@ class SipModel():
             else:
                 di['branchMaxNewCapacity'][k] = maxNewBranchCap
             di['branchExpand'][k] = row['expand']
+            di['branchExpand2'][k] = row['expand2']
             if row['distance'] >= 0:
                 di['branchDistance'][k] = row['distance']
             else:
@@ -652,6 +688,7 @@ class SipModel():
         di['genCostProfile'] = {}
         di['genPAvg'] = {}
         di['genExpand'] = {}
+        di['genExpand2'] = {}
         di['genNewCapMax'] = {}
         di['genType'] = {}
         di['genCostScale'] = {}
@@ -662,6 +699,7 @@ class SipModel():
             di['genCostAvg'][k] = row['fuelcost']
             di['genPAvg'][k] = row['pavg']
             di['genExpand'][k] = row['expand']
+            di['genExpand2'][k] = row['expand2']
             di['genNewCapMax'][k] = row['p_maxNew']
             di['genType'][k] = row['type']
             di['genCostScale'][k] = row['cost_scaling']
@@ -738,6 +776,8 @@ class SipModel():
                 float(i.attrib['VOLL'])}
             di['stage2TimeDelta'] = {None: 
                 float(i.attrib['stage2TimeDelta'])}
+            di['STAGE'] = {None: 
+                list(range(1,float(i.attrib['stage2TimeDelta'])+1))}
 
         return {'powergim':di}
 
