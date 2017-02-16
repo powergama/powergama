@@ -368,7 +368,7 @@ class SipModel():
                                              rule=powerbalance_rule)
         
         # COST PARAMETERS ############
-        def costBranch(model,b,var_num,var_cap,stage):
+        def costBranch(model,b,var_num,var_cap, stage):
             b_cost = 0
             typ = model.branchType[b]
             b_cost += (model.branchtypeCost[typ,'B']
@@ -777,7 +777,7 @@ class SipModel():
             di['stage2TimeDelta'] = {None: 
                 float(i.attrib['stage2TimeDelta'])}
             di['STAGE'] = {None: 
-                list(range(1,float(i.attrib['stage2TimeDelta'])+1))}
+                list(range(1,int(i.attrib['stages'])+1))}
 
         return {'powergim':di}
 
