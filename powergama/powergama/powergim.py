@@ -372,8 +372,14 @@ class SipModel():
             cap = model.genCapacity[g]
             if g in model.GEN_EXPAND1:
                 cap += model.genNewCapacity1[g]
-            expr = model.generation1[g,t] <= (
-                model.genCapacityProfile[g,t] * cap)
+            if model.genCostAvg[g] == 0:
+                # TODO: Make this optional
+                # ouput from zero cost generators must be equal to available power
+                expr = model.generation1[g,t] == (
+                    model.genCapacityProfile[g,t] * cap)
+            else:
+                expr = model.generation1[g,t] <= (
+                    model.genCapacityProfile[g,t] * cap)
             return expr
         
         # phase 2
@@ -383,8 +389,14 @@ class SipModel():
                 cap += model.genNewCapacity1[g]
             if g in model.GEN_EXPAND2:
                 cap += model.genNewCapacity2[g]
-            expr = model.generation2[g,t] <= (
-                model.genCapacityProfile[g,t] * cap)
+            if model.genCostAvg[g] == 0:
+                # TODO: Make this optional
+                # ouput from zero cost generators must be equal to available power
+                expr = model.generation2[g,t] == (
+                    model.genCapacityProfile[g,t] * cap)
+            else:
+                expr = model.generation2[g,t] <= (
+                    model.genCapacityProfile[g,t] * cap)
             return expr
             
 
@@ -1082,8 +1094,9 @@ class SipModel():
         ----------
         num_scenarios : int
             number of scenarios. Each with the same probability
-        probabilities : list of int
-            probabilities of each scenario (must sum to 1)
+        probabilities : list of float
+            probabilities of each scenario (must sum to 1). Number of elements
+            determine number of scenarios
         
         Returns
         -------
@@ -1094,19 +1107,22 @@ class SipModel():
         '''
         
         if probabilities is None:
-            st_model = tsm.CreateConcreteTwoStageScenarioTreeModel(
-                                num_scenarios)
-        else:
-            G = networkx.DiGraph() 
-            G.add_node("root")
-            for i in range(len(probabilities)):
-                G.add_edge("root","Scenario{}".format(i+1),
-                           probability=probabilities[i])
-            stage_names=['Stage1','Stage2']
-    
-            st_model = tsm.ScenarioTreeModelFromNetworkX(G,
-                             edge_probability_attribute="probability",
-                             stage_names=stage_names)
+            # equal probability:
+            probabilities = [1/num_scenarios]*num_scenarios
+        #if probabilities is None:
+        #    st_model = tsm.CreateConcreteTwoStageScenarioTreeModel(
+        #                        num_scenarios)
+
+        G = networkx.DiGraph() 
+        G.add_node("root")
+        for i in range(len(probabilities)):
+            G.add_edge("root","Scenario{}".format(i+1),
+                       probability=probabilities[i])
+        stage_names=['Stage1','Stage2']
+
+        st_model = tsm.ScenarioTreeModelFromNetworkX(G,
+                         edge_probability_attribute="probability",
+                         stage_names=stage_names)
             
     
         first_stage = st_model.Stages.first()
@@ -1143,7 +1159,9 @@ class SipModel():
         
         corresponds to  firstStageCost in abstract model'''
         
-        ar = 1
+        ar = 1.0
+        salvagefactor=0
+        discount_t0 = 1.0
         if b in model.BRANCH_EXPAND1:
             br_num = model.branchNewCables1[b].value
             br_cap = model.branchNewCapacity1[b].value
@@ -1154,6 +1172,12 @@ class SipModel():
             ar = (annuityfactor(model.financeInterestrate,model.financeYears)
                   -annuityfactor(model.financeInterestrate,
                                  model.stage2TimeDelta))
+            #subtract estimated salvage value of investments with remaining lifetime
+            salvagefactor = (model.stage2TimeDelta/model.financeYears)*(
+                1/((1+model.financeInterestrate)
+                    **(model.financeYears-model.stage2TimeDelta)))
+            discount_t0 = (1/((1+model.financeInterestrate)
+                            **model.stage2TimeDelta))
         else:
             br_num=0
             br_cap=0
@@ -1176,10 +1200,18 @@ class SipModel():
             b_cost += (1-N)*(model.branchtypeCost[typ,'CL']*br_num
                         +model.branchtypeCost[typ,'CLp']*br_cap)
     
-        cost = model.branchCostScale[b]*b_cost
+        cost = model.branchCostScale[b]*b_cost        
         
+        # discount  back to t=0        
+        cost = cost*discount_t0
+
+        # add O&M        
+        omcost = 0     
         if include_om:
-            cost = cost*(1 + model.omRate * ar)
+            omcost = model.omRate * cost * ar
+        
+        # subtract salvage value
+        cost = cost*(1-salvagefactor) + omcost
         return cost
 
     def computeCostNode(self,model,n,include_om=False):
@@ -1190,7 +1222,9 @@ class SipModel():
         # node may be expanded in stage 1 or stage 2, but will never be 
         # expanded in both
         
-        ar = 1
+        ar = 1.0
+        salvagefactor=0
+        discount_t0=1.0
         n_num = 0
         if n in model.NODE_EXPAND1:
             n_num = model.newNodes1[n].value
@@ -1202,13 +1236,27 @@ class SipModel():
             ar = (annuityfactor(model.financeInterestrate,model.financeYears)
                   -annuityfactor(model.financeInterestrate,
                                  model.stage2TimeDelta))
+            salvagefactor = (model.stage2TimeDelta/model.financeYears)*(
+                1/((1+model.financeInterestrate)
+                    **(model.financeYears-model.stage2TimeDelta)))
+            discount_t0 = (1/((1+model.financeInterestrate)
+                            **model.stage2TimeDelta))
         n_cost = 0
         N = model.nodeOffshore[n]
         n_cost += N*(model.nodetypeCost[model.nodeType[n],'S']*n_num)
         n_cost += (1-N)*(model.nodetypeCost[model.nodeType[n],'L']*n_num)
         cost = model.nodeCostScale[n]*n_cost
+
+        # discount  back to t=0        
+        cost = cost*discount_t0
+
+        # add O&M        
+        omcost = 0     
         if include_om:
-            cost = cost*(1 + model.omRate * ar)
+            omcost = model.omRate * cost * ar
+        
+        # subtract salvage value
+        cost = cost*(1-salvagefactor) + omcost
         return cost
 
 
@@ -1217,6 +1265,8 @@ class SipModel():
         '''
         ar = 1
         g_cap = 0
+        salvagefactor = 0
+        discount_t0=1.0
         if g in model.GEN_EXPAND1:
             g_cap = model.genNewCapacity1[g].value
             ar = annuityfactor(model.financeInterestrate,model.financeYears)
@@ -1225,11 +1275,25 @@ class SipModel():
             ar = (annuityfactor(model.financeInterestrate,model.financeYears)
                   -annuityfactor(model.financeInterestrate,
                                  model.stage2TimeDelta))
+            salvagefactor = (model.stage2TimeDelta/model.financeYears)*(
+                1/((1+model.financeInterestrate)
+                    **(model.financeYears-model.stage2TimeDelta)))
+            discount_t0 = (1/((1+model.financeInterestrate)
+                            **model.stage2TimeDelta))
             
         typ = model.genType[g]
         cost = model.genTypeCost[typ]*g_cap
+
+        # discount  back to t=0        
+        cost = cost*discount_t0
+
+        # add O&M        
+        omcost = 0     
         if include_om:
-            cost = cost*(1 + model.omRate * ar)
+            omcost = model.omRate * cost * ar
+        
+        # subtract salvage value
+        cost = cost*(1-salvagefactor) + omcost
         return cost
 
 
@@ -1254,7 +1318,8 @@ class SipModel():
         expr = sum(gen[g,t].value
                     *model.genCostAvg[g]*model.genCostProfile[g,t] 
                      for t in model.TIME)
-        expr += sum(curt[g,t].value*model.curtailmentCost for t in model.TIME)
+        if model.curtailmentCost.value >0:
+            expr += sum(curt[g,t].value*model.curtailmentCost for t in model.TIME)
         expr += sum(gen[g,t].value*
                             model.genTypeEmissionRate[model.genType[g]]*model.CO2price
                             for t in model.TIME)
@@ -1725,6 +1790,9 @@ class SipModel():
             df_ph = pd.read_csv(file_ph,header=None,skipinitialspace=True,
                                 names=['stage','node',
                                        'var','var_indx','value'])
+            # Drop rows with value None
+            df_ph = df_ph[df_ph['value']!='None']
+            df_ph['value'] = df_ph['value'].astype(float)
             if stage>=1:
                 df_branchNewCapacity = df_ph[df_ph['var']=='branchNewCapacity1']
                 df_newNodes = df_ph[df_ph['var']=='newNodes1']
@@ -1732,7 +1800,7 @@ class SipModel():
                 for k,row in df_branchNewCapacity.iterrows():
                     res_brC['capacity'][int(row['var_indx'])] += float(row['value'])
                 for k,row in df_newNodes.iterrows():
-                    res_N['existing'][row['var_indx']] += int(row['value'])
+                    res_N['existing'][row['var_indx']] += int(float(row['value']))
                 for k,row in df_newGen.iterrows():
                     res_G['pmax'][int(row['var_indx'])] += float(row['value'])                
             if stage>=2:
@@ -1743,18 +1811,33 @@ class SipModel():
                     
                 df_branchNewCapacity = df_ph[
                     (df_ph['var']=='branchNewCapacity2') &
-                    (df_ph['node']=='LeafNode_Scenario{}'.format(scenario))]
+                    (df_ph['node']=='Scenario{}'.format(scenario))]
                 df_newNodes = df_ph[(df_ph['var']=='newNodes2') &
-                    (df_ph['node']=='LeafNode_Scenario{}'.format(scenario))]
+                    (df_ph['node']=='Scenario{}'.format(scenario))]
                 df_newGen = df_ph[(df_ph['var']=='genNewCapacity2') &
-                    (df_ph['node']=='LeafNode_Scenario{}'.format(scenario))]
+                    (df_ph['node']=='Scenario{}'.format(scenario))]
 
                 for k,row in df_branchNewCapacity.iterrows():
                     res_brC['capacity'][int(row['var_indx'])] += float(row['value'])
                 for k,row in df_newNodes.iterrows():
-                    res_N['existing'][row['var_indx']] += int(row['value'])
+                    res_N['existing'][row['var_indx']] += int(float(row['value']))
                 for k,row in df_newGen.iterrows():
-                    res_G['pmax'][int(row['var_indx'])] += float(row['value'])                
+                    res_G['pmax'][int(row['var_indx'])] += float(row['value'])
+                    
+                # operating costs (stage 2)
+                df_gen1=df_ph[(df_ph['var']=='generation1') 
+                                & (df_ph['node']=='Scenario{}'.format(scenario))][
+                                    ['var_indx','value']]  
+                df_gen1 = df_gen1.join(df_gen1['var_indx'].str
+                                    .split(':',expand=True).astype(int)
+                                    .rename(columns={0:'gen',1:'time'}))
+                df_gen2=df_ph[(df_ph['var']=='generation2') 
+                                & (df_ph['node']=='Scenario{}'.format(scenario))][
+                                    ['var_indx','value']]
+                df_gen2 = df_gen2.join(df_gen2['var_indx'].str
+                                    .split(':',expand=True).astype(int)
+                                    .rename(columns={0:'gen',1:'time'}))
+                grid_res.generation = [df_gen1,df_gen2]
         else:
             raise Exception('Missing input parameter')
             
@@ -1765,6 +1848,9 @@ class SipModel():
             > self._NUMERICAL_THRESHOLD_ZERO]
         grid_res.node = grid_res.node[grid_res.node['existing'] 
             > self._NUMERICAL_THRESHOLD_ZERO]
+        
+        #make sure branch index is range type: - No, creates problems..
+        #grid_res.branch.index = range(grid_res.branch.shape[0])
         return grid_res
         
         
