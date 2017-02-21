@@ -1275,18 +1275,18 @@ class SipModel():
         # Specifying columns is not necessary, but useful to get the wanted 
         # ordering
         df_branches = pd.DataFrame(columns=['from','to','fArea','tArea','type',
-                                           'existingCapacity',
-                                           'existingCapacity2','expand',
+                                           'existingCapacity','expand','flow12avg_1','flow21avg_1',
+                                           'existingCapacity2','expand2','flow12avg_2', 'flow21avg_2',
                                            'newCables','newCapacity'])
-#        df_nodes = pd.DataFrame(columns=['num','area','newNodes1',
-#                                         'cost','cost_withOM'])
+        df_nodes = pd.DataFrame(columns=['num','area','newNodes1','newNodes2',
+                                         'cost','cost_withOM'])
         df_gen = pd.DataFrame(columns=['num','node','area',
                                        'type','pmax','pmax2','expand',
                                        'newCapacity'])
-#        df_load = pd.DataFrame(columns=['num','node','area','Pavg','Pmin','Pmax',
-#                                        'emissions','emissionCap', 'emission_cost',
-#                                        'price_avg','RES%dem','RES%gen', 'IM', 'EX',
-#                                        'CS', 'PS', 'CR', 'CAPEX', 'Welfare'])
+        df_load = pd.DataFrame(columns=['num','node','area','Pavg','Pmin','Pmax',
+                                        'emissions','emissionCap', 'emission_cost',
+                                        'price_avg','RES%dem','RES%gen', 'IM', 'EX',
+                                        'CS', 'PS', 'CR', 'CAPEX', 'Welfare'])
         
         for j in model.BRANCH:
             df_branches.loc[j,'num'] = j
@@ -1442,6 +1442,8 @@ class SipModel():
             pyo.value(model.firstStageCost)/10**9)
         df_cost.loc['secondStageCost','value'] = (
             pyo.value(model.secondStageCost)/10**9)
+        df_cost.loc['newTransmission','value'] = (
+            self.computeCostBranch(model,b,include_om=True))
         df_cost.loc['firstStageCost','unit'] = '10^9 EUR'
         df_cost.loc['secondStageCost','unit'] = '10^9 EUR'
             
@@ -1500,40 +1502,37 @@ class SipModel():
             res_G[res_G>0] = 0
             
         if model is not None:
-            #res_brC = pd.DataFrame(0,index=model.BRANCH,columns=['val'])  
-            #res_N = pd.DataFrame(0,index=model.NODE,columns=['val'])
-            #res_G = pd.DataFrame(0,index=model.GEN,columns=['val'])
             if stage == 1:
-                for j in model.BRANCH_EXPAND1:
-                    res_brC['capacity'][j] += model.branchNewCapacity1[j].value
-                for j in model.NODE_EXPAND1:
-                    res_N['existing'][j] += int(model.newNodes1[j].value)
-                for j in model.GEN_EXPAND1:
-                    res_G['pmax'][j] += model.genNewCapacity1[j].value
+                for j in model.BRANCH:
+                    res_brC['capacity'][j] += model.branchNewCapacity[j,stage].value
+                for j in model.NODE:
+                    res_N['existing'][j] += int(model.newNodes[j,stage].value)
+                for j in model.GEN:
+                    res_G['pmax'][j] += model.genNewCapacity[j,stage].value
             if stage >= 2:
                 #add to investments in stage 1
                 res_brC['capacity'] += grid_res.branch['capacity2']
                 res_G['pmax'] += grid_res.generator['pmax2']
-                for j in model.BRANCH_EXPAND2:
-                    res_brC['capacity'][j] += model.branchNewCapacity2[j].value
-                for j in model.NODE_EXPAND2:
-                    res_N['existing'][j] += int(model.newNodes2[j].value)
-                for j in model.GEN_EXPAND2:
-                    res_G['pmax'][j] += model.genNewCapacity2[j].value
+                for j in model.BRANCH:
+                    res_brC['capacity'][j] += model.branchNewCapacity[j,stage].value
+                for j in model.NODE:
+                    res_N['existing'][j] += int(model.newNodes[j,stage].value)
+                for j in model.GEN:
+                    res_G['pmax'][j] += model.genNewCapacity[j,stage].value
         elif file_ph is not None:
-            #res_brC = pd.DataFrame(data=grid_res.branch['capacity'],
-            #                       columns=['val']) 
-            #res_N = pd.DataFrame(data=grid_res.node['existing'],
-            #                       columns=['val'])
-            #res_G = pd.DataFrame(data=grid_res.generator['pmax'],
-            #                       columns=['val'])
             df_ph = pd.read_csv(file_ph,header=None,skipinitialspace=True,
                                 names=['stage','node',
                                        'var','var_indx','value'])
             if stage==1:
-                df_branchNewCapacity = df_ph[df_ph['var']=='branchNewCapacity1']
-                df_newNodes = df_ph[df_ph['var']=='newNodes1']
-                df_newGen = df_ph[df_ph['var']=='genNewCapacity1']
+                df_branchNewCapacity = df_ph[
+                    (df_ph['var']=='branchNewCapacity') & 
+                    (df_ph['stage']==stage)]
+                df_newNodes = df_ph[
+                    (df_ph['var']=='newNodes') & 
+                    (df_ph['stage']==stage)]
+                df_newGen = df_ph[
+                    (df_ph['var']=='genNewCapacity') & 
+                    (df_ph['stage']==stage)]
                 for k,row in df_branchNewCapacity.iterrows():
                     res_brC['capacity'][int(row['var_indx'])] += float(row['value'])
                 for k,row in df_newNodes.iterrows():
@@ -1547,11 +1546,14 @@ class SipModel():
                 res_G['pmax'] += grid_res.generator['pmax2']
                     
                 df_branchNewCapacity = df_ph[
-                    (df_ph['var']=='branchNewCapacity2') &
+                    (df_ph['var']=='branchNewCapacity') &
+                    (df_ph['stage']==stage) &
                     (df_ph['node']=='LeafNode_Scenario{}'.format(scenario))]
-                df_newNodes = df_ph[(df_ph['var']=='newNodes2') &
+                df_newNodes = df_ph[(df_ph['var']=='newNodes') &
+                    (df_ph['stage']==stage) &
                     (df_ph['node']=='LeafNode_Scenario{}'.format(scenario))]
-                df_newGen = df_ph[(df_ph['var']=='genNewCapacity2') &
+                df_newGen = df_ph[(df_ph['var']=='genNewCapacity') &
+                    (df_ph['stage']==stage) &
                     (df_ph['node']=='LeafNode_Scenario{}'.format(scenario))]
 
                 for k,row in df_branchNewCapacity.iterrows():
@@ -2050,3 +2052,360 @@ class CostBenefit(object):
                 return False
         return True
         
+        
+class Results(object):
+    '''
+    Temporary class for processing result data in PowerGIM
+
+
+    Parameters
+    ----------
+    grid : GridData
+        PowerGIM GridData object
+    resultfile : string
+        name of excel file for storage of results
+
+    '''  
+    
+    def __init__(self,grid,resultfile):
+        '''
+        Create a PowerGIM Results object
+            
+        '''
+        self.grid = grid
+        self.timerange = grid.timerange
+        self.results = resultfile
+        
+        return
+
+
+    def plotMapGrid(self,nodetype=None,branchtype=None,dcbranchtype=None,
+                    show_node_labels=False,branch_style='c',latlon=None,
+                    timeMaxMin=None,
+                    dotsize=40, filter_node=None, filter_branch=None,
+                    draw_par_mer=False,showTitle=True, colors=True):
+        '''
+        Plot results to map
+        
+        Parameters
+        ----------
+        nodetype : string
+            "", "area", "nodalprice", "energybalance", "loadshedding"
+        branchtype : string
+            "", "capacity", "area", "utilisation", "flow", "sensitivity"
+        dcbranchtype : string
+            "", "capacity"
+        show_node_labels : boolean
+            whether to show node names (true/false)
+        branch_style : string or list of strings (optional)
+            How branch capacity and flow should be visualised. 
+            "c" = colour, "t" = thickness. The two options may be combined.
+        dotsize : integer (optional)
+            set dot size for each plotted node
+        latlon: list of four floats (optional)
+            map area [lat_min, lon_min, lat_max, lon_max]
+        filter_node : list of two floats (optional)
+            [min,max] - lower and upper cutoff for node value
+        filter_branch : list of two floats
+            [min,max] - lower and upper cutoff for branch value
+        draw_par_mer : boolean
+            whether to draw parallels and meridians on map 
+        showTitle : boolean
+        colors : boolean
+            Whether to use colours or not 
+        '''
+        
+        # basemap is only used here, so to allow using powergama without
+        # basemap installed, it is best to put import statement here.
+        from mpl_toolkits.basemap import Basemap
+
+        if timeMaxMin is None:
+            timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
+
+        plt.figure()
+        data = self.grid
+        #res = self
+        
+        if latlon is None:
+            lat_max =  max(data.node.lat)+1
+            lat_min =  min(data.node.lat)-1
+            lon_max =  max(data.node.lon)+1
+            lon_min =  min(data.node.lon)-1
+        else:
+            lat_min = latlon[0]
+            lon_min = latlon[1]
+            lat_max = latlon[2]
+            lon_max = latlon[3]
+        
+        # Use the average latitude as latitude of true scale
+        lat_truescale = np.mean(data.node.lat)
+                
+        m = Basemap(resolution='l',projection='merc',\
+                      lat_ts=lat_truescale, \
+                      llcrnrlon=lon_min, llcrnrlat=lat_min,\
+                      urcrnrlon=lon_max ,urcrnrlat=lat_max, \
+                      anchor='W')
+         
+        # Draw coastlines, meridians and parallels.
+        m.drawcoastlines()
+        #m.drawcountries(zorder=0)
+        
+        if colors:
+            m.fillcontinents(color='coral',lake_color='aqua',zorder=0)
+            m.drawmapboundary(fill_color='aqua')
+        else:
+            m.fillcontinents(zorder=0)
+            m.drawmapboundary()
+        
+        if draw_par_mer:
+            m.drawparallels(np.arange(_myround(lat_min,10,'floor'),
+                _myround(lat_max,10,'ceil'),10),
+                labels=[1,1,0,0])
+
+            m.drawmeridians(np.arange(_myround(lon_min,10,'floor'),
+                _myround(lon_max,10,'ceil'),10),
+                labels=[0,0,0,1])
+                
+        
+
+
+        # AC Branches
+        num_branches = data.branch.shape[0]
+        
+        lwidths = [2]*num_branches
+        
+        # default values:
+        branch_value = np.asarray([0.5]*num_branches)
+        branch_colormap = cm.gray
+        branch_plot_colorbar = True
+        
+        if branchtype=='area':
+            areas = data.node.area
+            allareas = data.getAllAreas()
+            branch_value = [-1]*num_branches
+            nodes_from = data.branchFromNodeIdx()
+            nodes_to = data.branchToNodeIdx()
+            for i in range(num_branches):
+                #node_indx_from = data.node.name.index(data.branch.node_from[i])
+                #node_indx_to = data.node.name.index(data.branch.node_to[i])
+                area_from = areas[nodes_from[i]]
+                area_to = areas[nodes_to[i]]
+                if area_from == area_to:
+                    branch_value[i] = allareas.index(area_from)
+                branch_value = np.asarray(branch_value)
+#            branch_colormap = plt.get_cmap('hsv')
+            branch_colormap = cm.prism
+            branch_colormap.set_under('k')
+            filter_branch = [0,len(allareas)]
+            branch_label = 'Branch area'
+            branch_plot_colorbar = False
+        elif branchtype=='utilisation':
+            utilisation = self.getAverageUtilisation(timeMaxMin)
+            branch_value = utilisation
+            branch_colormap = plt.get_cmap('hot')
+            branch_label = 'Branch utilisation'
+        elif branchtype=='capacity':         
+            cap = data.branch.capacity
+            branch_plot_colorbar = False
+            branch_label = 'Branch capacity'
+            if 'c' in branch_style:
+                branch_value = np.asarray(cap)
+                branch_colormap = plt.get_cmap('hot')
+                branch_plot_colorbar = True
+                if filter_branch is None:
+                    # need an upper limit to avoid crash due to inf capacity
+                    maxcap = np.nanmax(branch_value)
+                    filter_branch = [0,np.round(maxcap,-2)+100]
+            if 't' in branch_style:
+                avgcap = np.mean(cap)
+                if avgcap == 0:
+                    lwidths = [0 for f in cap]  
+                else:
+                    lwidths = [2*f/avgcap for f in cap]  
+        elif branchtype=='flow':
+            avgflow = self.getAverageBranchFlows(timeMaxMin)[2]
+            if 'c' in branch_style:
+                branch_value = np.asarray(avgflow)
+                branch_colormap = plt.get_cmap('hot')
+            else:
+                branch_plot_colorbar = False
+            if 't' in branch_style:
+                avgavgflow = np.mean(avgflow)
+                lwidths = [2*f/avgavgflow for f in avgflow]        
+            branch_label = 'Branch flow'
+            #branch_value = np.asarray(avgflow)
+            #branch_colormap = plt.get_cmap('hot')
+        elif branchtype=='sensitivity':
+            branch_value = np.zeros(num_branches)
+            avgsense = self.getAverageBranchSensitivity(timeMaxMin)
+            branch_value[self.idxConstrainedBranchCapacity] = -avgsense
+            branch_colormap = plt.get_cmap('hot')
+            branch_label = 'Branch sensitivity'
+            # These sensitivities are mostly negative 
+            # (reduced cost by increasing branch capacity)
+            #minsense = np.nanmin(avgsense)
+            #maxsense = np.nanmax(avgsense)
+        else:
+            branch_value = np.asarray([0.5]*num_branches)
+            branch_colormap = cm.gray
+            branch_plot_colorbar = False
+        
+        idx_from = data.branchFromNodeIdx()
+        idx_to = data.branchToNodeIdx()
+        branch_lat1 = [data.node.lat[i] for i in idx_from]        
+        branch_lon1 = [data.node.lon[i] for i in idx_from]        
+        branch_lat2 = [data.node.lat[i] for i in idx_to]        
+        branch_lon2 = [data.node.lon[i] for i in idx_to]
+
+        x1, y1 = m(branch_lon1,branch_lat1)
+        x2, y2 = m(branch_lon2,branch_lat2)
+
+        ls = [[(x1[i],y1[i]),(x2[i],y2[i])] for i in range(len(x1))]
+        #ls = [[(x1[i],y1[i]),(x2[i],y2[i])] for i in range(num_branches)]
+        ax=plt.axes()    
+        if not lwidths:
+            print("No new data")
+        else:
+            line_segments_ac = mpl.collections.LineCollection(
+                    ls, linewidths=lwidths,cmap=branch_colormap)
+        
+            if filter_branch is not None:
+                line_segments_ac.set_clim(filter_branch)
+            line_segments_ac.set_array(branch_value)
+            ax.add_collection(line_segments_ac)
+      
+
+        # DC Branches
+        lwidths = [2] * 1
+        #lwidths = [2] * num_dcbranches
+        if dcbranchtype is not None:
+            branch_plot_colorbar = False
+            branch_value = np.asarray([0.1] * num_branches)
+            branch_colormap = cm.winter
+        
+        if dcbranchtype == 'flow':
+            avgTot = self.getAverageBranchFlows(timeMaxMin,False)[2]
+            if 'c' in branch_style:
+                branch_value = np.asarray(avgTot)
+                branch_colormap = plt.get_cmap('hot')
+                branch_plot_colorbar = True
+            if 't' in branch_style:
+                avgavgflow = np.mean(avgTot)
+                lwidths = [2*f/avgavgflow for f in avgTot]        
+            branch_label = 'Branch flow'
+        elif dcbranchtype == 'capacity':
+            cap = [data.branch.capacity[i] for i in range(len(data.branch.capacity)) if data.branch.type[i] == 'dc']
+            branch_value = np.asarray(cap)
+            maxcap = np.nanmax(branch_value)
+            branch_colormap = plt.get_cmap('hot')
+            branch_label = 'Branch capacity'
+            if filter_branch is None:
+                # need an upper limit to avoid crash due to inf capacity
+                filter_branch = [0,np.round(maxcap,-2)+100]
+            if 't' in branch_style:
+                avgcap = np.mean(cap)
+                lwidths = [2*f/avgcap for f in cap]  
+            
+        idx_from = data.dcBranchFromNodeIdx()   # empty
+        idx_to = data.dcBranchToNodeIdx()       # empty
+        branch_lat1 = [data.node.lat[i] for i in idx_from]        
+        branch_lon1 = [data.node.lon[i] for i in idx_from]        
+        branch_lat2 = [data.node.lat[i] for i in idx_to]        
+        branch_lon2 = [data.node.lon[i] for i in idx_to]
+
+        x1, y1 = m(branch_lon1,branch_lat1)
+        x2, y2 = m(branch_lon2,branch_lat2)
+        ls = [[(x1[i],y1[i]),(x2[i],y2[i])] for i in range(len(x1))]
+        line_segments_dc = mpl.collections.LineCollection(
+                ls, linewidths=lwidths,colors='black')
+        #line_segments_dc = mpl.collections.LineCollection(
+        #        ls, linewidths=2,colors='blue')
+        if filter_branch is not None:
+            line_segments_dc.set_clim(filter_branch)
+        line_segments_dc.set_array(branch_value)
+        ax.add_collection(line_segments_dc)
+        
+        # Nodes
+        node_plot_colorbar = True
+        if nodetype=='area':
+            areas = data.node.area
+            allareas = data.getAllAreas()
+            #colours_co = cm.prism(np.linspace(0, 1, len(allareas)))
+            node_label = 'Node area'
+            node_value = [allareas.index(c) for c in areas]
+            node_colormap = cm.prism
+            node_plot_colorbar = False
+            # this is to get same colours as for branches:
+            node_colormap.set_under('k')
+            filter_node = [0,len(allareas)]
+        elif nodetype=='nodalprice':
+            avgprice = self.getAverageNodalPrices(timeMaxMin)
+            node_label = 'Nodal price'
+            node_value = avgprice
+            node_colormap = cm.jet
+        elif nodetype=='lmp':
+            node_value = self.getAverageNodalPrices(timeMaxMin)
+            node_label = 'Locational marginal price'
+            node_colormap = cm.jet
+        elif nodetype=='energybalance':
+            avg_energybalance = self.getAverageEnergyBalance(timeMaxMin)
+            node_label = 'Nodal energy balance'
+            node_value = avg_energybalance
+            node_colormap = cm.hot
+        elif nodetype=='loadshedding':
+            node_value = self.getLoadsheddingPerNode(timeMaxMin)
+            node_label = 'Loadshedding'
+            node_colormap = cm.hot
+        else:
+            node_value = 'dimgray'
+            node_colormap = cm.jet
+            node_label = ''
+            node_plot_colorbar  = False
+        
+
+        x, y = m(data.node['lon'].tolist(),data.node['lat'].tolist())
+        if nodetype=='lmp':
+            sc = plt.hexbin(x, y, gridsize=20, C=node_value, 
+                            cmap=node_colormap)
+        else:
+            sc=m.scatter(x,y,marker='o',c=node_value, cmap=node_colormap,
+                         zorder=2,s=dotsize)            
+        #sc.cmap.set_under('dimgray')
+        #sc.cmap.set_over('dimgray')
+        if filter_node is not None:
+            sc.set_clim(filter_node[0], filter_node[1])
+            
+            # #TODO: Er dette nødvendig lenger, Harald?
+            # #nodes with NAN nodal price plotted in gray:
+            # for i in range(len(avgprice)):
+                # if np.isnan(avgprice[i]):
+                    # m.scatter(x[i],y[i],c='dimgray',
+                              # zorder=2,s=dotsize)
+        
+        
+        #NEW Colorbar for nodes
+        # m. or plt.?
+        if node_plot_colorbar:
+            axcb2 = plt.colorbar(sc)
+            axcb2.set_label(node_label)
+
+        #NEW Colorbar for branch capacity
+        if branch_plot_colorbar:
+            axcb = plt.colorbar(line_segments_ac)
+            axcb.set_label(branch_label)
+
+
+        # Show names of nodes
+        if show_node_labels:
+            labels = data.node['id']
+            x1,x2,y1,y2 = plt.axis()
+            offset_x = (x2-x1)/50
+            for label, xpt, ypt in zip(labels, x, y):
+                if xpt > x1 and xpt < x2 and ypt > y1 and ypt < y2:
+                    plt.text(xpt+offset_x, ypt, label)
+        
+        if showTitle:
+            plt.title('Nodes %s and branches %s' %(nodetype,branchtype))
+        plt.show()
+                
+        return
