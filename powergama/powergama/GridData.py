@@ -733,13 +733,28 @@ class GridData(object):
         n_from = self.branchFromNodeIdx()
         n_to = self.branchToNodeIdx()
         distance = []
-        for i,br in self.branch.iterrows():
-            #n_from= br['node_from']
-            #n_to=br['node_to']
-            lat1 = math.radians(self.node.ix[n_from[i]]['lat'])
-            lon1 = math.radians(self.node.ix[n_from[i]]['lon'])
-            lat2 = math.radians(self.node.ix[n_to[i]]['lat'])
-            lon2 = math.radians(self.node.ix[n_to[i]]['lon'])
+        # get endpoint coordinates and convert to radians
+        lats1 = self.node['lat'][n_from].apply(math.radians)
+        lons1 = self.node['lon'][n_from].apply(math.radians)
+        lats2 = self.node['lat'][n_to].apply(math.radians)
+        lons2 = self.node['lon'][n_to].apply(math.radians)
+        lats1.index=self.branch.index
+        lons1.index=self.branch.index
+        lats2.index=self.branch.index
+        lons2.index=self.branch.index
+        
+        for b in self.branch.index:
+            lat1=lats1[b]
+            lon1=lons1[b]
+            lat2=lats2[b]
+            lon2=lons2[b]
+#        for i,br in self.branch.iterrows():
+#            #n_from= br['node_from']
+#            #n_to=br['node_to']
+#            lat1 = math.radians(self.node.ix[n_from[i]]['lat'])
+#            lon1 = math.radians(self.node.ix[n_from[i]]['lon'])
+#            lat2 = math.radians(self.node.ix[n_to[i]]['lat'])
+#            lon2 = math.radians(self.node.ix[n_to[i]]['lon'])
         
             dlon = lon2 - lon1
             dlat = lat2 - lat1
