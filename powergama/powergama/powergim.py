@@ -462,7 +462,7 @@ class SipModel():
                 opcost = opcost*(annuityfactor(model.financeInterestrate,model.financeYears)
                     - annuityfactor(model.financeInterestrate,int(stage-1)*model.stage2TimeDelta))
             else:
-                opcost = opcost*annuityfactor(model.financeInterestrate,int(stage)*model.stage2TimeDelta)            
+                opcost = opcost*annuityfactor(model.financeInterestrate,model.stage2TimeDelta)            
             expr = opcost*discount_t0
             return model.opCost[stage] == expr
         model.cOperationalCosts = pyo.Constraint(model.STAGE, rule=opCost_rule)
@@ -1469,16 +1469,16 @@ class SipModel():
                                             include_om=False)
         
         df_cost = pd.DataFrame(columns=['value','unit'])
-#        df_cost.loc['firstStageCost','value'] = (
-#            pyo.value(model.firstStageCost)/10**9)
-#        df_cost.loc['secondStageCost','value'] = (
-#            pyo.value(model.secondStageCost)/10**9)
+        df_cost.loc['InvestmentCosts','value'] = sum(
+            model.investmentCost[s].value for s in model.STAGE)/10**9
+        df_cost.loc['OperationalCosts','value'] = sum(
+            model.opCost[s].value for s in model.STAGE)/10**9
         df_cost.loc['newTransmission','value'] = sum(
             self.computeCostBranch(model,b,stage,include_om=True) for b in model.BRANCH for stage in model.STAGE)/10**9
         df_cost.loc['newGeneration','value'] = sum(
             self.computeCostGenerator(model,g,stage,include_om=True) for g in model.GEN for stage in model.STAGE)/10**9
-        df_cost.loc['firstStageCost','unit'] = '10^9 EUR'
-        df_cost.loc['secondStageCost','unit'] = '10^9 EUR'
+        df_cost.loc['InvestmentCosts','unit'] = '10^9 EUR'
+        df_cost.loc['OperationalCosts','unit'] = '10^9 EUR'
         df_cost.loc['newTransmission','unit'] = '10^9 EUR'
         df_cost.loc['newGeneration','unit'] = '10^9 EUR'
             
