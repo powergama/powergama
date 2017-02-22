@@ -413,13 +413,17 @@ class SipModel():
 
 
         # OBJECTIVE ##############################################################
-            
-        
-        def firstStageCost_rule(model):
+        model.investmentCost = pyo.Var(model.STAGE, within=pyo.Reals) 
+        model.opCost = pyo.Var(model.STAGE, within=pyo.Reals)
+        def investmentCost_rule(model,stage):
             """Investment cost, including lifetime O&M costs (NPV)"""
             investment = 0
-            stage=1
-
+            omcost = 0
+            salvagefactor = (int(stage-1)*model.stage2TimeDelta/model.financeYears)*(
+                    1/((1+model.financeInterestrate)
+                    **(model.financeYears-model.stage2TimeDelta*int(stage-1))))
+            discount_t0 = (1/((1+model.financeInterestrate)
+                            **(model.stage2TimeDelta*int(stage-1))))
             # add branch, node and generator investment costs:
             for b in model.BRANCH:
                 investment += costBranch(model,b,
@@ -428,85 +432,143 @@ class SipModel():
             for n in model.NODE:
                 investment += costNode(model,n,model.newNodes,stage)            
             for g in model.GEN:
-                investment += costGen(model, g,model.genNewCapacity,stage)
-
-            # add O&M costs:
-            omcost = investment * model.omRate * annuityfactor(
-                            model.financeInterestrate,
-                            model.financeYears)
-            expr = investment + omcost                            
-            return   expr  
-        model.firstStageCost = pyo.Expression(rule=firstStageCost_rule)
-    
-        def secondStageCost_rule(model):
-            """Operational costs: cost of gen, load shed (NPV)"""
-            opcost1 = 0
-            opcost2 = 0
-            investment = 0
-            omcost = 0
-            if len(model.STAGE)<2:
-                stage = 1
-                opcost1 = sum(model.generation[i,t,stage]*model.samplefactor[t]*(
-                            model.genCostAvg[i]*model.genCostProfile[i,t]
-                            +model.genTypeEmissionRate[model.genType[i]]*model.CO2price)
-                            for i in model.GEN for t in model.TIME)
-                opcost1 += sum(model.loadShed[n,t,stage]*model.VOLL
-                                for n in model.NODE for t in model.TIME)
-                opcost1 = opcost1*annuityfactor(model.financeInterestrate,
-                                              model.financeYears)
-            else:
-                stage=2
-                # Operational costs phase 1 (if stage2DeltaTime>0)
-                opcost1 = sum(model.generation[i,t,stage-1]*model.samplefactor[t]*(
-                                model.genCostAvg[i]*model.genCostProfile[i,t]
-                                +model.genTypeEmissionRate[model.genType[i]]*model.CO2price)
-                                for i in model.GEN for t in model.TIME)
-                opcost1 += sum(model.loadShed[n,t,stage-1]*model.VOLL
-                                for n in model.NODE for t in model.TIME)
-                opcost1 = opcost1*annuityfactor(model.financeInterestrate,
-                                              model.stage2TimeDelta)
-                                              
-                # Operational costs phase 2 (disounted)
-                opcost2 = sum(model.generation[i,t,stage]*model.samplefactor[t]*(
-                                model.genCostAvg[i]*model.genCostProfile[i,t]
-                                +model.genTypeEmissionRate[model.genType[i]]*model.CO2price)
-                                for i in model.GEN for t in model.TIME)    
-                opcost2 += sum(model.loadShed[n,t,stage]*model.VOLL
-                                for n in model.NODE for t in model.TIME)
-                opcost2 = opcost2*(annuityfactor(model.financeInterestrate,
-                                   model.financeYears)
-                                   -annuityfactor(model.financeInterestrate,
-                                      model.stage2TimeDelta)
-                                      )
-                
-                # 2nd stage investment costs
-                for b in model.BRANCH:
-                    investment += costBranch(model,b,
-                                       model.branchNewCables,
-                                       model.branchNewCapacity,stage)
-                for n in model.NODE:
-                    investment += costNode(model,n,model.newNodes,stage)            
-                for g in model.GEN:
-                    investment += costGen(model, g,model.genNewCapacity,stage)
-                #discount back to t=0?
-                investment = investment*(1/((1+model.financeInterestrate)**model.stage2TimeDelta))
-    
-                # add O&M costs (NPV of lifetime costs)
-                omcost = investment*model.omRate*(
+                investment += costGen(model, g,model.genNewCapacity,stage)*(
                     annuityfactor(model.financeInterestrate,model.financeYears)
-                    -annuityfactor(model.financeInterestrate,model.stage2TimeDelta))
-                
-                #subtract estimated salvage value of investments with remaining lifetime
-                investment -= investment*(model.stage2TimeDelta/model.financeYears)*(
-                    1/((1+model.financeInterestrate)**(model.financeYears-model.stage2TimeDelta)))
-                    
-            expr = opcost1 + opcost2 + investment + omcost         
-            return expr
-        model.secondStageCost = pyo.Expression(rule=secondStageCost_rule)
-    
+                    -annuityfactor(model.financeInterestrate,int(stage-1)*model.stage2TimeDelta))            
+            # add O&M costs:
+            omcost = investment * model.omRate * (
+                annuityfactor(model.financeInterestrate,model.financeYears)
+                -annuityfactor(model.financeInterestrate,int(stage-1)*model.stage2TimeDelta))
+            expr = investment + omcost 
+            expr -= expr*salvagefactor
+            expr = expr*discount_t0
+            return model.investmentCost[stage] == expr
+        model.cInvestmentCost = pyo.Constraint(model.STAGE,rule=investmentCost_rule)
+        
+        
+        def opCost_rule(model, stage):
+            """Operational costs: cost of gen, load shed (NPV)"""
+            opcost = 0
+            discount_t0 = (1/((1+model.financeInterestrate)
+                **(model.stage2TimeDelta*int(stage-1))))
+            
+            opcost = sum(model.generation[i,t,stage]*model.samplefactor[t]*(
+                        model.genCostAvg[i]*model.genCostProfile[i,t]
+                        +model.genTypeEmissionRate[model.genType[i]]*model.CO2price)
+                        for i in model.GEN for t in model.TIME)
+            opcost += sum(model.loadShed[n,t,stage]*model.VOLL
+                            for n in model.NODE for t in model.TIME)
+            if stage == len(model.STAGE):
+                opcost = opcost*(annuityfactor(model.financeInterestrate,model.financeYears)
+                    - annuityfactor(model.financeInterestrate,int(stage-1)*model.stage2TimeDelta))
+            else:
+                opcost = opcost*annuityfactor(model.financeInterestrate,int(stage)*model.stage2TimeDelta)            
+            expr = opcost*discount_t0
+            return model.opCost[stage] == expr
+        model.cOperationalCosts = pyo.Constraint(model.STAGE, rule=opCost_rule)
+            
+            
+
+                                             
+#        def firstStageCost_rule(model):
+#            """Investment cost, including lifetime O&M costs (NPV)"""
+#            investment = 0
+#            stage=1
+#
+#            # add branch, node and generator investment costs:
+#            for b in model.BRANCH:
+#                investment += costBranch(model,b,
+#                                   model.branchNewCables,
+#                                   model.branchNewCapacity,stage)
+#            for n in model.NODE:
+#                investment += costNode(model,n,model.newNodes,stage)            
+#            for g in model.GEN:
+#                investment += costGen(model, g,model.genNewCapacity,stage)
+#
+#            # add O&M costs:
+#            omcost = investment * model.omRate * annuityfactor(
+#                            model.financeInterestrate,
+#                            model.financeYears)
+#            expr = investment + omcost                            
+#            return   expr  
+#        model.firstStageCost = pyo.Expression(rule=firstStageCost_rule)
+#    
+#        def secondStageCost_rule(model):
+#            """Operational costs: cost of gen, load shed (NPV)"""
+#            opcost1 = 0
+#            opcost2 = 0
+#            investment = 0
+#            omcost = 0
+#            if len(model.STAGE)<2:
+#                stage = 1
+#                opcost1 = sum(model.generation[i,t,stage]*model.samplefactor[t]*(
+#                            model.genCostAvg[i]*model.genCostProfile[i,t]
+#                            +model.genTypeEmissionRate[model.genType[i]]*model.CO2price)
+#                            for i in model.GEN for t in model.TIME)
+#                opcost1 += sum(model.loadShed[n,t,stage]*model.VOLL
+#                                for n in model.NODE for t in model.TIME)
+#                opcost1 = opcost1*annuityfactor(model.financeInterestrate,
+#                                              model.financeYears)
+#            else:
+#                stage=2
+#                # Operational costs phase 1 (if stage2DeltaTime>0)
+#                opcost1 = sum(model.generation[i,t,stage-1]*model.samplefactor[t]*(
+#                                model.genCostAvg[i]*model.genCostProfile[i,t]
+#                                +model.genTypeEmissionRate[model.genType[i]]*model.CO2price)
+#                                for i in model.GEN for t in model.TIME)
+#                opcost1 += sum(model.loadShed[n,t,stage-1]*model.VOLL
+#                                for n in model.NODE for t in model.TIME)
+#                opcost1 = opcost1*annuityfactor(model.financeInterestrate,
+#                                              model.stage2TimeDelta)
+#                                              
+#                # Operational costs phase 2 (disounted)
+#                opcost2 = sum(model.generation[i,t,stage]*model.samplefactor[t]*(
+#                                model.genCostAvg[i]*model.genCostProfile[i,t]
+#                                +model.genTypeEmissionRate[model.genType[i]]*model.CO2price)
+#                                for i in model.GEN for t in model.TIME)    
+#                opcost2 += sum(model.loadShed[n,t,stage]*model.VOLL
+#                                for n in model.NODE for t in model.TIME)
+#                opcost2 = opcost2*(annuityfactor(model.financeInterestrate,
+#                                   model.financeYears)
+#                                   -annuityfactor(model.financeInterestrate,
+#                                      model.stage2TimeDelta)
+#                                      )
+#                
+#                # 2nd stage investment costs
+#                for b in model.BRANCH:
+#                    investment += costBranch(model,b,
+#                                       model.branchNewCables,
+#                                       model.branchNewCapacity,stage)
+#                for n in model.NODE:
+#                    investment += costNode(model,n,model.newNodes,stage)            
+#                for g in model.GEN:
+#                    investment += costGen(model, g,model.genNewCapacity,stage)
+#                #discount back to t=0?
+#                investment = investment*(1/((1+model.financeInterestrate)**model.stage2TimeDelta))
+#    
+#                # add O&M costs (NPV of lifetime costs)
+#                omcost = investment*model.omRate*(
+#                    annuityfactor(model.financeInterestrate,model.financeYears)
+#                    -annuityfactor(model.financeInterestrate,model.stage2TimeDelta))
+#                
+#                #subtract estimated salvage value of investments with remaining lifetime
+#                investment -= investment*(model.stage2TimeDelta/model.financeYears)*(
+#                    1/((1+model.financeInterestrate)**(model.financeYears-model.stage2TimeDelta)))
+#                    
+#            expr = opcost1 + opcost2 + investment + omcost         
+#            return expr
+#        model.secondStageCost = pyo.Expression(rule=secondStageCost_rule)
+#    
+#        def total_Cost_Objective_rule(model):
+#            return model.firstStageCost + model.secondStageCost
+#        model.OBJ = pyo.Objective(rule=total_Cost_Objective_rule, 
+#                                  sense=pyo.minimize)
+        
         def total_Cost_Objective_rule(model):
-            return model.firstStageCost + model.secondStageCost
-        model.OBJ = pyo.Objective(rule=total_Cost_Objective_rule, 
+            investment = pyo.summation(model.investmentCost)
+            operation = pyo.summation(model.opCost)
+            return investment + operation
+        model.OBJ = pyo.Objective(rule=total_Cost_Objective_rule,
                                   sense=pyo.minimize)
         
     
@@ -856,7 +918,8 @@ class SipModel():
         num_scenarios : int
             number of scenarios. Each with the same probability
         probabilities : list of float
-            probabilities of each scenario (must sum to 1)
+            probabilities of each scenario (must sum to 1). Number of elements
+            determine number of scenarios
         
         Returns
         -------
@@ -867,20 +930,22 @@ class SipModel():
         '''
         
         if probabilities is None:
-            st_model = tsm.CreateConcreteTwoStageScenarioTreeModel(
-                                num_scenarios)
-        else:
-            G = networkx.DiGraph() 
-            G.add_node("root")
-            for i in range(len(probabilities)):
-                G.add_edge("root","Scenario{}".format(i+1),
-                           probability=probabilities[i])
-            stage_names=['Stage1','Stage2']
-    
-            st_model = tsm.ScenarioTreeModelFromNetworkX(G,
-                             edge_probability_attribute="probability",
-                             stage_names=stage_names)
-            
+            # equal probability:
+            probabilities = [1/num_scenarios]*num_scenarios
+        #if probabilities is None:
+        #    st_model = tsm.CreateConcreteTwoStageScenarioTreeModel(
+        #                        num_scenarios)
+
+        G = networkx.DiGraph() 
+        G.add_node("root")
+        for i in range(len(probabilities)):
+            G.add_edge("root","Scenario{}".format(i+1),
+                       probability=probabilities[i])
+        stage_names=['Stage1','Stage2']
+
+        st_model = tsm.ScenarioTreeModelFromNetworkX(G,
+                         edge_probability_attribute="probability",
+                         stage_names=stage_names)
     
         first_stage = st_model.Stages.first()
         second_stage = st_model.Stages.last()
@@ -1404,10 +1469,10 @@ class SipModel():
                                             include_om=False)
         
         df_cost = pd.DataFrame(columns=['value','unit'])
-        df_cost.loc['firstStageCost','value'] = (
-            pyo.value(model.firstStageCost)/10**9)
-        df_cost.loc['secondStageCost','value'] = (
-            pyo.value(model.secondStageCost)/10**9)
+#        df_cost.loc['firstStageCost','value'] = (
+#            pyo.value(model.firstStageCost)/10**9)
+#        df_cost.loc['secondStageCost','value'] = (
+#            pyo.value(model.secondStageCost)/10**9)
         df_cost.loc['newTransmission','value'] = sum(
             self.computeCostBranch(model,b,stage,include_om=True) for b in model.BRANCH for stage in model.STAGE)/10**9
         df_cost.loc['newGeneration','value'] = sum(
