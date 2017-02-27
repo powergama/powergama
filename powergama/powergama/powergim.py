@@ -456,7 +456,7 @@ class SipModel():
                         model.genCostAvg[i]*model.genCostProfile[i,t]
                         +model.genTypeEmissionRate[model.genType[i]]*model.CO2price)
                         for i in model.GEN for t in model.TIME)
-            opcost += sum(model.loadShed[n,t,stage]*model.VOLL
+            opcost += sum(model.loadShed[n,t,stage]*model.VOLL*model.samplefactor[t]
                             for n in model.NODE for t in model.TIME)
             if stage == len(model.STAGE):
                 opcost = opcost*(annuityfactor(model.financeInterestrate,model.financeYears)
@@ -994,7 +994,7 @@ class SipModel():
         return sum(deltaP[i]*flow[i] for i in range(len(deltaP)))
 
     def computeCostBranch(self,model,b,stage,include_om=False):
-        '''Investment cost of single branch
+        '''Investment cost of single branch NPV
         
         corresponds to  firstStageCost in abstract model'''
         
@@ -1002,12 +1002,18 @@ class SipModel():
         br_num=0
         br_cap=0
         b_cost = 0
+        
+        salvagefactor = (int(stage-1)*model.stage2TimeDelta/model.financeYears)*(
+                1/((1+model.financeInterestrate)
+                **(model.financeYears-model.stage2TimeDelta*int(stage-1))))
+        discount_t0 = (1/((1+model.financeInterestrate)
+                        **(model.stage2TimeDelta*int(stage-1))))
         if stage==1:
             ar = annuityfactor(model.financeInterestrate,model.financeYears)
-        elif stage==2:
+        else:
             ar = (annuityfactor(model.financeInterestrate,model.financeYears)
                   -annuityfactor(model.financeInterestrate,
-                                 model.stage2TimeDelta))
+                                 int(stage-1)*model.stage2TimeDelta))
         br_num += model.branchNewCables[b,stage].value
         br_cap += model.branchNewCapacity[b,stage].value
         typ = model.branchType[b]
@@ -1028,6 +1034,8 @@ class SipModel():
         cost = model.branchCostScale[b]*b_cost
         if include_om:
             cost = cost*(1 + model.omRate * ar)
+        cost -= cost*salvagefactor
+        cost = cost*discount_t0
         return cost
 
     def computeCostNode(self,model,n,include_om=False):
@@ -1037,9 +1045,16 @@ class SipModel():
         
         # node may be expanded in stage 1 or stage 2, but will never be 
         # expanded in both
+        # TODO: cope with stages
         
         ar = 1
         n_num = 0
+        stage=2
+        salvagefactor = (int(stage-1)*model.stage2TimeDelta/model.financeYears)*(
+                1/((1+model.financeInterestrate)
+                **(model.financeYears-model.stage2TimeDelta*int(stage-1))))
+        discount_t0 = (1/((1+model.financeInterestrate)
+                        **(model.stage2TimeDelta*int(stage-1))))
         for s in model.STAGE:
             if s<2:
                 n_num = model.newNodes[n,s].value
@@ -1048,7 +1063,7 @@ class SipModel():
                 n_num = model.newNodes[n,s-1].value+model.newNodes[n,s].value
                 ar = (annuityfactor(model.financeInterestrate,model.financeYears)
                       -annuityfactor(model.financeInterestrate,
-                                     model.stage2TimeDelta))
+                                     (s-1)*model.stage2TimeDelta))
         n_cost = 0
         N = model.nodeOffshore[n]
         n_cost += N*(model.nodetypeCost[model.nodeType[n],'S']*n_num)
@@ -1056,14 +1071,21 @@ class SipModel():
         cost = model.nodeCostScale[n]*n_cost
         if include_om:
             cost = cost*(1 + model.omRate * ar)
+        cost -= cost*salvagefactor
+        cost = cost*discount_t0
         return cost
 
 
     def computeCostGenerator(self,model,g,stage,include_om=False):
-        '''Investment cost of generator
+        '''Investment cost of generator NPV
         '''
         ar = 1
         g_cap = 0
+        salvagefactor = (int(stage-1)*model.stage2TimeDelta/model.financeYears)*(
+                1/((1+model.financeInterestrate)
+                **(model.financeYears-model.stage2TimeDelta*int(stage-1))))
+        discount_t0 = (1/((1+model.financeInterestrate)
+                        **(model.stage2TimeDelta*int(stage-1))))
         if stage==1:
             ar = annuityfactor(model.financeInterestrate,model.financeYears)
         elif stage==2:
@@ -1072,9 +1094,11 @@ class SipModel():
                                      model.stage2TimeDelta))
         g_cap = model.genNewCapacity[g,stage].value
         typ = model.genType[g]
-        cost = model.genTypeCost[typ]*g_cap
+        cost = model.genTypeCost[typ]*g_cap*ar
         if include_om:
             cost = cost*(1 + model.omRate * ar)
+        cost -= cost*salvagefactor
+        cost = cost*discount_t0
         return cost
                 
                 
@@ -1116,14 +1140,15 @@ class SipModel():
         '''compute curtailment [MWh] per generator per hour'''
         cur = 0
         gen_max = 0
-        if stage == 1:
-            gen_max = model.genCapacity[g] + model.genNewCapacity[g,stage].value
-            cur = gen_max*model.genCapacityProfile[g,t] - model.generation[g,t,stage].value
-        if stage == 2:
-            gen_max = (model.genCapacity[g] + model.genCapacity2[g] 
-                        +model.genNewCapacity[g,stage-1].value
-                        +model.genNewCapacity[g,stage].value)
-            cur = gen_max*model.genCapacityProfile[g,t] - model.generation[g,t,stage].value
+        if model.generation[g,t,stage].value >0 and model.genCostAvg[g]*model.genCostProfile[g,t]<1:
+            if stage == 1:
+                gen_max = model.genCapacity[g] + model.genNewCapacity[g,stage].value
+                cur = gen_max*model.genCapacityProfile[g,t] - model.generation[g,t,stage].value
+            if stage == 2:
+                gen_max = (model.genCapacity[g] + model.genCapacity2[g] 
+                            +model.genNewCapacity[g,stage-1].value
+                            +model.genNewCapacity[g,stage].value)
+                cur = gen_max*model.genCapacityProfile[g,t] - model.generation[g,t,stage].value
         return cur
         
         
@@ -1609,10 +1634,294 @@ class SipModel():
             > self._NUMERICAL_THRESHOLD_ZERO]
         return grid_res
     
-    def loadResults(self, filename):
+    def loadResults(self, filename,sheet):
         '''load results from excel into pandas dataframe'''
-        df_res = pd.read_excel(filename)
+        df_res = pd.read_excel(filename,sheetname=sheet)
         return df_res
+        
+    def plotEnergyMix(self, model, areas=None,timeMaxMin=None,relative=False,
+                      showTitle=True,variable="energy",gentypes=None, stage=1):
+        '''
+        Plot energy, generation capacity or spilled energy as stacked bars
+        
+        Parameters
+        ----------
+        areas : list of sting
+            Which areas to include, default=None means include all
+        timeMaxMin : list of two integers
+            Time range, [min,max]
+        relative : boolean
+            Whether to plot absolute (false) or relative (true) values
+        variable : string ("energy","capacity","spilled")
+            Which variable to plot (default is energy production)
+        gentypes : list
+            List of generator types to include. None gives all.
+        ''' 
+        import matplotlib.pyplot as plt
+        import matplotlib.cm as cm
+        
+        s = stage
+        if areas is None:
+            areas = list(model.AREA)
+        if timeMaxMin is None:
+            timeMaxMin = list(model.TIME)
+        if gentypes is None:
+            gentypes = list(model.GENTYPE)
+
+        gen_output = []
+        if variable=="energy":
+            print("Getting energy output from all generators...")
+            for g in model.GEN:
+                gen_output.append(sum(model.generation[g,t,s].value for t in timeMaxMin))
+            title = "Energy mix"
+        elif variable=="capacity":
+            print("Getting capacity from all generators...")
+            for g in model.GEN:
+                gen_output.append(model.genCapacity[g])
+            title = "Capacity mix"
+        elif variable=="spilled":
+            print("Getting curatailed energy from all generators...")
+            for g in model.GEN:
+                gen_output.append(sum(self.computeCurtailment(model,g,t,s) for t in timeMaxMin))
+            title = "Energy spilled"
+        else:
+            print("Variable not valid")
+            return
+        #all_generators = self.grid.getGeneratorsPerAreaAndType()
+
+        if relative:
+            prodsum={}
+            for ar in areas:
+                prodsum[ar] = 0
+                for i in model.GEN:
+                    if ar == model.nodeArea[model.genNode[i]]:
+                        prodsum[ar] += gen_output[i]
+                             
+        plt.figure()
+        ax = plt.subplot(111)
+        width = 0.8
+        previous = [0]*len(areas)
+        numCurves = len(gentypes)+1
+        #colours = cm.hsv(np.linspace(0, 1, numCurves))
+        colours = cm.viridis(np.linspace(0, 1, numCurves))
+        #colours = cm.Set3(np.linspace(0, 1, numCurves))
+        #colours = cm.Grays(np.linspace(0, 1, numCurves))
+        #colours = cm.Dark2(np.linspace(0, 1, numCurves))
+        count=0
+        ind = range(len(areas))
+        for typ in gentypes:
+            A=[]
+            for ar in model.AREA:
+                prod = 0
+                for g in model.GEN:
+                    if (typ==model.genType[g])&(ar==model.nodeArea[model.genNode[g]]):
+                        prod += gen_output[g]
+                    else:
+                        prod += 0
+                if relative:
+                    if prodsum[ar]>0:
+                        prod = prod/prodsum[ar]
+                        A.append(prod)
+                    else:
+                        A.append(prod)
+                else:
+                    A.append(prod)
+            plt.bar(ind,A, width,label=typ,
+                    bottom=previous,color=colours[count])
+            previous = [previous[i]+A[i] for i in range(len(A))]
+            count = count+1
+
+        handles, labels = ax.get_legend_handles_labels()
+        handles.reverse()
+        labels.reverse()
+        plt.legend(handles, labels, loc='upper right', fontsize='medium')
+#        plt.legend(handles, labels, loc='best',
+#                   bbox_to_anchor=(1.05,1), borderaxespad=0.0)
+        plt.xticks(np.arange(len(areas))+width/2., tuple(areas) )
+        if showTitle:
+            plt.title(title)
+        plt.show()
+        return
+        
+    def plotAreaPrice(self, model, boxplot=False, areas=None,timeMaxMin=None,showTitle=True,stage=1):
+        '''Show area price(s)
+        
+        Parameters
+        ----------
+        areas (list)
+            list of areas to show
+        timeMaxMin (list) (default = None)
+            [min, max] - lower and upper time interval
+        '''
+        import matplotlib.pyplot as plt
+        import matplotlib.cm as cm
+        
+        s = stage
+        if areas is None:
+            areas = list(model.AREA)
+        if timeMaxMin is None:
+            timeMaxMin = list(model.TIME)
+        timerange = range(timeMaxMin[0],timeMaxMin[-1]) 
+        
+        numCurves = len(areas)+1
+        colours = cm.viridis(np.linspace(0, 1, numCurves))
+        count = 0
+        if boxplot:
+            areaprice = {}
+            for a in areas:
+                areaprice[a] = {}
+                areaprice[a] = [self.computeAreaPrice(model,a,t,s) for t in timerange]
+            df = pd.DataFrame.from_dict(areaprice)
+            props = dict(whiskers='DarkOrange', medians='lime', caps='Gray')
+            boxprops = dict(linestyle='--', linewidth=3, color='DarkOrange', facecolor='k')
+            flierprops = dict(marker='o', markerfacecolor='none', markersize=8,linestyle='none')
+            meanpointprops = dict(marker='D', markeredgecolor='black',markerfacecolor='red')
+            medianprops = dict(linestyle='-', linewidth=4, color='red')
+            df.plot.box(color=props, boxprops=boxprops, flierprops=flierprops,
+                        meanprops=meanpointprops, medianprops=medianprops, patch_artist=True)
+            plt.title('Area Price')
+            #plt.legend(areas)
+        else:
+            plt.figure()
+            for a in areas:
+                areaprice = [self.computeAreaPrice(model,a,t,s) for t in timerange]
+                plt.plot(timerange,areaprice,label=a, color=colours[count], lw=2.0)
+                count += 1
+                if showTitle:
+                    plt.title("Area price")
+            plt.legend(loc='upper right',fontsize='medium')
+        plt.show()
+        return
+        
+    def plotWelfare(self, model, areas=None,timeMaxMin=None,relative=False,
+                      showTitle=True,variable="energy",gentypes=None, stage=2):
+        '''
+        Plot welfare
+        
+        Parameters
+        ----------
+        areas : list of sting
+            Which areas to include, default=None means include all
+        timeMaxMin : list of two integers
+            Time range, [min,max]
+        relative : boolean
+            Whether to plot absolute (false) or relative (true) values
+        variable : string ("energy","capacity","spilled")
+            Which variable to plot (default is energy production)
+        gentypes : list
+            List of generator types to include. None gives all.
+        ''' 
+        import matplotlib.pyplot as plt
+        import matplotlib.cm as cm
+        
+        s = stage
+        if areas is None:
+            areas=[]
+            for c in model.LOAD:
+                areas.append(model.nodeArea[model.demNode[c]])
+        if timeMaxMin is None:
+            timeMaxMin = list(model.TIME)
+        if gentypes is None:
+            gentypes = list(model.GENTYPE)
+
+        welfare={}
+        if variable=="all":
+            print("Getting welfare from all nodes...")
+            types = ['PS','CS','CR']
+            for typ in types:
+                welfare[typ] = {}
+                for c in model.LOAD:
+                    welfare[typ][c] = sum([self.computeAreaWelfare(model,c,t,s)[typ]
+                                            *model.samplefactor[t] for t in model.TIME])
+            title = "Total welfare"
+        else:
+            print("Variable not valid")
+            return
+
+        if relative:
+            total={}
+            for c in model.LOAD:
+                total[c]=0
+                for typ in types:
+                    total[c] += sum([self.computeAreaWelfare(model,c,t,s)[typ]
+                                    *model.samplefactor[t] for t in model.TIME])
+                             
+        plt.figure()
+        ax = plt.subplot(111)
+        width = 0.8
+        previous = [0]*len(areas)
+        numCurves = len(types)+1
+        #colours = cm.hsv(np.linspace(0, 1, numCurves))
+        colours = cm.viridis(np.linspace(0, 1, numCurves))
+        #colours = cm.Set3(np.linspace(0, 1, numCurves))
+        #colours = cm.Grays(np.linspace(0, 1, numCurves))
+        #colours = cm.Dark2(np.linspace(0, 1, numCurves))
+        count=0
+        ind = range(len(model.LOAD))
+        for typ in types:
+            A=[]
+            for c in model.LOAD:
+                if relative:
+                    if total[c]>0:
+                        welfare[typ][c] = welfare[typ][c]/total[c]
+                        A.append(welfare[typ][c])
+                else:
+                    A.append(welfare[typ][c])
+            plt.bar(ind,A, width,label=typ,bottom=previous,color=colours[count])
+            previous = [previous[i]+A[i] for i in range(len(A))]
+            count = count+1
+
+        handles, labels = ax.get_legend_handles_labels()
+        handles.reverse()
+        labels.reverse()
+        plt.legend(handles, labels, loc='upper right', fontsize='medium')
+#        plt.legend(handles, labels, loc='best',
+#                   bbox_to_anchor=(1.05,1), borderaxespad=0.0)
+        plt.xticks(np.arange(len(areas))+width/2., tuple(areas) )
+        if showTitle:
+            plt.title(title)
+        plt.show()
+        
+        return
+    
+    def plotInvestments(self,filename, variable, unit='capacity'):
+        '''
+        Plot investment bar plots
+        
+        filename: string
+            excel-file generated by 'saveDeterministicResults'
+        variable: string
+            dcbranch, acbranch, node, generator
+        unit: string
+            capacity, monetary
+        '''
+        import matplotlib as plt
+        
+        if variable=='dcbranch':
+            df_res = self.loadResults(filename, sheet='branches')
+            df_res = df_res[df_res['type']=='dcdirect']
+            df_res = df_res.groupby(['fArea','tArea']).sum()
+            plt.figure()
+            df_res['newCapacity'][df_res['newCapacity']>0].plot.bar()
+        elif variable=='acbranch':
+            df_res = self.loadResults(filename, sheet='branches')
+            df_res = df_res[df_res['type']=='ac']
+            df_res = df_res.groupby(['fArea','tArea']).sum()
+            plt.figure()
+            df_res['newCapacity'][df_res['newCapacity']>0].plot.bar()
+        elif variable=='node':
+            df_res = self.loadResults(filename, sheet='nodes')
+        elif variable=='generator':
+            df_res = self.loadResults(filename, sheet='generation')
+            df_res = df_res.groupby(['area'])
+            plt.figure()
+            df_res['newCapacity'].plot.bar(stacked=True)
+        else:
+            print('A variable has to be chosen: dcbranch, acbranch, node, generator')
+        
+        return
+        
+
         
         
         
@@ -2087,360 +2396,13 @@ class CostBenefit(object):
                 return False
         return True
         
-        
-class Results(object):
-    '''
-    Temporary class for processing result data in PowerGIM
-
-
-    Parameters
-    ----------
-    grid : GridData
-        PowerGIM GridData object
-    resultfile : string
-        name of excel file for storage of results
-
-    '''  
-    
-    def __init__(self,grid,resultfile):
-        '''
-        Create a PowerGIM Results object
-            
-        '''
-        self.grid = grid
-        self.timerange = grid.timerange
-        self.results = resultfile
-        
-        return
-
-
-    def plotMapGrid(self,nodetype=None,branchtype=None,dcbranchtype=None,
-                    show_node_labels=False,branch_style='c',latlon=None,
-                    timeMaxMin=None,
-                    dotsize=40, filter_node=None, filter_branch=None,
-                    draw_par_mer=False,showTitle=True, colors=True):
-        '''
-        Plot results to map
-        
-        Parameters
-        ----------
-        nodetype : string
-            "", "area", "nodalprice", "energybalance", "loadshedding"
-        branchtype : string
-            "", "capacity", "area", "utilisation", "flow", "sensitivity"
-        dcbranchtype : string
-            "", "capacity"
-        show_node_labels : boolean
-            whether to show node names (true/false)
-        branch_style : string or list of strings (optional)
-            How branch capacity and flow should be visualised. 
-            "c" = colour, "t" = thickness. The two options may be combined.
-        dotsize : integer (optional)
-            set dot size for each plotted node
-        latlon: list of four floats (optional)
-            map area [lat_min, lon_min, lat_max, lon_max]
-        filter_node : list of two floats (optional)
-            [min,max] - lower and upper cutoff for node value
-        filter_branch : list of two floats
-            [min,max] - lower and upper cutoff for branch value
-        draw_par_mer : boolean
-            whether to draw parallels and meridians on map 
-        showTitle : boolean
-        colors : boolean
-            Whether to use colours or not 
-        '''
-        
-        # basemap is only used here, so to allow using powergama without
-        # basemap installed, it is best to put import statement here.
-        from mpl_toolkits.basemap import Basemap
-
-        if timeMaxMin is None:
-            timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
-
-        plt.figure()
-        data = self.grid
-        #res = self
-        
-        if latlon is None:
-            lat_max =  max(data.node.lat)+1
-            lat_min =  min(data.node.lat)-1
-            lon_max =  max(data.node.lon)+1
-            lon_min =  min(data.node.lon)-1
-        else:
-            lat_min = latlon[0]
-            lon_min = latlon[1]
-            lat_max = latlon[2]
-            lon_max = latlon[3]
-        
-        # Use the average latitude as latitude of true scale
-        lat_truescale = np.mean(data.node.lat)
-                
-        m = Basemap(resolution='l',projection='merc',\
-                      lat_ts=lat_truescale, \
-                      llcrnrlon=lon_min, llcrnrlat=lat_min,\
-                      urcrnrlon=lon_max ,urcrnrlat=lat_max, \
-                      anchor='W')
-         
-        # Draw coastlines, meridians and parallels.
-        m.drawcoastlines()
-        #m.drawcountries(zorder=0)
-        
-        if colors:
-            m.fillcontinents(color='coral',lake_color='aqua',zorder=0)
-            m.drawmapboundary(fill_color='aqua')
-        else:
-            m.fillcontinents(zorder=0)
-            m.drawmapboundary()
-        
-        if draw_par_mer:
-            m.drawparallels(np.arange(_myround(lat_min,10,'floor'),
-                _myround(lat_max,10,'ceil'),10),
-                labels=[1,1,0,0])
-
-            m.drawmeridians(np.arange(_myround(lon_min,10,'floor'),
-                _myround(lon_max,10,'ceil'),10),
-                labels=[0,0,0,1])
-                
-        
-
-
-        # AC Branches
-        num_branches = data.branch.shape[0]
-        
-        lwidths = [2]*num_branches
-        
-        # default values:
-        branch_value = np.asarray([0.5]*num_branches)
-        branch_colormap = cm.gray
-        branch_plot_colorbar = True
-        
-        if branchtype=='area':
-            areas = data.node.area
-            allareas = data.getAllAreas()
-            branch_value = [-1]*num_branches
-            nodes_from = data.branchFromNodeIdx()
-            nodes_to = data.branchToNodeIdx()
-            for i in range(num_branches):
-                #node_indx_from = data.node.name.index(data.branch.node_from[i])
-                #node_indx_to = data.node.name.index(data.branch.node_to[i])
-                area_from = areas[nodes_from[i]]
-                area_to = areas[nodes_to[i]]
-                if area_from == area_to:
-                    branch_value[i] = allareas.index(area_from)
-                branch_value = np.asarray(branch_value)
-#            branch_colormap = plt.get_cmap('hsv')
-            branch_colormap = cm.prism
-            branch_colormap.set_under('k')
-            filter_branch = [0,len(allareas)]
-            branch_label = 'Branch area'
-            branch_plot_colorbar = False
-        elif branchtype=='utilisation':
-            utilisation = self.getAverageUtilisation(timeMaxMin)
-            branch_value = utilisation
-            branch_colormap = plt.get_cmap('hot')
-            branch_label = 'Branch utilisation'
-        elif branchtype=='capacity':         
-            cap = data.branch.capacity
-            branch_plot_colorbar = False
-            branch_label = 'Branch capacity'
-            if 'c' in branch_style:
-                branch_value = np.asarray(cap)
-                branch_colormap = plt.get_cmap('hot')
-                branch_plot_colorbar = True
-                if filter_branch is None:
-                    # need an upper limit to avoid crash due to inf capacity
-                    maxcap = np.nanmax(branch_value)
-                    filter_branch = [0,np.round(maxcap,-2)+100]
-            if 't' in branch_style:
-                avgcap = np.mean(cap)
-                if avgcap == 0:
-                    lwidths = [0 for f in cap]  
-                else:
-                    lwidths = [2*f/avgcap for f in cap]  
-        elif branchtype=='flow':
-            avgflow = self.getAverageBranchFlows(timeMaxMin)[2]
-            if 'c' in branch_style:
-                branch_value = np.asarray(avgflow)
-                branch_colormap = plt.get_cmap('hot')
-            else:
-                branch_plot_colorbar = False
-            if 't' in branch_style:
-                avgavgflow = np.mean(avgflow)
-                lwidths = [2*f/avgavgflow for f in avgflow]        
-            branch_label = 'Branch flow'
-            #branch_value = np.asarray(avgflow)
-            #branch_colormap = plt.get_cmap('hot')
-        elif branchtype=='sensitivity':
-            branch_value = np.zeros(num_branches)
-            avgsense = self.getAverageBranchSensitivity(timeMaxMin)
-            branch_value[self.idxConstrainedBranchCapacity] = -avgsense
-            branch_colormap = plt.get_cmap('hot')
-            branch_label = 'Branch sensitivity'
-            # These sensitivities are mostly negative 
-            # (reduced cost by increasing branch capacity)
-            #minsense = np.nanmin(avgsense)
-            #maxsense = np.nanmax(avgsense)
-        else:
-            branch_value = np.asarray([0.5]*num_branches)
-            branch_colormap = cm.gray
-            branch_plot_colorbar = False
-        
-        idx_from = data.branchFromNodeIdx()
-        idx_to = data.branchToNodeIdx()
-        branch_lat1 = [data.node.lat[i] for i in idx_from]        
-        branch_lon1 = [data.node.lon[i] for i in idx_from]        
-        branch_lat2 = [data.node.lat[i] for i in idx_to]        
-        branch_lon2 = [data.node.lon[i] for i in idx_to]
-
-        x1, y1 = m(branch_lon1,branch_lat1)
-        x2, y2 = m(branch_lon2,branch_lat2)
-
-        ls = [[(x1[i],y1[i]),(x2[i],y2[i])] for i in range(len(x1))]
-        #ls = [[(x1[i],y1[i]),(x2[i],y2[i])] for i in range(num_branches)]
-        ax=plt.axes()    
-        if not lwidths:
-            print("No new data")
-        else:
-            line_segments_ac = mpl.collections.LineCollection(
-                    ls, linewidths=lwidths,cmap=branch_colormap)
-        
-            if filter_branch is not None:
-                line_segments_ac.set_clim(filter_branch)
-            line_segments_ac.set_array(branch_value)
-            ax.add_collection(line_segments_ac)
-      
-
-        # DC Branches
-        lwidths = [2] * 1
-        #lwidths = [2] * num_dcbranches
-        if dcbranchtype is not None:
-            branch_plot_colorbar = False
-            branch_value = np.asarray([0.1] * num_branches)
-            branch_colormap = cm.winter
-        
-        if dcbranchtype == 'flow':
-            avgTot = self.getAverageBranchFlows(timeMaxMin,False)[2]
-            if 'c' in branch_style:
-                branch_value = np.asarray(avgTot)
-                branch_colormap = plt.get_cmap('hot')
-                branch_plot_colorbar = True
-            if 't' in branch_style:
-                avgavgflow = np.mean(avgTot)
-                lwidths = [2*f/avgavgflow for f in avgTot]        
-            branch_label = 'Branch flow'
-        elif dcbranchtype == 'capacity':
-            cap = [data.branch.capacity[i] for i in range(len(data.branch.capacity)) if data.branch.type[i] == 'dc']
-            branch_value = np.asarray(cap)
-            maxcap = np.nanmax(branch_value)
-            branch_colormap = plt.get_cmap('hot')
-            branch_label = 'Branch capacity'
-            if filter_branch is None:
-                # need an upper limit to avoid crash due to inf capacity
-                filter_branch = [0,np.round(maxcap,-2)+100]
-            if 't' in branch_style:
-                avgcap = np.mean(cap)
-                lwidths = [2*f/avgcap for f in cap]  
-            
-        idx_from = data.dcBranchFromNodeIdx()   # empty
-        idx_to = data.dcBranchToNodeIdx()       # empty
-        branch_lat1 = [data.node.lat[i] for i in idx_from]        
-        branch_lon1 = [data.node.lon[i] for i in idx_from]        
-        branch_lat2 = [data.node.lat[i] for i in idx_to]        
-        branch_lon2 = [data.node.lon[i] for i in idx_to]
-
-        x1, y1 = m(branch_lon1,branch_lat1)
-        x2, y2 = m(branch_lon2,branch_lat2)
-        ls = [[(x1[i],y1[i]),(x2[i],y2[i])] for i in range(len(x1))]
-        line_segments_dc = mpl.collections.LineCollection(
-                ls, linewidths=lwidths,colors='black')
-        #line_segments_dc = mpl.collections.LineCollection(
-        #        ls, linewidths=2,colors='blue')
-        if filter_branch is not None:
-            line_segments_dc.set_clim(filter_branch)
-        line_segments_dc.set_array(branch_value)
-        ax.add_collection(line_segments_dc)
-        
-        # Nodes
-        node_plot_colorbar = True
-        if nodetype=='area':
-            areas = data.node.area
-            allareas = data.getAllAreas()
-            #colours_co = cm.prism(np.linspace(0, 1, len(allareas)))
-            node_label = 'Node area'
-            node_value = [allareas.index(c) for c in areas]
-            node_colormap = cm.prism
-            node_plot_colorbar = False
-            # this is to get same colours as for branches:
-            node_colormap.set_under('k')
-            filter_node = [0,len(allareas)]
-        elif nodetype=='nodalprice':
-            avgprice = self.getAverageNodalPrices(timeMaxMin)
-            node_label = 'Nodal price'
-            node_value = avgprice
-            node_colormap = cm.jet
-        elif nodetype=='lmp':
-            node_value = self.getAverageNodalPrices(timeMaxMin)
-            node_label = 'Locational marginal price'
-            node_colormap = cm.jet
-        elif nodetype=='energybalance':
-            avg_energybalance = self.getAverageEnergyBalance(timeMaxMin)
-            node_label = 'Nodal energy balance'
-            node_value = avg_energybalance
-            node_colormap = cm.hot
-        elif nodetype=='loadshedding':
-            node_value = self.getLoadsheddingPerNode(timeMaxMin)
-            node_label = 'Loadshedding'
-            node_colormap = cm.hot
-        else:
-            node_value = 'dimgray'
-            node_colormap = cm.jet
-            node_label = ''
-            node_plot_colorbar  = False
-        
-
-        x, y = m(data.node['lon'].tolist(),data.node['lat'].tolist())
-        if nodetype=='lmp':
-            sc = plt.hexbin(x, y, gridsize=20, C=node_value, 
-                            cmap=node_colormap)
-        else:
-            sc=m.scatter(x,y,marker='o',c=node_value, cmap=node_colormap,
-                         zorder=2,s=dotsize)            
-        #sc.cmap.set_under('dimgray')
-        #sc.cmap.set_over('dimgray')
-        if filter_node is not None:
-            sc.set_clim(filter_node[0], filter_node[1])
-            
-            # #TODO: Er dette nødvendig lenger, Harald?
-            # #nodes with NAN nodal price plotted in gray:
-            # for i in range(len(avgprice)):
-                # if np.isnan(avgprice[i]):
-                    # m.scatter(x[i],y[i],c='dimgray',
-                              # zorder=2,s=dotsize)
-        
-        
-        #NEW Colorbar for nodes
-        # m. or plt.?
-        if node_plot_colorbar:
-            axcb2 = plt.colorbar(sc)
-            axcb2.set_label(node_label)
-
-        #NEW Colorbar for branch capacity
-        if branch_plot_colorbar:
-            axcb = plt.colorbar(line_segments_ac)
-            axcb.set_label(branch_label)
-
-
-        # Show names of nodes
-        if show_node_labels:
-            labels = data.node['id']
-            x1,x2,y1,y2 = plt.axis()
-            offset_x = (x2-x1)/50
-            for label, xpt, ypt in zip(labels, x, y):
-                if xpt > x1 and xpt < x2 and ypt > y1 and ypt < y2:
-                    plt.text(xpt+offset_x, ypt, label)
-        
-        if showTitle:
-            plt.title('Nodes %s and branches %s' %(nodetype,branchtype))
-        plt.show()
-                
-        return
+def _myround(x, base=1,method='round'):
+    '''Round to nearest multiple of base'''
+    if method=='round':
+        return int(base * round(float(x)/base))
+    elif method=='floor':
+        return int(base * math.floor(float(x)/base))
+    elif method=='ceil':
+        return int(base * math.ceil(float(x)/base))
+    else:
+        raise
