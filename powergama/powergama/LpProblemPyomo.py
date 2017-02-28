@@ -141,13 +141,19 @@ class LpProblem(object):
         model.cMaxFlowDc = pyo.Constraint(model.BRANCH_DC, rule=maxflowDc_rule)
         
         # 2 Generator output limit                                 
-        def Pgen_rule(model,g):
-            expr = model.varGeneration[g] <=  model.genPmaxLimit[g]
-            return expr
-        
-        model.cMaxPgen = pyo.Constraint(model.GEN, rule=Pgen_rule)
+        '''
+        Generator output constraint is not necessary, as lower and upper 
+        bounds are set for each timestep in _update_progress. Should not
+        be specified as constraint with with pmax as limit, since e.g.
+        PV may have higher production than generator rating.
+        '''
+#        def Pgen_rule(model,g):
+#            expr = model.varGeneration[g] <=  model.genPmaxLimit[g]
+#            return expr
+#        
+#        model.cMaxPgen = pyo.Constraint(model.GEN, rule=Pgen_rule)
                     
-        # 3 Pump output limit                                 
+        # 3 Pump output limit
         def pump_rule(model,g):
             expr = (model.varPump[g] <= model.pumpCapacity[g])
             return expr
@@ -688,7 +694,12 @@ class LpProblem(object):
                 raise Exception("Solver ({}) is not capable of warm start"
                                     .format(opt.name))
                 
-            
+            #debugging:
+            if False:
+                print("Solver status = {}. Termination condition = {}"
+                    .format(res.solver.status,
+                            res.solver.termination_condition))
+                        
             if (res.solver.status != pyomo.opt.SolverStatus.ok):
                 warnings.warn("Something went wrong with LP solver: {}"
                                 .format(res.solver.status))

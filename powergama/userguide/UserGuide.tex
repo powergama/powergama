@@ -738,7 +738,7 @@ The three columns related to pumping only need to be filled out if the pumping c
 	``pmax"			& Maximum production 	& float	& MW \\
 	``pmin"			& Minimum production	& float	& MW \\
 	``fuelcost"		& Cost of generation		& float	& €/MWh \\
-	``inflow\_fac"	& Inflow factor			& float	& MW \\
+	``inflow\_fac"	& Inflow factor			& float	&  \\
 	``inflow\_ref"		& Inflow profile reference	& string & \\
 	``storage\_cap"	& Storage capacity		& float	& MWh \\
 	``storage\_price"			& Base for storage value	& float	& €/MWh \\
@@ -761,7 +761,7 @@ The three columns related to pumping only need to be filled out if the pumping c
 \texttt{storage\_capacity} is the capacity of the storage system. This is usually relevant only for hydro power and solar CSP.
 \texttt{storagevalue\_ref} is the string identifier of the associated storage value table to be used for this generator/storage system
 \texttt{storage\_init} is the initial relative filling level of the storage.
-\texttt{inflow\_factor} is the inflow factor.
+\texttt{inflow\_fac} is the inflow factor.
 \texttt{inflow\_ref} is the string identifier of the associated inflow profile.
 
 Power inflow at a given timestep $t$ is computed according to
@@ -1042,7 +1042,7 @@ Already decided increase in generator capacity in stage 2 may be specified with 
 	``expand"			& Consider capacity expansion & int (0,1,2)		& \\
 	``fuelcost"		& Cost of generation		& float	& €/MWh \\
 	``fuelcost\_ref"	& Cost profile		& string \\
-	``inflow\_fac"	& Inflow factor			& float	& MW \\
+	``inflow\_fac"	& Inflow factor			& float	&  \\
 	``inflow\_ref"		& Inflow profile reference	& string & \\
 	``pavg"			& Maximum average power (OPT)		& float	& MW \\
 	``p\_maxNew"	& Maximum new capacity (OPT)		& float	& MW \\	
