@@ -770,22 +770,26 @@ Power inflow at a given timestep $t$ is computed according to
 	 P_\text{inflow}(t) =  P_\text{max} \times \text{inflow factor} \times \text{profile value}(t) .
 \end{equation}
 %
-In case the annual inflow is known, the inflow factor can be computed according to
+In case the annual inflow is known, the inflow factor can be expressed by integrating the above equation, giving
 \begin{equation}
 	\label{eq:inflow_annual}
-	 \text{inflow factor} = \frac{\text{annual inflow}}{8760~\text{h} \times P_\text{max}}.
+	 \text{inflow factor} = \frac{\text{annual inflow}}{8760~\text{h} \times P_\text{max} \times  \text{avg}(\text{profile value})}.
 \end{equation}
 %
 
+\noindent
 There are two typical ways to use inflow factor and inflow profile:
 \begin{itemize}
-\item Normalised inflow with \emph{maximum} value = 1: profile gives power output per installed capacity, with average value reflecting the capacity factor of the generator. 
-In this case, \texttt{inflow\_factor} should be approximately 1, larger for good sites and smaller for bad sites.  Note that this may mean that at times $ P_\text{inflow}>P_\text{max}$.
-\item Normalised inflow profile with \emph{average} value = 1:  \texttt{inflow\_factor} is equal to capacity factor, i.e. average inflow divided by generator capacity. Typical capacity factors are  0.5 for a large hydro storage system, 0.25 for wind power, and 0.22 for solar PV.
-It is important to keep in mind that if the generator capacity is upgraded without the energy inflow changing (which may be relevant if there is storage), the inflow factor must be reduced correspondingly. 
+\item Normalised inflow profile with \emph{maximum} value = 1: 
+profile gives power output per installed capacity, with average value equal to the capacity factor of the generator. 
+In this case, \texttt{inflow\_factor} should be approximately 1, larger for good sites and smaller for bad sites.  If inflow factor is larger than one, then at times $ P_\text{inflow}>P_\text{max}$.
+\item Normalised inflow profile with \emph{average} value = 1:  
+\texttt{inflow\_factor} is equal to capacity factor, i.e. average inflow divided by generator capacity. Typical capacity factors are  0.5 for a large hydro storage system, 0.25 for wind power, and 0.22 for solar PV.
 %The inflow factor is the ratio of the average energy into and the maximum energy out of the generator.
 \end{itemize}
 %
+It is important to keep in mind that if the generator capacity is upgraded without the energy inflow changing (which may be relevant if there is storage), the inflow factor must be reduced correspondingly. 
+
 If fine resolution is not needed, many generators may use the same profile, but with different inflow factors to get representative capacity factor.
 
 \subsection{Time dependence of power consumption, power inflow and storage values}
@@ -801,9 +805,9 @@ For these, there are two field in the input data, one parameter that gives the a
 The reason for this splitting between absolute scale and normalised profile is to enable multiple references to the same profile (e.g. normalised profile for demand may be the same for all consumers within an area), and to simplify the task of creating scenarios by scaling up or down the absolute scale without the need to change the profile time series.
 
 Power inflow is given by weather conditions. Hydro has mainly a seasonal profile, whereas wind and solar varies from hour to hour. Solar has a characteristic daily profile with no production in dark hours. 
-As stated previously, there are two alternative ways to specify inflow profile and absolute scale are used: 
-1) The profile is normalised to give power inflow per installed capacity (with average value representing the power capacity), and absolute scale is nominally equal to one; 
-2) The profile is normalised to have an average value of unity, and absolute scale represents the power capacity.
+As stated previously, there are two alternative ways to specify inflow profile and absolute scale (inflow factor) are used: 
+1) The profile is normalised to give power inflow per installed capacity (with average value representing the capacity factor), and absolute scale is nominally equal to one; 
+2) The profile is normalised to have an average value of unity, and absolute scale represents the capacity factor.
 
 
 
