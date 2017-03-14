@@ -121,6 +121,7 @@ class SipModel():
         model.nodeType = pyo.Param(model.NODE, within=model.NODETYPE)
         model.refNodes = pyo.Param(model.NODE, within=pyo.Boolean)
         
+        
         #generators
         model.genCostAvg = pyo.Param(model.GEN, within=pyo.Reals)
         model.genCostProfile = pyo.Param(model.GEN,model.TIME,
@@ -153,6 +154,7 @@ class SipModel():
         model.demandProfile = pyo.Param(model.LOAD,model.TIME,
                                         within=pyo.Reals)
         model.emissionCap = pyo.Param(model.LOAD, within=pyo.NonNegativeReals)
+        model.maxShed = pyo.Param(model.LOAD, model.TIME, within=pyo.NonNegativeReals)
         
         # VARIABLES ##########################################################
     
@@ -217,13 +219,14 @@ class SipModel():
         model.generation = pyo.Var(model.GEN, model.TIME,model.STAGE, 
                                    within = pyo.NonNegativeReals)
         # load shedding
-        def loadShed_bounds(model, n, t, h):
-            ub = 0
-            for c in model.LOAD:
-                if model.demNode[c]==n:
-                    ub += model.demandAvg[c]*model.demandProfile[c,t]
+        def loadShed_bounds(model, c, t, h):
+            ub = model.maxShed[c,t]
+            #ub = 0
+            #for c in model.LOAD:
+            #    if model.demNode[c]==n:
+            #        ub += model.demandAvg[c]*model.demandProfile[c,t]
             return (0,ub)
-        model.loadShed = pyo.Var(model.NODE, model.TIME, model.STAGE,
+        model.loadShed = pyo.Var(model.LOAD, model.TIME, model.STAGE,
                                  domain = pyo.NonNegativeReals,
                                  bounds = loadShed_bounds) 
         
@@ -360,7 +363,9 @@ class SipModel():
                     expr += model.generation[g,t,h]
                     
             # load shedding
-            expr += model.loadShed[n,t,h]
+            for c in model.LOAD:
+                if model.demNode[c]==n:
+                    expr += model.loadShed[c,t,h]
 
             # consumed power
             for c in model.LOAD:
@@ -506,8 +511,8 @@ class SipModel():
                         model.genCostAvg[i]*model.genCostProfile[i,t]
                         +model.genTypeEmissionRate[model.genType[i]]*model.CO2price)
                         for i in model.GEN for t in model.TIME)
-            opcost += sum(model.loadShed[n,t,stage]*model.VOLL*model.samplefactor[t]
-                            for n in model.NODE for t in model.TIME)
+            opcost += sum(model.loadShed[c,t,stage]*model.VOLL*model.samplefactor[t]
+                            for c in model.LOAD for t in model.TIME)
             if stage == len(model.STAGE):
                 opcost = opcost*(annuityfactor(model.financeInterestrate,model.financeYears)
                     - annuityfactor(model.financeInterestrate,int(stage-1)*model.stage2TimeDelta))
@@ -828,6 +833,7 @@ class SipModel():
         di['demandProfile'] ={}
         di['demNode'] = {}
         di['emissionCap'] = {}
+        di['maxShed'] = {}
         for k,row in grid_data.consumer.iterrows():
             di['demNode'][k] = row['node']
             di['demandAvg'][k] = row['demand_avg']
@@ -835,6 +841,7 @@ class SipModel():
             ref = row['demand_ref']
             for i,t in enumerate(grid_data.timerange):
                 di['demandProfile'][(k,t)] = grid_data.profiles[ref][i]
+                di['maxShed'][(k,t)] = grid_data.profiles[ref][i]*row['demand_avg']
         
 
         # Read input data from XML file
@@ -894,10 +901,10 @@ class SipModel():
                 list(range(1,int(i.attrib['stages'])+1))}
         
          # Compute matrices used in power flow equaions 
-        import scipy.sparse
-        import networkx as nx
+#        import scipy.sparse
+#        import networkx as nx
         print("Computing B and DA matrices...")        
-        Bbus, DA = grid_data.computePowerFlowMatrices(const.baseZ)
+#        Bbus, DA = grid_data.computePowerFlowMatrices(const.baseZ)
 
         n_i = di['NODE'][None]
         b_i = di['BRANCH'][None]
@@ -905,29 +912,31 @@ class SipModel():
         di['coeff_DA'] = dict()
         
         print("Creating B and DA coefficients...")        
-        cx = scipy.sparse.coo_matrix(Bbus)
-        for i,j,v in zip(cx.row, cx.col, cx.data):
-            di['coeff_B'][(n_i[i],n_i[j])] = v
-
-        cx = scipy.sparse.coo_matrix(DA)
-        for i,j,v in zip(cx.row, cx.col, cx.data):
-            di['coeff_DA'][(b_i[i],n_i[j])] = v
-
-        # Find synchronous areas and specify reference node in each area
-        G = nx.Graph()
-        G.add_nodes_from(grid_data.node['id'])
-        G.add_edges_from(zip(grid_data.branch['node_from'],
-                             grid_data.branch['node_to']))
-
-        G_subs = nx.connected_component_subgraphs(G)
+#        cx = scipy.sparse.coo_matrix(Bbus)
+#        for i,j,v in zip(cx.row, cx.col, cx.data):
+#            di['coeff_B'][(n_i[i],n_i[j])] = v
+#
+#        cx = scipy.sparse.coo_matrix(DA)
+#        for i,j,v in zip(cx.row, cx.col, cx.data):
+#            di['coeff_DA'][(b_i[i],n_i[j])] = v
+#
+#        # Find synchronous areas and specify reference node in each area
+#        G = nx.Graph()
+#        G.add_nodes_from(grid_data.node['id'])
+#        G.add_edges_from(zip(grid_data.branch['node_from'],
+#                             grid_data.branch['node_to']))
+#
+#        G_subs = nx.connected_component_subgraphs(G)
         refnodes = []
-        for gr in G_subs:
-            refnode = gr.nodes()[0]
-            refnodes.append(refnode)
-            print("Found synchronous area (size = {}), using ref node = {}"
-                    .format(gr.order(),refnode))
+#        for gr in G_subs:
+#            refnode = gr.nodes()[0]
+#            refnodes.append(refnode)
+#            print("Found synchronous area (size = {}), using ref node = {}"
+#                    .format(gr.order(),refnode))
         # use first node as voltage angle reference
         di['refNodes'] = {n:True for n in refnodes}
+        
+        
 
         return {'powergim':di}
 
@@ -1081,7 +1090,7 @@ class SipModel():
         
         return sum(deltaP[i]*flow[i] for i in range(len(deltaP)))
 
-    def computeCostBranch(self,model,b,stage,include_om=False):
+    def computeCostBranch(self,model,b,stage=2,include_om=False):
         '''Investment cost of single branch NPV
         
         corresponds to  firstStageCost in abstract model'''
@@ -1164,7 +1173,7 @@ class SipModel():
         return cost
 
 
-    def computeCostGenerator(self,model,g,stage,include_om=False):
+    def computeCostGenerator(self,model,g,stage=2,include_om=False):
         '''Investment cost of generator NPV
         '''
         ar = 1
@@ -1224,7 +1233,7 @@ class SipModel():
     
     
     
-    def computeCurtailment(self, model, g, t, stage):
+    def computeCurtailment(self, model, g, t, stage=2):
         '''compute curtailment [MWh] per generator per hour'''
         cur = 0
         gen_max = 0
@@ -1242,7 +1251,7 @@ class SipModel():
         
 
         
-    def computeAreaEmissions(self,model,c, stage, cost=False):
+    def computeAreaEmissions(self,model,c, stage=2, cost=False):
         '''compute total emissions from a load/country'''
         # TODO: ensure that all nodes are mapped to a country/load
         n = model.demNode[c]
@@ -1264,7 +1273,7 @@ class SipModel():
         return expr
         
                                 
-    def computeAreaRES(self, model,j,stage, shareof):
+    def computeAreaRES(self, model,j, shareof, stage=2):
         '''compute renewable share of demand or total generation capacity'''
         node = model.demNode[j]
         area = model.nodeArea[node]
@@ -1288,7 +1297,7 @@ class SipModel():
            print('Choose shareof dem or gen')
 
     
-    def computeAreaPrice(self, model, area, t, stage):
+    def computeAreaPrice(self, model, area, t, stage=2):
         '''cumpute the approximate area price based on max marginal cost'''
         mc = []
         for g in model.GEN:
@@ -1301,7 +1310,7 @@ class SipModel():
         return price
 
         
-    def computeAreaWelfare(self, model, c, t, stage):
+    def computeAreaWelfare(self, model, c, t, stage=2):
         '''compute social welfare for a given area and time step
         
         Returns: Welfare, ProducerSurplus, ConsumerSurplus, 
@@ -1607,6 +1616,7 @@ class SipModel():
         df_nodes.to_excel(excel_writer=writer,sheet_name="nodes") 
         df_gen.to_excel(excel_writer=writer,sheet_name="generation") 
         df_load.to_excel(excel_writer=writer,sheet_name="demand") 
+        writer.save()
 
 
     def extractResultingGridData(self,grid_data,
@@ -1790,8 +1800,8 @@ class SipModel():
         width = 0.8
         previous = [0]*len(areas)
         numCurves = len(gentypes)+1
-        #colours = cm.hsv(np.linspace(0, 1, numCurves))
-        colours = cm.viridis(np.linspace(0, 1, numCurves))
+        colours = cm.hsv(np.linspace(0, 1, numCurves))
+        #colours = cm.viridis(np.linspace(0, 1, numCurves))
         #colours = cm.Set3(np.linspace(0, 1, numCurves))
         #colours = cm.Grays(np.linspace(0, 1, numCurves))
         #colours = cm.Dark2(np.linspace(0, 1, numCurves))
@@ -1831,7 +1841,7 @@ class SipModel():
         plt.show()
         return
         
-    def plotAreaPrice(self, model, boxplot=False, areas=None,timeMaxMin=None,showTitle=True,stage=1):
+    def plotAreaPrice(self, model, boxplot=False, areas=None,timeMaxMin=None,showTitle=False,stage=1):
         '''Show area price(s)
         TODO: incoporate samplefactor
         
@@ -1853,7 +1863,8 @@ class SipModel():
         timerange = range(timeMaxMin[0],timeMaxMin[-1]) 
         
         numCurves = len(areas)+1
-        colours = cm.viridis(np.linspace(0, 1, numCurves))
+        #colours = cm.viridis(np.linspace(0, 1, numCurves))
+        colours = cm.hsv(np.linspace(0, 1, numCurves))
         count = 0
         if boxplot:
             areaprice = {}
@@ -1871,7 +1882,6 @@ class SipModel():
             medianprops = dict(linestyle='-', linewidth=4, color='red')
             df.plot.box(color=props, boxprops=boxprops, flierprops=flierprops,
                         meanprops=meanpointprops, medianprops=medianprops, patch_artist=True, showmeans=True)
-            plt.title('Area Price')
             #plt.legend(areas)
         else:
             plt.figure()
@@ -1881,12 +1891,15 @@ class SipModel():
                 count += 1
                 if showTitle:
                     plt.title("Area price")
-            plt.legend(loc='upper right',fontsize='medium')
+        if showTitle:
+            plt.title('Area Price')
+        plt.legend(loc='upper right',fontsize='medium')
+        plt.ylabel('Price [EUR/MWh]')
         plt.show()
         return
         
     def plotWelfare(self, model, areas=None,timeMaxMin=None,relative=False,
-                      showTitle=True,variable="energy",gentypes=None, stage=2):
+                      showTitle=False,variable="energy",gentypes=None, stage=2):
         '''
         Plot welfare
         
@@ -1924,7 +1937,7 @@ class SipModel():
                 welfare[typ] = {}
                 for c in model.LOAD:
                     welfare[typ][c] = sum([self.computeAreaWelfare(model,c,t,s)[typ]
-                                            *model.samplefactor[t] for t in model.TIME])
+                                            *model.samplefactor[t] for t in model.TIME])/10**9
             title = "Total welfare"
         else:
             print("Variable not valid")
@@ -1943,8 +1956,8 @@ class SipModel():
         width = 0.8
         previous = [0]*len(areas)
         numCurves = len(types)+1
-        #colours = cm.hsv(np.linspace(0, 1, numCurves))
-        colours = cm.viridis(np.linspace(0, 1, numCurves))
+        colours = cm.hsv(np.linspace(0, 1, numCurves))
+        #colours = cm.viridis(np.linspace(0, 1, numCurves))
         #colours = cm.Set3(np.linspace(0, 1, numCurves))
         #colours = cm.Grays(np.linspace(0, 1, numCurves))
         #colours = cm.Dark2(np.linspace(0, 1, numCurves))
@@ -1970,6 +1983,7 @@ class SipModel():
 #        plt.legend(handles, labels, loc='best',
 #                   bbox_to_anchor=(1.05,1), borderaxespad=0.0)
         plt.xticks(np.arange(len(areas))+width/2., tuple(areas) )
+        plt.ylabel('Annual welfare [bn€]')
         if showTitle:
             plt.title(title)
         plt.show()
@@ -1987,14 +2001,28 @@ class SipModel():
         unit: string
             capacity, monetary
         '''
-        import matplotlib as plt
-        
+        import matplotlib.pyplot as plt
+        import matplotlib.cm as cm
+        figsize=(8,6)
+        width = 0.8
         if variable=='dcbranch':
             df_res = self.loadResults(filename, sheet='branches')
             df_res = df_res[df_res['type']=='dcdirect']
             df_res = df_res.groupby(['fArea','tArea']).sum()
-            plt.figure()
-            df_res['newCapacity'][df_res['newCapacity']>0].plot.bar()
+            numCurves = len(df_res['newCapacity'][df_res['newCapacity']>0])+1
+            colours = cm.hsv(np.linspace(0, 1, numCurves))
+            if not df_res['newCapacity'][df_res['newCapacity']>0].empty:
+                ax1 = df_res['newCapacity'][df_res['newCapacity']>0].plot(kind='bar',
+                            title='new capacity', figsize=figsize, color=colours, width=width)
+                ax1.set_xlabel('Interconnector', fontsize=12)
+                ax1.set_xticklabels(ax1.xaxis.get_majorticklabels(), rotation=0)
+                ax1.set_ylabel('New capacity [MW]', fontsize=12)
+                ax2 = df_res[['cost_withOM','congestion_rent']][df_res['newCapacity']>0].divide(10**9).plot(
+                            kind='bar', title='costs and benefits', figsize=figsize, 
+                            legend=True, fontsize=11,color=colours, width=width)
+                ax2.set_xlabel('Interconnector', fontsize=12)
+                ax2.set_xticklabels(ax2.xaxis.get_majorticklabels(), rotation=0)
+                ax2.set_ylabel('Net present value [bn€]', fontsize=12)
         elif variable=='acbranch':
             df_res = self.loadResults(filename, sheet='branches')
             df_res = df_res[df_res['type']=='ac']
@@ -2012,6 +2040,36 @@ class SipModel():
             print('A variable has to be chosen: dcbranch, acbranch, node, generator')
         
         return
+        
+    def plotBranchData(self, model,stage=2):
+        '''
+        Plot branch data
+        '''
+        import matplotlib.pyplot as plt
+        s = stage
+        df_branch = pd.DataFrame()
+        i=0
+        for b in model.BRANCH:
+            for t in model.TIME:
+                i+=1
+                df_branch.loc[i,'branch'] = b
+                df_branch.loc[i,'fArea'] = model.nodeArea[model.branchNodeFrom[b]]
+                df_branch.loc[i,'tArea'] = model.nodeArea[model.branchNodeTo[b]]
+                df_branch.loc[i,'type'] = model.branchType[b]
+                df_branch.loc[i,'hour'] = t
+                df_branch.loc[i,'weight'] = model.samplefactor[t]
+                df_branch.loc[i,'flow12'] = model.branchFlow12[b,t,s].value
+                df_branch.loc[i,'flow21'] = model.branchFlow21[b,t,s].value
+                df_branch.loc[i,'utilization'] = (model.branchFlow12[b,t,s].value+model.branchFlow21[b,t,s].value)/(
+                    model.branchExistingCapacity[b]+model.branchExistingCapacity2[b]
+                    +sum(model.branchNewCapacity[b,h+1].value for h in range(s)))
+        
+        df_branch.groupby('branch')['flow12']
+        
+        return
+
+        
+        
         
 
         
