@@ -69,7 +69,7 @@ class LpProblem(object):
         model.pumpCost = pyo.Param(model.GEN_PUMP, within=pyo.Reals, 
                                   mutable=True)
         model.flexLoadCost = pyo.Param(model.LOAD_FLEX,
-                                       within=pyo.NonNegativeReals,
+                                       within=pyo.Reals,
                                        mutable=True)
         model.loadShedCost = pyo.Param(within=pyo.NonNegativeReals)
         model.branchAcCapacity = pyo.Param(model.BRANCH_AC, 
@@ -195,7 +195,8 @@ class LpProblem(object):
             rhs = 0
             n2s = [k[1]  for k in model.coeff_B.keys() if k[0]==n]
             for n2 in n2s:
-                rhs -= model.coeff_B[n,n2]*model.varVoltageAngle[n2]                
+                rhs -= model.coeff_B[n,n2]*(
+                            model.varVoltageAngle[n2]*const.baseAngle)
             expr = (lhs == rhs)
             #Skip constraint if it is trivial (otherwise run-time error)
             #TODO: Check if this is safe
@@ -213,7 +214,8 @@ class LpProblem(object):
             #TODO speed up- remove for loop
             n2s = [k[1]  for k in model.coeff_DA.keys() if k[0]==b]
             for n2 in n2s:
-                rhs += model.coeff_DA[b,n2]*model.varVoltageAngle[n2]                
+                rhs += model.coeff_DA[b,n2]*(
+                            model.varVoltageAngle[n2]*const.baseAngle)
             #for n2 in model.NODE:
             #    if (b,n2) in model.coeff_DA.keys():
             #        rhs += model.coeff_DA[b,n2]*model.varVoltageAngle[n2]
@@ -520,6 +522,7 @@ class LpProblem(object):
             energyIn[i] = genInflow*self.timeDelta
             energyOut[i] = (self.concretemodel.varGeneration[i].value
                             *self.timeDelta)
+
         for i in self._idx_generatorsWithPumping:
             Ppump = self.concretemodel.varPump[i].value
             pumpedIn[i] = (Ppump*self._grid.generator['pump_efficiency'][i] 
@@ -532,7 +535,7 @@ class LpProblem(object):
 
         # 2. Update flexible load storage
         for i in self._idx_consumersWithFlexLoad:
-            energyIn_flexload = (self.concretemodel.varFlexLoad[i]
+            energyIn_flexload = (self.concretemodel.varFlexLoad[i].value
                                  *self.timeDelta)
             energyOut_flexload = ( self._grid.consumer['flex_fraction'][i]
                                     * self._grid.consumer['demand_avg'][i]
@@ -552,7 +555,7 @@ class LpProblem(object):
                 for i in self.concretemodel.BRANCH_AC]
         Pdc = [self.concretemodel.varDcBranchFlow[i].value
                 for i in self.concretemodel.BRANCH_DC]
-        theta = [self.concretemodel.varVoltageAngle[i].value
+        theta = [self.concretemodel.varVoltageAngle[i].value*const.baseAngle
                 for i in self.concretemodel.NODE]
         #load shedding is aggregated to nodes (due to old code)
         Ploadshed = pd.Series(index=self._grid.node.id,
@@ -672,7 +675,8 @@ class LpProblem(object):
             # solve the LP problem
             if savefiles:
                 self.concretemodel.pprint('concretemodel_{}.txt'.format(timestep))        
-                self.concretemodel.write("LPproblem_{}.mps".format(timestep))
+                self.concretemodel.write("LPproblem_{}.mps".format(timestep),
+                                 io_options={'symbolic_solver_labels':True})
 
             if warmstart and opt.warm_start_capable():  
                 #warmstart available (does not work with cbc)
@@ -693,7 +697,10 @@ class LpProblem(object):
             else:
                 raise Exception("Solver ({}) is not capable of warm start"
                                     .format(opt.name))
-                
+                                    
+            # Results loaded automatically, so this is not required
+            # self.concretemodel.solutions.load_from(res)    
+            
             #debugging:
             if False:
                 print("Solver status = {}. Termination condition = {}"
