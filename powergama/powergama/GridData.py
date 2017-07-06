@@ -31,12 +31,14 @@ class GridData(object):
         'generator': {'type':None,'desc':'', 'node':None,
                        'pmax':None,'pmin':None,'fuelcost':None,
                        'inflow_fac':None,'inflow_ref':None,
-                       'storage_cap':0,'storage_price':0,'storage_ini':0,
+                       'storage_cap':0.0,'storage_price':0.0,'storage_ini':0.0,
                        'storval_filling_ref':'','storval_time_ref':'',
-                       'pump_cap':0,'pump_efficiency':0,'pump_deadband':0},
+                       'pump_cap':0.0,'pump_efficiency':0.0,
+                       'pump_deadband':0.0},
         'consumer' : {'node':None, 'demand_avg':None,'demand_ref':None,
-                      'flex_fraction':0, 'flex_on_off':0, 'flex_basevalue':0,
-                      'flex_storage':0, 'flex_storval_filling':'',
+                      'flex_fraction':0.0, 'flex_on_off':0.0,
+                      'flex_basevalue':0.0,
+                      'flex_storage':0.0, 'flex_storval_filling':'',
                       'flex_storval_time':'', 'flex_storagelevel_init':0.5}
         }
 
@@ -47,16 +49,16 @@ class GridData(object):
                  'offshore':None,'type':None,
                  'existing':None,'cost_scaling':None},
         'branch': {'node_from':None,'node_to':None,'capacity':None,
-                   'capacity2':0,
-                   'expand':None,'max_newCap':-1,'distance':-1,
+                   'capacity2':0.0,
+                   'expand':None,'max_newCap':-1.0,'distance':-1.0,
                    'cost_scaling':None,'type':None},
         'dcbranch' :{},
-        'generator': {'type':None,'node':None,'pmax':None,'pmax2':0,
+        'generator': {'type':None,'node':None,'pmax':None,'pmax2':0.0,
                       'pmin':None,
-                      'expand':None,'p_maxNew':-1, 'cost_scaling':1,
-                      'fuelcost':None,'fuelcost_ref':None,'pavg':0,
+                      'expand':None,'p_maxNew':-1.0, 'cost_scaling':1.0,
+                      'fuelcost':None,'fuelcost_ref':None,'pavg':0.0,
                       'inflow_fac':None,'inflow_ref':None},
-        'consumer': {'node':None, 'demand_avg':None,'emission_cap':-1, 
+        'consumer': {'node':None, 'demand_avg':None,'emission_cap':-1.0, 
                      'demand_ref':None}
         }
         
@@ -141,7 +143,8 @@ class GridData(object):
         self.node['id']=self.node.index
         self.branch = pd.read_csv(branches,
                                   #usecols=self.keys_sipdata['branch'],
-                                  dtype={'node_from':str,'node_to':str})
+                                  dtype={'node_from':str,'node_to':str,
+                                         'capacity':float})
         # dcbranch variable only needed for powergama.plotMapGrid
         self.dcbranch = pd.DataFrame()
         self.generator = pd.read_csv(generators,
@@ -514,8 +517,16 @@ class GridData(object):
     def computePowerFlowMatrices(self,baseZ):
         """
         Compute and return dc power flow matrices B' and DA
-                
-        Returns sparse matrices (csr - compressed sparse row matrix)              
+        
+        Parameters
+        ==========
+        baseZ : float
+        base value for impedance        
+        
+        Returns sparse matrices (csr - compressed sparse row matrix)
+        =======
+        (Bprime, DA) : compressed sparse row matrix
+              
         """
         
         b = numpy.asarray(self._susceptancePu(baseZ))

@@ -56,7 +56,7 @@ def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,
     nodetype : string
         how to plot nodes - 'nodalprice','powergim_type'
     branchtype : string
-        how to plot branches - 'flow','powergim_type'
+        how to plot branches - 'capacity', 'flow','powergim_type'
     res : powergama.Results (optional)
         result object (result from powergama simulation)
     timeMaxMin : [min,max]

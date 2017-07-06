@@ -18,6 +18,9 @@ hoursperyear = 8760.0
 MWh_per_GWh = 1000.0
 '''Conversion factor from GWh to MWh'''
 
+baseAngle = 1
+'''Base value for voltage angle'''
+
 # Derived quantities
 baseZ = baseV**2/baseS
 baseMVA = baseS*1e-6
