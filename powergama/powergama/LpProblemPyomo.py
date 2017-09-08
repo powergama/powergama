@@ -674,7 +674,7 @@ class LpProblem(object):
           
             # solve the LP problem
             if savefiles:
-                self.concretemodel.pprint('concretemodel_{}.txt'.format(timestep))        
+                #self.concretemodel.pprint('concretemodel_{}.txt'.format(timestep))
                 self.concretemodel.write("LPproblem_{}.mps".format(timestep),
                                  io_options={'symbolic_solver_labels':True})
 
@@ -710,9 +710,13 @@ class LpProblem(object):
             if (res.solver.status != pyomo.opt.SolverStatus.ok):
                 warnings.warn("Something went wrong with LP solver: {}"
                                 .format(res.solver.status))
+                raise Exception("Something went wrong with LP solver: {}"
+                                .format(res.solver.status))
             elif (res.solver.termination_condition 
                     == pyomo.opt.TerminationCondition.infeasible):
                 warnings.warn("t={}: No feasible solution found."
+                                .format(timestep))
+                raise Exception("t={}: No feasible solution found."
                                 .format(timestep))
                             
             self._update_progress(timestep,numTimesteps)

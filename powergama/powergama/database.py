@@ -11,6 +11,9 @@ class Database(object):
     Class for storing results from PowerGAMA in sqlite databse
     '''    
 
+    
+    SQLITE_MAX_VARIABLE_NUMBER = 990
+
     def __init__(self,filename):
         self.filename = os.path.abspath(filename)
         self.sqlite_version = db.sqlite_version
@@ -774,22 +777,33 @@ class Database(object):
  
     def getResultGeneratorPower(self,generatorindx,timeMaxMin):
         '''Get power output time series for specified generator'''
-        
+                                    
         if not isinstance(generatorindx,list): 
             generatorindx = [generatorindx]
         if len(generatorindx)==0:
             return None
+
+        '''If there are many generators we need to worry about the 
+        max variable number in sqlite'''
+        maxnum = self.SQLITE_MAX_VARIABLE_NUMBER
+        indx_chunks =  [generatorindx[i:i+maxnum] 
+                        for i in range(0,len(generatorindx),maxnum)]
         con = db.connect(self.filename)
         with con:        
             cur = con.cursor()
-            cur.execute("SELECT timestep,SUM(output) FROM Res_Generators "
-                +"WHERE timestep>=? AND timestep<? AND indx IN ("
-                +"".join(["?," for i in range(len(generatorindx)-1)])+"?"                
-                +")"
-                +" GROUP BY timestep ORDER BY timestep",
-                (timeMaxMin[0],timeMaxMin[-1])+tuple(generatorindx))
-            rows = cur.fetchall()
-            output = [row[1] for row in rows]        
+            #get results for chunks of generators:
+            output_chunk=[]
+            for indx in indx_chunks:                
+                cur.execute("SELECT timestep,SUM(output) FROM Res_Generators "
+                    +"WHERE timestep>=? AND timestep<? AND indx IN ("
+                    +"".join(["?," for i in range(len(indx)-1)])+"?"                
+                    +")"
+                    +" GROUP BY timestep ORDER BY timestep",
+                    (timeMaxMin[0],timeMaxMin[-1])+tuple(indx))
+                rows = cur.fetchall()
+                output_chunk.append([row[1] for row in rows])
+            #sum chunks for each timestep:
+            output = [sum(i) for i in zip(*output_chunk)]
         return output
  
     def getResultGeneratorPowerSum(self,timeMaxMin):

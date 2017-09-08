@@ -776,3 +776,36 @@ class GridData(object):
             #atan2 better than asin: c = 2 * math.asin(math.sqrt(a))
             distance.append(R * c)
         return distance
+
+    def spreadNodeCoordinates(self,radius=0.01,inplace=False):
+        '''Spread nodes with identical coordinates in a small circle
+        with radius r
+        
+        Parameters
+        ----------
+        radius : float
+            radius in degrees for the size of the spread
+        inplace : boolean
+            if true, update GridData object
+            
+        Returns
+        -------
+        coords : array
+            lat,lon pandas array for nodes
+        '''
+        coords = self.node[['lat','lon']]
+        dupl_coords = pd.DataFrame()
+        dupl_coords['cumcount'] = coords.groupby(['lat','lon']).cumcount()
+        dupl_coords['count'] = coords.groupby(['lat','lon'])['lon'].transform('count')
+        coords_new = coords.copy()
+        for i,c in coords.iterrows():
+            n_sum = dupl_coords.loc[i,'count']
+            if n_sum >1:
+                # there are more nodes with the same coordinates
+                n = dupl_coords.loc[i,'cumcount']
+                theta = 2*math.pi/n_sum
+                coords_new.loc[i,'lat'] += radius*math.cos(n*theta)
+                coords_new.loc[i,'lon'] += radius*math.sin(n*theta)
+        if inplace:
+            self.node[['lat','lon']] = coords_new
+        return coords_new
