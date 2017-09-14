@@ -36,9 +36,10 @@ class SipModel():
         self.M_const = M_const
 
         
-    def costNode(self,model,n,var_num,stage):
+    def costNode(self,model,n,stage):
         '''Expression for cost of node, investment cost no discounting'''
         n_cost = 0
+        var_num = model.newNodes
         N = model.nodeOffshore[n]
         n_cost += N*(model.nodetypeCost[model.nodeType[n],'S']
                     *var_num[n,stage])
@@ -46,9 +47,12 @@ class SipModel():
                     *var_num[n,stage])
         return model.nodeCostScale[n]*n_cost
 
-    def costBranch(self,model,b,var_num,var_cap, stage):
+    def costBranch(self,model,b,stage):
         '''Expression for cost of branch, investment cost no discounting'''
         b_cost = 0
+        
+        var_num=model.branchNewCables
+        var_cap=model.branchNewCapacity
         typ = model.branchType[b]
         b_cost += (model.branchtypeCost[typ,'B']
                     *var_num[b,stage])
@@ -75,15 +79,16 @@ class SipModel():
         return model.branchCostScale[b]*b_cost
 
             
-    def costGen(self,model,g,var_cap,stage):
+    def costGen(self,model,g,stage):
         '''Expression for cost of generator, investment cost no discounting'''
         g_cost = 0
+        var_cap=model.genNewCapacity
         typ = model.genType[g]
         g_cost += model.genTypeCost[typ]*var_cap[g,stage]
         return model.genCostScale[g]*g_cost
 
     def npvInvestment(self,model,stage,investment,
-                includeOM=True,subractSalvage=True):
+                includeOM=True,subtractSalvage=True):
         """NPV of investment cost including lifetime O&M and salvage value
 
         Parameters
@@ -97,7 +102,7 @@ class SipModel():
         """
         omcost = 0
         salvagefactor = 0
-        if subractSalvage:
+        if subtractSalvage:
             salvagefactor = (
                 int(stage-1)*model.stage2TimeDelta/model.financeYears)*(
                     1/((1+model.financeInterestrate)
@@ -117,21 +122,20 @@ class SipModel():
         npv_cost = npv_cost*discount_t0
         return npv_cost
 
-    def costInvestments(self,model,stage,includeOM=True,subractSalvage=True):
+    def costInvestments(self,model,stage,
+                        includeOM=True,subtractSalvage=True):
         """Investment cost, including lifetime O&M costs (NPV)"""
         investment = 0
         # add branch, node and generator investment costs:
         for b in model.BRANCH:
-            investment += self.costBranch(model,b,
-                               model.branchNewCables,
-                               model.branchNewCapacity,stage)
+            investment += self.costBranch(model,b,stage)
         for n in model.NODE:
-            investment += self.costNode(model,n,model.newNodes,stage)            
+            investment += self.costNode(model,n,stage)            
         for g in model.GEN:
-            investment += self.costGen(model, g,model.genNewCapacity,stage)
+            investment += self.costGen(model,g,stage)
         # add O&M costs and compute NPV:
         cost = self.npvInvestment(model,stage,investment,
-                                  includeOM,subractSalvage)
+                                  includeOM,subtractSalvage)
         return cost
 
     def costOperation(self,model, stage):
@@ -159,6 +163,30 @@ class SipModel():
                                           model.stage2TimeDelta)            
         opcost = opcost*discount_t0
         
+        return opcost
+
+    def costOperationSingleGen(self,model, g, stage):
+        """Operational costs: cost of gen, load shed (NPV)"""
+        opcost = 0
+        discount_t0 = (1/((1+model.financeInterestrate)
+            **(model.stage2TimeDelta*int(stage-1))))
+        
+        # operation cost per year:
+        opcost = sum(model.generation[g,t,stage]*model.samplefactor[t]*(
+                    model.genCostAvg[g]*model.genCostProfile[g,t]
+                    +model.genTypeEmissionRate[model.genType[g]]*model.CO2price)
+                    for t in model.TIME)
+
+        # incvluding all operating years, compute NPV
+        if stage == len(model.STAGE):
+            opcost = opcost*(
+                annuityfactor(model.financeInterestrate,model.financeYears)
+                - annuityfactor(model.financeInterestrate,
+                                int(stage-1)*model.stage2TimeDelta))
+        else:
+            opcost = opcost*annuityfactor(model.financeInterestrate,
+                                          model.stage2TimeDelta)            
+        opcost = opcost*discount_t0        
         return opcost
         
     
@@ -1040,115 +1068,136 @@ class SipModel():
         '''Investment cost of single branch NPV
         
         corresponds to  firstStageCost in abstract model'''
+        cost1 = self.costBranch(model,b,stage=stage)
+        cost1npv = self.npvInvestment(model,stage=stage,investment=cost1,
+                                      includeOM=include_om,
+                                      subtractSalvage=True)
+        cost_value = pyo.value(cost1npv)
+        return cost_value
         
-        ar = 1
-        br_num=0
-        br_cap=0
-        b_cost = 0
-        
-        salvagefactor = (int(stage-1)*model.stage2TimeDelta/model.financeYears)*(
-                1/((1+model.financeInterestrate)
-                **(model.financeYears-model.stage2TimeDelta*int(stage-1))))
-        discount_t0 = (1/((1+model.financeInterestrate)
-                        **(model.stage2TimeDelta*int(stage-1))))
-        if stage==1:
-            ar = annuityfactor(model.financeInterestrate,model.financeYears)
-        else:
-            ar = (annuityfactor(model.financeInterestrate,model.financeYears)
-                  -annuityfactor(model.financeInterestrate,
-                                 int(stage-1)*model.stage2TimeDelta))
-        br_num += model.branchNewCables[b,stage].value
-        br_cap += model.branchNewCapacity[b,stage].value
-        typ = model.branchType[b]
-        b_cost += (model.branchtypeCost[typ,'B']
-                    *br_num)
-        b_cost += (model.branchtypeCost[typ,'Bd']
-                    *model.branchDistance[b]*br_num)
-        b_cost += (model.branchtypeCost[typ,'Bdp']
-                    *model.branchDistance[b]*br_cap)
-        #endpoints offshore (N=1) or onshore (N=0) ?
-        N1 = model.branchOffshoreFrom[b]
-        N2 = model.branchOffshoreTo[b]
-        for N in [N1,N2]:
-            b_cost += N*(model.branchtypeCost[typ,'CS']*br_num
-                        +model.branchtypeCost[typ,'CSp']*br_cap)            
-            b_cost += (1-N)*(model.branchtypeCost[typ,'CL']*br_num
-                        +model.branchtypeCost[typ,'CLp']*br_cap)
-        cost = model.branchCostScale[b]*b_cost
-        if include_om:
-            cost = cost*(1 + model.omRate * ar)
-        cost -= cost*salvagefactor
-        cost = cost*discount_t0
-        return cost
+#        ar = 1
+#        br_num=0
+#        br_cap=0
+#        b_cost = 0
+#        
+#        salvagefactor = (int(stage-1)*model.stage2TimeDelta/model.financeYears)*(
+#                1/((1+model.financeInterestrate)
+#                **(model.financeYears-model.stage2TimeDelta*int(stage-1))))
+#        discount_t0 = (1/((1+model.financeInterestrate)
+#                        **(model.stage2TimeDelta*int(stage-1))))
+#        if stage==1:
+#            ar = annuityfactor(model.financeInterestrate,model.financeYears)
+#        else:
+#            ar = (annuityfactor(model.financeInterestrate,model.financeYears)
+#                  -annuityfactor(model.financeInterestrate,
+#                                 int(stage-1)*model.stage2TimeDelta))
+#        br_num += model.branchNewCables[b,stage].value
+#        br_cap += model.branchNewCapacity[b,stage].value
+#        typ = model.branchType[b]
+#        b_cost += (model.branchtypeCost[typ,'B']
+#                    *br_num)
+#        b_cost += (model.branchtypeCost[typ,'Bd']
+#                    *model.branchDistance[b]*br_num)
+#        b_cost += (model.branchtypeCost[typ,'Bdp']
+#                    *model.branchDistance[b]*br_cap)
+#        #endpoints offshore (N=1) or onshore (N=0) ?
+#        N1 = model.branchOffshoreFrom[b]
+#        N2 = model.branchOffshoreTo[b]
+#        for N in [N1,N2]:
+#            b_cost += N*(model.branchtypeCost[typ,'CS']*br_num
+#                        +model.branchtypeCost[typ,'CSp']*br_cap)            
+#            b_cost += (1-N)*(model.branchtypeCost[typ,'CL']*br_num
+#                        +model.branchtypeCost[typ,'CLp']*br_cap)
+#        cost = model.branchCostScale[b]*b_cost
+#        if include_om:
+#            cost = cost*(1 + model.omRate * ar)
+#        cost -= cost*salvagefactor
+#        cost = cost*discount_t0
+#        return cost
 
     def computeCostNode(self,model,n,include_om=False):
         '''Investment cost of single node
         
         corresponds to cost in abstract model'''
         
-        # adding () after the expression gives the value
-        cost1 = self.costNode(model,n,model.newNodes,stage=1)()
-        cost2 = self.costNode(model,n,model.newNodes,stage=2)()
-        return cost1+cost2
+        # Re-use method used in optimisation
+        #NOTE: adding "()" after the expression gives the value
+        cost1 = self.costNode(model,n,stage=1)
+        cost1npv = self.npvInvestment(model,stage=1,investment=cost1,
+                                      includeOM=include_om,
+                                      subtractSalvage=True)
+        cost2 = self.costNode(model,n,stage=2)
+        cost2npv = self.npvInvestment(model,stage=2,investment=cost2,
+                                      includeOM=include_om,
+                                      subtractSalvage=True)
+        cost_value = pyo.value(cost1npv+cost2npv)
+        return cost_value
 
         
-        # node may be expanded in stage 1 or stage 2, but will never be 
-        # expanded in both
-        # TODO: cope with stages
-        
-        ar = 1
-        n_num = 0
-        stage=2
-        salvagefactor = (int(stage-1)*model.stage2TimeDelta/model.financeYears)*(
-                1/((1+model.financeInterestrate)
-                **(model.financeYears-model.stage2TimeDelta*int(stage-1))))
-        discount_t0 = (1/((1+model.financeInterestrate)
-                        **(model.stage2TimeDelta*int(stage-1))))
-        for s in model.STAGE:
-            if s<2:
-                n_num = model.newNodes[n,s].value
-                ar = (annuityfactor(model.financeInterestrate,model.financeYears))
-            else:
-                n_num = model.newNodes[n,s-1].value+model.newNodes[n,s].value
-                ar = (annuityfactor(model.financeInterestrate,model.financeYears)
-                      -annuityfactor(model.financeInterestrate,
-                                     (s-1)*model.stage2TimeDelta))
-        n_cost = 0
-        N = model.nodeOffshore[n]
-        n_cost += N*(model.nodetypeCost[model.nodeType[n],'S']*n_num)
-        n_cost += (1-N)*(model.nodetypeCost[model.nodeType[n],'L']*n_num)
-        cost = model.nodeCostScale[n]*n_cost
-        if include_om:
-            cost = cost*(1 + model.omRate * ar)
-        cost -= cost*salvagefactor
-        cost = cost*discount_t0
-        return cost
+#        # node may be expanded in stage 1 or stage 2, but will never be 
+#        # expanded in both
+#        # TODO: cope with stages
+#        
+#        ar = 1
+#        n_num = 0
+#        stage=2
+#        salvagefactor = (int(stage-1)*model.stage2TimeDelta/model.financeYears)*(
+#                1/((1+model.financeInterestrate)
+#                **(model.financeYears-model.stage2TimeDelta*int(stage-1))))
+#        discount_t0 = (1/((1+model.financeInterestrate)
+#                        **(model.stage2TimeDelta*int(stage-1))))
+#        for s in model.STAGE:
+#            if s<2:
+#                n_num = model.newNodes[n,s].value
+#                ar = (annuityfactor(model.financeInterestrate,model.financeYears))
+#            else:
+#                n_num = model.newNodes[n,s-1].value+model.newNodes[n,s].value
+#                ar = (annuityfactor(model.financeInterestrate,model.financeYears)
+#                      -annuityfactor(model.financeInterestrate,
+#                                     (s-1)*model.stage2TimeDelta))
+#        n_cost = 0
+#        N = model.nodeOffshore[n]
+#        n_cost += N*(model.nodetypeCost[model.nodeType[n],'S']*n_num)
+#        n_cost += (1-N)*(model.nodetypeCost[model.nodeType[n],'L']*n_num)
+#        cost = model.nodeCostScale[n]*n_cost
+#        if include_om:
+#            cost = cost*(1 + model.omRate * ar)
+#        cost -= cost*salvagefactor
+#        cost = cost*discount_t0
+#        return cost
 
 
     def computeCostGenerator(self,model,g,stage=2,include_om=False):
         '''Investment cost of generator NPV
         '''
-        ar = 1
-        g_cap = 0
-        salvagefactor = (int(stage-1)*model.stage2TimeDelta/model.financeYears)*(
-                1/((1+model.financeInterestrate)
-                **(model.financeYears-model.stage2TimeDelta*int(stage-1))))
-        discount_t0 = (1/((1+model.financeInterestrate)
-                        **(model.stage2TimeDelta*int(stage-1))))
-        if stage==1:
-            ar = annuityfactor(model.financeInterestrate,model.financeYears)
-        elif stage==2:
-            ar = (annuityfactor(model.financeInterestrate,model.financeYears)
-                      -annuityfactor(model.financeInterestrate,
-                                     model.stage2TimeDelta))
-        g_cap = model.genNewCapacity[g,stage].value
-        typ = model.genType[g]
-        cost = model.genTypeCost[typ]*g_cap*ar
-        if include_om:
-            cost = cost*(1 + model.omRate * ar)
-        cost -= cost*salvagefactor
-        cost = cost*discount_t0
-        return cost
+        cost1 = self.costGen(model,g,stage=stage)
+        cost1npv = self.npvInvestment(model,stage=stage,investment=cost1,
+                                      includeOM=include_om,
+                                      subtractSalvage=True)
+        cost_value = pyo.value(cost1npv)
+        return cost_value
+        
+#        ar = 1
+#        g_cap = 0
+#        salvagefactor = (int(stage-1)*model.stage2TimeDelta/model.financeYears)*(
+#                1/((1+model.financeInterestrate)
+#                **(model.financeYears-model.stage2TimeDelta*int(stage-1))))
+#        discount_t0 = (1/((1+model.financeInterestrate)
+#                        **(model.stage2TimeDelta*int(stage-1))))
+#        if stage==1:
+#            ar = annuityfactor(model.financeInterestrate,model.financeYears)
+#        elif stage==2:
+#            ar = (annuityfactor(model.financeInterestrate,model.financeYears)
+#                      -annuityfactor(model.financeInterestrate,
+#                                     model.stage2TimeDelta))
+#        g_cap = model.genNewCapacity[g,stage].value
+#        typ = model.genType[g]
+#        cost = model.genTypeCost[typ]*g_cap*ar
+#        if include_om:
+#            cost = cost*(1 + model.omRate * ar)
+#        cost -= cost*salvagefactor
+#        cost = cost*discount_t0
+#        return cost
                 
                 
     def computeGenerationCost(self,model,g,stage):
@@ -1156,27 +1205,32 @@ class SipModel():
         
         This corresponds to secondStageCost in abstract model        
         '''
-        ar = 1
-        if stage == 1:
-            gen = model.generation
-            ar = annuityfactor(model.financeInterestrate,
-                               model.stage2TimeDelta)
-        elif stage==2:
-            gen = model.generation
-            ar = (
-                annuityfactor(model.financeInterestrate,model.financeYears)
-                -annuityfactor(model.financeInterestrate,model.stage2TimeDelta)
-                )
-        expr = sum(gen[g,t,stage].value*model.samplefactor[t]*
-                    model.genCostAvg[g]*model.genCostProfile[g,t] 
-                     for t in model.TIME)
-        expr2 = sum(gen[g,t,stage].value*model.samplefactor[t]*
-                            model.genTypeEmissionRate[model.genType[g]]
-                            for t in model.TIME)
-        expr2 = expr2*model.CO2price.value
-        # lifetime cost
-        expr = (expr+expr2)*ar
-        return expr
+        cost1 = self.costOperationSingleGen(model,g,stage=stage)
+        cost_value = pyo.value(cost1)
+        return cost_value
+        
+#        return cost_value
+#        ar = 1
+#        if stage == 1:
+#            gen = model.generation
+#            ar = annuityfactor(model.financeInterestrate,
+#                               model.stage2TimeDelta)
+#        elif stage==2:
+#            gen = model.generation
+#            ar = (
+#                annuityfactor(model.financeInterestrate,model.financeYears)
+#                -annuityfactor(model.financeInterestrate,model.stage2TimeDelta)
+#                )
+#        expr = sum(gen[g,t,stage].value*model.samplefactor[t]*
+#                    model.genCostAvg[g]*model.genCostProfile[g,t] 
+#                     for t in model.TIME)
+#        expr2 = sum(gen[g,t,stage].value*model.samplefactor[t]*
+#                            model.genTypeEmissionRate[model.genType[g]]
+#                            for t in model.TIME)
+#        expr2 = expr2*model.CO2price.value
+#        # lifetime cost
+#        expr = (expr+expr2)*ar
+#        return expr
      
                 
     def computeDemand(self,model,c,t):
