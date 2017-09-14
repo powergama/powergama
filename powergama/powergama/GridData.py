@@ -776,7 +776,7 @@ class GridData(object):
             distance.append(R * c)
         return distance
 
-   def spreadNodeCoordinates(self,radius=0.01,inplace=False):
+    def spreadNodeCoordinates(self,radius=0.01,inplace=False):
         '''Spread nodes with identical coordinates in a small circle
         with radius r
         
