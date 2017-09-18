@@ -438,17 +438,30 @@ class SipModel():
                                           rule=newNodes_rule)
           
         # Generator output limitations
+        # TODO: add option to set minimum output = timeseries for renewable,
+        # i.e. disallov curtaliment (could be global parameter)
         def maxPgen_rule(model,g,t,h):
             cap = model.genCapacity[g]
             if h>1:
                 cap += model.genCapacity2[g]
             for x in range(h):
                 cap += model.genNewCapacity[g,x+1]
-            expr = model.generation[g,t,h] <= (
-                model.genCapacityProfile[g,t] * cap)
+            allowCurtailment = True
+            #TODO: make this limit a parameter (global or per generator?)
+            if model.genCostAvg[g]<1:
+                allowCurtailment = False
+            if allowCurtailment:
+                expr = model.generation[g,t,h] <= (
+                    model.genCapacityProfile[g,t] * cap)
+            else:
+                # don't allow curtailment of generator output
+                expr = model.generation[g,t,h] == (
+                    model.genCapacityProfile[g,t] * cap)
+                
             return expr
         model.cMaxPgen = pyo.Constraint(model.GEN,model.TIME,model.STAGE,
                                         rule=maxPgen_rule)
+
         
         # Generator maximum average output (energy sum) 
         # (e.g. for hydro with storage)
