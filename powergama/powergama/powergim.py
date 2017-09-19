@@ -100,7 +100,7 @@ class SipModel():
         investment :
             cost of e.g. node, branch or gen
         """
-        omcost = 0
+        omfactor = 0
         salvagefactor = 0
         if subtractSalvage:
             salvagefactor = (
@@ -108,7 +108,7 @@ class SipModel():
                     1/((1+model.financeInterestrate)
                     **(model.financeYears-model.stage2TimeDelta*int(stage-1))))
         if includeOM:
-            omcost = investment * model.omRate * (
+            omfactor = model.omRate * (
                 annuityfactor(model.financeInterestrate,
                               model.financeYears)
                 -annuityfactor(model.financeInterestrate,
@@ -117,10 +117,9 @@ class SipModel():
         discount_t0 = (1/((1+model.financeInterestrate)
                         **(model.stage2TimeDelta*int(stage-1))))
 
-        npv_cost = investment + omcost 
-        npv_cost -= npv_cost*salvagefactor
-        npv_cost = npv_cost*discount_t0
-        return npv_cost
+        investment = investment*discount_t0
+        pv_cost = investment*(1 + omfactor - salvagefactor)
+        return pv_cost
 
     def costInvestments(self,model,stage,
                         includeOM=True,subtractSalvage=True):
@@ -141,8 +140,8 @@ class SipModel():
     def costOperation(self,model, stage):
         """Operational costs: cost of gen, load shed (NPV)"""
         opcost = 0
-        discount_t0 = (1/((1+model.financeInterestrate)
-            **(model.stage2TimeDelta*int(stage-1))))
+        #discount_t0 = (1/((1+model.financeInterestrate)
+        #    **(model.stage2TimeDelta*int(stage-1))))
         
         # operation cost per year:
         opcost = sum(model.generation[i,t,stage]*model.samplefactor[t]*(
@@ -152,24 +151,29 @@ class SipModel():
         opcost += sum(model.loadShed[c,t,stage]*model.VOLL*model.samplefactor[t]
                         for c in model.LOAD for t in model.TIME)
 
-        # incvluding all operating years, compute NPV
+        # compute present value of future annual costs
         if stage == len(model.STAGE):
+            #from year stage2TimeDelta until financeYears
             opcost = opcost*(
                 annuityfactor(model.financeInterestrate,model.financeYears)
                 - annuityfactor(model.financeInterestrate,
                                 int(stage-1)*model.stage2TimeDelta))
         else:
+            #from year 0
             opcost = opcost*annuityfactor(model.financeInterestrate,
                                           model.stage2TimeDelta)            
-        opcost = opcost*discount_t0
+
+        #Harald: this is already discounted back to year 0 from the present 
+        # value calculation above
+        #opcost = opcost*discount_t0
         
         return opcost
 
     def costOperationSingleGen(self,model, g, stage):
         """Operational costs: cost of gen, load shed (NPV)"""
         opcost = 0
-        discount_t0 = (1/((1+model.financeInterestrate)
-            **(model.stage2TimeDelta*int(stage-1))))
+        #discount_t0 = (1/((1+model.financeInterestrate)
+        #    **(model.stage2TimeDelta*int(stage-1))))
         
         # operation cost per year:
         opcost = sum(model.generation[g,t,stage]*model.samplefactor[t]*(
@@ -177,7 +181,7 @@ class SipModel():
                     +model.genTypeEmissionRate[model.genType[g]]*model.CO2price)
                     for t in model.TIME)
 
-        # incvluding all operating years, compute NPV
+        # compute present value of future annual costs
         if stage == len(model.STAGE):
             opcost = opcost*(
                 annuityfactor(model.financeInterestrate,model.financeYears)
@@ -186,7 +190,7 @@ class SipModel():
         else:
             opcost = opcost*annuityfactor(model.financeInterestrate,
                                           model.stage2TimeDelta)            
-        opcost = opcost*discount_t0        
+        #opcost = opcost*discount_t0        
         return opcost
         
     
@@ -448,7 +452,7 @@ class SipModel():
                 cap += model.genNewCapacity[g,x+1]
             allowCurtailment = True
             #TODO: make this limit a parameter (global or per generator?)
-            if model.genCostAvg[g]<1:
+            if model.genCostAvg[g]*model.genCostProfile[g,t]<1:
                 allowCurtailment = False
             if allowCurtailment:
                 expr = model.generation[g,t,h] <= (
@@ -1611,17 +1615,23 @@ class SipModel():
         
         df_cost = pd.DataFrame(columns=['value','unit'])
         df_cost.loc['InvestmentCosts','value'] = sum(
-            model.investmentCost[s].value for s in model.STAGE)/10**9
+            model.investmentCost[s].value for s in model.STAGE)/1e9
         df_cost.loc['OperationalCosts','value'] = sum(
-            model.opCost[s].value for s in model.STAGE)/10**9
+            model.opCost[s].value for s in model.STAGE)/1e9
         df_cost.loc['newTransmission','value'] = sum(
-            self.computeCostBranch(model,b,stage,include_om=True) for b in model.BRANCH for stage in model.STAGE)/10**9
+            self.computeCostBranch(model,b,stage,include_om=True) 
+            for b in model.BRANCH for stage in model.STAGE)/1e9
         df_cost.loc['newGeneration','value'] = sum(
-            self.computeCostGenerator(model,g,stage,include_om=True) for g in model.GEN for stage in model.STAGE)/10**9
+            self.computeCostGenerator(model,g,stage,include_om=True) 
+            for g in model.GEN for stage in model.STAGE)/1e9
+        df_cost.loc['newNodes','value'] = sum(
+            self.computeCostNode(model,n,include_om=True) 
+            for n in model.NODE)/1e9
         df_cost.loc['InvestmentCosts','unit'] = '10^9 EUR'
         df_cost.loc['OperationalCosts','unit'] = '10^9 EUR'
         df_cost.loc['newTransmission','unit'] = '10^9 EUR'
         df_cost.loc['newGeneration','unit'] = '10^9 EUR'
+        df_cost.loc['newNodes','unit'] = '10^9 EUR'
             
         #model.solutions.load_from(results)
         #print('First stage costs: ', 
