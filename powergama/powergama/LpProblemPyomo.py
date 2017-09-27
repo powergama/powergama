@@ -701,6 +701,9 @@ class LpProblem(object):
             # Results loaded automatically, so this is not required
             # self.concretemodel.solutions.load_from(res)    
             
+            # store result for inspection if necessary
+            self.solver_res = res
+            
             #debugging:
             if False:
                 print("Solver status = {}. Termination condition = {}"
