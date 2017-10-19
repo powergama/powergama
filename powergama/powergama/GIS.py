@@ -6,10 +6,10 @@ Visualization of results using Google Earth
 Attributes
 ----------
 category_colours : list
-    list of colour codes (aabbggrr) used for nodes and branches. The second 
+    list of colour codes (aabbggrr) used for nodes and branches. The second
     last value is for NaN, and the last value is default colour. So with
     e.g. 5 colour categories, the list should have 7 elements.
-    
+
     Colour codes are strings on the format aabbggrr (8-digit hex) - alpha,
     blue, green, red
 
@@ -40,13 +40,13 @@ point_icon_href = "http://maps.google.com/mapfiles/kml/shapes/placemark_circle.p
 arrow_icon_href = "http://maps.google.com/mapfiles/kml/shapes/donut.png"
 
 
-            
-def makekml(kmlfile, grid_data,nodetype=None, branchtype=None, 
+
+def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,
             res=None,timeMaxMin=None,title='PowerGAMA Results'):
     '''Export KML file for Google Earth plot of data
-    
+
     Colours can be controlled via the module variable "colours"
-    
+
     Parameters
     ==========
     kmlfile : string
@@ -56,7 +56,8 @@ def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,
     nodetype : string
         how to plot nodes - 'nodalprice','powergim_type'
     branchtype : string
-        how to plot branches - 'capacity', 'flow','powergim_type'
+        how to plot branches -
+        'capacity', 'flow', 'sensitivity', 'utilisation', 'powergim_type'
     res : powergama.Results (optional)
         result object (result from powergama simulation)
     timeMaxMin : [min,max]
@@ -66,46 +67,46 @@ def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,
     '''
     kml = simplekml.Kml()
     kml.document.name = title
-    
+
     # Colours, X categories + NaN category + black(default)
     colorbgr = category_colours
     numCat = len(colorbgr)-2
     defaultCat = numCat+1
     #balloonstyle messes up Google Earth sidebar, for some reason
     #balloontext = "<h3>$[name]</h3> $[description]"
-    
+
     styleNodes = []
-    for col in colorbgr:    
+    for col in colorbgr:
         styleNode = simplekml.Style()
         styleNode.iconstyle.color = col
         styleNode.iconstyle.icon.href = point_icon_href
         styleNode.labelstyle.scale = 0.0 #hide
         #styleNode.balloonstyle.text = balloontext
         styleNodes.append(styleNode)
-        
+
     styleGenerator = simplekml.Style()
     styleGenerator.iconstyle.icon.href = point_icon_href
-    styleGenerator.iconstyle.color  = generator_colour 
+    styleGenerator.iconstyle.color  = generator_colour
     styleGenerator.labelstyle.scale = 0.0 #hide
     #styleGenerator.balloonstyle.text = balloontext
-    
+
     styleConsumer = simplekml.Style()
     styleConsumer.iconstyle.icon.href = point_icon_href
-    styleConsumer.iconstyle.color  = consumer_colour 
+    styleConsumer.iconstyle.color  = consumer_colour
     styleConsumer.labelstyle.scale = 0.0 #hide
     #styleConsumer.iconstyle.visibility = 0 #doesn't work
     #styleConsumer.balloonstyle.text = balloontext
-    
+
     styleBranches = []
-    for col in colorbgr:    
+    for col in colorbgr:
         styleBranch = simplekml.Style()
         styleBranch.linestyle.color = col
-        styleBranch.linestyle.width = linewidth   
+        styleBranch.linestyle.width = linewidth
         styleBranches.append(styleBranch)
-    
+
     styleDcBranch = simplekml.Style()
     styleDcBranch.linestyle.color = dcbranch_colour
-    styleDcBranch.linestyle.width = linewidth   
+    styleDcBranch.linestyle.width = linewidth
 
     styleFlowArrow = simplekml.Style()
     styleFlowArrow.iconstyle.icon.href = arrow_icon_href
@@ -114,7 +115,7 @@ def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,
     styleFlowArrow.labelstyle.scale = 0.0 #hide
 
 
-    # NODES ##################################################################   
+    # NODES ##################################################################
     nodefolder = kml.newfolder(name="Node")
     #nodecount = len(grid_data.node.id)
     if nodetype=='nodalprice':
@@ -124,8 +125,8 @@ def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,
         maxnodalprice = numpy.nanmax(meannodalprices)
         minnodalprice = numpy.nanmin(meannodalprices)
         steprange = (maxnodalprice - minnodalprice) / numCat
-        categoryMax = [math.ceil(minnodalprice+steprange*(n+1)) 
-            for n in range(numCat)]        
+        categoryMax = [math.ceil(minnodalprice+steprange*(n+1))
+            for n in range(numCat)]
         nodalpricelevelfolder=[]
         for level in range(numCat):
             nodalpricelevelfolder.append(nodefolder.newfolder(
@@ -134,14 +135,14 @@ def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,
         #    name="Price > %s" % (str(categoryMax[numCat-2]))))
         nodalpricelevelfolder.append(nodefolder.newfolder(
                 name="Price NaN" ))
-    elif nodetype=='powergim_type':  
+    elif nodetype=='powergim_type':
         nodetypes = grid_data.node.type.unique().tolist()
         nodetypefolder=dict()
         for typ in nodetypes:
             nodetypefolder[typ] = nodefolder.newfolder(
                 name="Type = {}".format(typ))
-        
-                
+
+
     #for i in range(nodecount):
     for i in grid_data.node.index:
         name = grid_data.node.id[i]
@@ -156,13 +157,13 @@ def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,
                                       description=description)
         elif nodetype=='nodalprice':
             nodalprice = meannodalprices[i]
-            # Determine category        
+            # Determine category
             node_category=numCat
-            for category in range(numCat):        
+            for category in range(numCat):
                 if nodalprice <= categoryMax[category]:
                     node_category=category
                     break
-            
+
             #color = colorbgr[node_category]
             description = """
             Index .. %s             <br/>
@@ -187,13 +188,13 @@ def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,
         #pnt.style.iconstyle.color = color
         #pnt.style.iconstyle.icon.href = circle
         #pnt.style.labelstyle.color = "00000000"
-            
+
 
     # GENERATORS #############################################################
     genfolder = kml.newfolder(name="Generator")
-    gentypeList = grid_data.getAllGeneratorTypes()  
+    gentypeList = grid_data.getAllGeneratorTypes()
     # Create sub-folders according to generator sub-types
-    gentypefolders = {typ: genfolder.newfolder(name=typ) 
+    gentypefolders = {typ: genfolder.newfolder(name=typ)
                         for typ in gentypeList}
 
     # Get generators
@@ -219,7 +220,7 @@ def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,
         pnt = gentypefolders[typ].newpoint(
             name=name,description=description, coords=[(lon,lat)])
         pnt.style = styleGenerator
-        
+
     # CONSUMERS #############################################################
     consfolder = kml.newfolder(name="Consumer")
 
@@ -239,30 +240,41 @@ def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,
         pnt = consfolder.newpoint(
             name=name,description=description, coords=[(lon,lat)])
         pnt.style = styleConsumer
-        
+
 
     # BRANCHES ###############################################################
     branchfolder = kml.newfolder(name="Branch")
 
-    if branchtype in ['capacity','flow']:        
+    if branchtype in ['capacity','flow','utilisation','sensitivity']:
         if res is not None:
             meanflows = res.getAverageBranchFlows(timeMaxMin)
             absbranchflow = meanflows[2]
             brancharrowfolder = branchfolder.newfolder(
                 name="Flow direction",visibility=0)
+            utilisation = 100*res.getAverageUtilisation(timeMaxMin)
+            #sensitiviy is provided for branches with <inf capacity only
+            avgsense = numpy.zeros(grid_data.branch.shape[0])
+            sens_values = res.getAverageBranchSensitivity(timeMaxMin)
+            avgsense[res.idxConstrainedBranchCapacity] = -sens_values
         if branchtype=='flow':
             categoryValue = numpy.asarray(absbranchflow)
             categoryTitle = "Flow"
         elif branchtype=="capacity":
             categoryValue = grid_data.branch['capacity']
             categoryTitle = "Capacity"
-            
+        elif branchtype=="utilisation":
+            categoryValue = numpy.asarray(utilisation)
+            categoryTitle = "Utilisation"
+        elif branchtype=='sensitivity':
+            categoryValue = numpy.asarray(avgsense)
+            categoryTitle = "Sensitivity"
+
         #Max/min non-infinite value:
         max_value =  max(categoryValue[numpy.isfinite(categoryValue)])
         min_value =  min(categoryValue[numpy.isfinite(categoryValue)])
         steprange = (max_value - min_value) / float(numCat)
         categoryMax = [math.ceil(min_value+steprange*(n+1) )
-            for n in range(numCat)]        
+            for n in range(numCat)]
         branchlevelfolder=[]
         for level in range(numCat):
             branchlevelfolder.append(branchfolder.newfolder(
@@ -277,7 +289,7 @@ def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,
             branchlevelfolder[typ] = branchfolder.newfolder(
                 name="Type = {}".format(typ))
 
-        
+
     for i in grid_data.branch.index:
         startbus = grid_data.branch.node_from[i]
         endbus = grid_data.branch.node_to[i]
@@ -293,15 +305,15 @@ def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,
         name = "{}=={}".format(startbus,endbus)
         description = "{}<br/>CAPACITY: {}".format(name,capacity)
         branch_category=defaultCat
-        
-        if branchtype in ['capacity','flow']:
-            # Determine category        
-            branch_category=numCat        
-            for category in range(numCat):        
+
+        if branchtype in ['capacity','flow','utilisation','sensitivity']:
+            # Determine category
+            branch_category=numCat
+            for category in range(numCat):
                 if categoryValue[i] <= categoryMax[category]:
                     branch_category=category
                     break
-            
+
             reactance = grid_data.branch.reactance[i]
             description = """
                 Index .. {} <br/>
@@ -318,12 +330,15 @@ def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,
                 Mean flow .. {:.6g}         <br/>
                 Mean flow A to B .. {:.6g}    <br/>
                 Mean flow B to A .. {:.6g}    <br/>
-                """.format(description,absbranchflow[i],flowAB,flowBA)
+                Mean utilisation .. {:.6g} %  <br/>
+                Mean sensitivity .. {:.6g}   <br/>
+                """.format(description,absbranchflow[i],flowAB,flowBA,
+                           utilisation[i],avgsense[i])
             lin = branchlevelfolder[branch_category].newlinestring(name=name,
                   description = description,
                   coords=[(startbuslon,startbuslat),(endbuslon,endbuslat)])
-            
-            # Branch flow direction indicator        
+
+            # Branch flow direction indicator
             if res is not None:
                 if (flowAB+flowBA)==0:
                     d = 0.5
@@ -333,7 +348,7 @@ def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,
                                            nodeB=(endbuslon,endbuslat),
                                            weight=d)
                 arrowpoint = brancharrowfolder.newpoint(name=None,
-                                                        description=None, 
+                                                        description=None,
                                                         coords=[arrowcoord],
                                                         visibility=0)
                 arrowpoint.style = styleFlowArrow
@@ -353,14 +368,14 @@ def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,
             lin = branchfolder.newlinestring(name=name,
                   description = description,
                   coords=[(startbuslon,startbuslat),(endbuslon,endbuslat)])
-                  
+
         lin.style = styleBranches[branch_category]
-        
+
 
     # DC BRANCHES ############################################################
-    if grid_data.dcbranch.shape[0] > 0:    
+    if grid_data.dcbranch.shape[0] > 0:
         dcbranchfolder = kml.newfolder(name="DC branch")
-        
+
     for i in grid_data.dcbranch.index:
         startbus = grid_data.dcbranch.node_from[i]
         endbus = grid_data.dcbranch.node_to[i]
@@ -383,17 +398,17 @@ def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,
         lin = dcbranchfolder.newlinestring(name=name,
               description = description,
               coords=[(startbuslon,startbuslat),(endbuslon,endbuslat)])
-                  
+
         lin.style = styleDcBranch
-        
+
     kml.save(kmlfile)
 
 
 def _pointBetween(nodeA,nodeB,weight):
     '''computes coords on the line between two points
-    
+
      [lat lon] = pointBetween(self,lat1,lon1,lat2,lon2,d)
-    
+
     Parameters
     ----------
         nodeA: dublet (lat,lon)
@@ -402,13 +417,13 @@ def _pointBetween(nodeA,nodeB,weight):
             latitude/longitude of nodeB (degrees)
         weight: double
             weight=0 is node A, 0.5 is halfway between, and 1 is node B
-    
+
     Returns
     -------
         (lat,lon): dublet
             coordinates of the point inbetween nodeA and nodeB (degrees)
-    
-    
+
+
      ref: http://www.movable-type.co.uk/scripts/latlong.html
     '''
     lat1 = nodeA[0]
@@ -424,27 +439,26 @@ def _pointBetween(nodeA,nodeB,weight):
         lat2 = lat2*math.pi/180
         lon1 = lon1*math.pi/180
         lon2 = lon2*math.pi/180
-        
+
         #initial bearing
         y = math.sin(lon2-lon1) * math.cos(lat2)
-        x = (math.cos(lat1)*math.sin(lat2) 
+        x = (math.cos(lat1)*math.sin(lat2)
              - math.sin(lat1)*math.cos(lat2)*math.cos(lon2-lon1) )
         bearing = math.atan2(y, x)
-        
+
         #angular distance from A to B
-        d_tot = (math.acos(math.sin(lat1)*math.sin(lat2) 
+        d_tot = (math.acos(math.sin(lat1)*math.sin(lat2)
                  + math.cos(lat1)*math.cos(lat2)*math.cos(lon2-lon1)) )
         d = d_tot*weight
-        
-        lat = math.asin(math.sin(lat1)*math.cos(d) 
+
+        lat = math.asin(math.sin(lat1)*math.cos(d)
                         +math.cos(lat1)*math.sin(d)*math.cos(bearing) )
         lon = lon1 + math.atan2(math.sin(bearing)*math.sin(d)*math.cos(lat1),
                            math.cos(d)-math.sin(lat1)*math.sin(lat))
-        
+
         #tansform to degrees
         lat = lat*180/math.pi
         lon = lon*180/math.pi
     return (lat,lon)
 
 
-    
