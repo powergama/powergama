@@ -408,7 +408,6 @@ class SipModel():
                 cap += model.branchNewCapacity[j,x+1]
             expr = (model.branchFlow21[j,t,h] <= cap)
             return expr
-        
         model.cMaxFlow12 = pyo.Constraint(model.BRANCH, model.TIME,model.STAGE, 
                                          rule=maxflow12_rule)
         model.cMaxFlow21 = pyo.Constraint(model.BRANCH, model.TIME,model.STAGE,
@@ -487,21 +486,21 @@ class SipModel():
 
         # Emissions restriction per country/load
         # TODO: deal with situation when no emission cap has been given (-1)
-        def emissionCap_rule(model,a,h):
-            if model.CO2price > 0:
-                expr = 0
-                for n in model.NODE:
-                    if model.nodeArea[n]==a:
-                        expr += sum(model.generation[g,t,h]*model.genTypeEmissionRate[model.genType[g]]*model.samplefactor[t]
-                                    for t in model.TIME for g in model.GEN 
-                                    if model.genNode[g]==n)
-                expr = (expr <= sum(model.emissionCap[c] 
-                    for c in model.LOAD if model.nodeArea[model.demNode[c]]==a))
-            else:
-                expr = pyo.Constraint.Skip
-            return expr 
-        model.cEmissionCap = pyo.Constraint(model.AREA,model.STAGE,
-                                             rule=emissionCap_rule)
+#        def emissionCap_rule(model,a,h):
+#            if model.CO2price > 0:
+#                expr = 0
+#                for n in model.NODE:
+#                    if model.nodeArea[n]==a:
+#                        expr += sum(model.generation[g,t,h]*model.genTypeEmissionRate[model.genType[g]]*model.samplefactor[t]
+#                                    for t in model.TIME for g in model.GEN 
+#                                    if model.genNode[g]==n)
+#                expr = (expr <= sum(model.emissionCap[c] 
+#                    for c in model.LOAD if model.nodeArea[model.demNode[c]]==a))
+#            else:
+#                expr = pyo.Constraint.Skip
+#            return expr 
+#        model.cEmissionCap = pyo.Constraint(model.AREA,model.STAGE,
+#                                             rule=emissionCap_rule)
 
 
         # Power balance in nodes : gen+demand+flow into node=0
@@ -690,48 +689,10 @@ class SipModel():
         di['LOAD'] = {None: grid_data.consumer.index.tolist() }
         di['AREA'] = {None: grid_data.getAllAreas() }
         di['TIME'] = {None: grid_data.timerange}
-        #di['STAGE'] = {None: grid_data.branch.expand[grid_data.branch['expand']>0].unique().tolist()}
         
-        br_expand1 = grid_data.branch[
-                        grid_data.branch['expand']==1].index.tolist()
-        br_expand2 = grid_data.branch[
-                        grid_data.branch['expand']==2].index.tolist()
-        gen_expand1 = grid_data.generator[
-                        grid_data.generator['expand']==1].index.tolist()
-        gen_expand2 = grid_data.generator[
-                        grid_data.generator['expand']==2].index.tolist()
         # Convert from numpy.int64 (pandas) to int in order to work with PySP
         # (pprint function error otherwise)
-        br_expand1 = [int(i) for i in br_expand1]
-        br_expand2 = [int(i) for i in br_expand2]
-        gen_expand1 = [int(i) for i in gen_expand1]
-        gen_expand2 = [int(i) for i in gen_expand2]
-        # Determine which nodes should be considered upgraded in each stage,
-        # depending on whether any generators or branches are connected
-        node_expand1=[]
-        node_expand2=[]
-        for n in grid_data.node['id'][grid_data.node['existing']==0]:
-            if (n in grid_data.generator['node'][grid_data.generator['expand']==1].tolist()
-                or n in grid_data.branch['node_to'][grid_data.branch['expand']==1].tolist() 
-                or n in grid_data.branch['node_from'][grid_data.branch['expand']==1].tolist()):
-                #stage one generator  or branch expansion connected to node
-                node_expand1.append(n)
-            if (n in grid_data.generator['node'][grid_data.generator['expand']==2].tolist()
-                or n in grid_data.branch['node_to'][grid_data.branch['expand']==2].tolist() 
-                or n in grid_data.branch['node_from'][grid_data.branch['expand']==2].tolist()):
-                #stage two generator or branch expansion connected to node
-                node_expand2.append(n)
-#        node_expand1 = grid_data.node[
-#                        grid_data.node['expand1']==1].index.tolist()
-#        node_expand2 = grid_data.node[
-#                        grid_data.node['expand2']==2].index.tolist()
-        
-        di['BRANCH_EXPAND1'] = {None: br_expand1}
-        di['BRANCH_EXPAND2'] = {None: br_expand2}
-        di['GEN_EXPAND1'] = {None:gen_expand1}
-        di['GEN_EXPAND2'] = {None:gen_expand2}
-        di['NODE_EXPAND1'] = {None:node_expand1}
-        di['NODE_EXPAND2'] = {None:node_expand2}
+      
         
         #Parameters:
         di['maxNewBranchNum'] = {None: maxNewBranchNum}
@@ -837,7 +798,7 @@ class SipModel():
 
         # Read input data from XML file
         import xml
-        tree=xml.etree.ElementTree.parse(datafile)
+        tree = xml.etree.ElementTree.parse(datafile)
         root = tree.getroot()
         
         di['NODETYPE'] = {None:[]}
@@ -894,7 +855,7 @@ class SipModel():
          # Compute matrices used in power flow equaions 
 #        import scipy.sparse
 #        import networkx as nx
-        print("Computing B and DA matrices...")        
+#        print("Computing B and DA matrices...")        
 #        Bbus, DA = grid_data.computePowerFlowMatrices(const.baseZ)
 
         n_i = di['NODE'][None]
@@ -902,7 +863,7 @@ class SipModel():
         di['coeff_B'] = dict()
         di['coeff_DA'] = dict()
         
-        print("Creating B and DA coefficients...")        
+#        print("Creating B and DA coefficients...")        
 #        cx = scipy.sparse.coo_matrix(Bbus)
 #        for i,j,v in zip(cx.row, cx.col, cx.data):
 #            di['coeff_B'][(n_i[i],n_i[j])] = v
@@ -1081,7 +1042,7 @@ class SipModel():
         
         return sum(deltaP[i]*flow[i] for i in range(len(deltaP)))
 
-    def computeCostBranch(self,model,b,stage=2,include_om=False):
+    def computeCostBranch(self,model,b,stage=1,include_om=False):
         '''Investment cost of single branch NPV
         
         corresponds to  firstStageCost in abstract model'''
@@ -1138,16 +1099,14 @@ class SipModel():
         corresponds to cost in abstract model'''
         
         # Re-use method used in optimisation
-        #NOTE: adding "()" after the expression gives the value
-        cost1 = self.costNode(model,n,stage=1)
-        cost1npv = self.npvInvestment(model,stage=1,investment=cost1,
+        # NOTE: adding "()" after the expression gives the value
+        costnpv = 0
+        for s in model.STAGE:
+            cost = self.costNode(model,n,stage=s)
+            costnpv += self.npvInvestment(model,stage=s,investment=cost,
                                       includeOM=include_om,
                                       subtractSalvage=True)
-        cost2 = self.costNode(model,n,stage=2)
-        cost2npv = self.npvInvestment(model,stage=2,investment=cost2,
-                                      includeOM=include_om,
-                                      subtractSalvage=True)
-        cost_value = pyo.value(cost1npv+cost2npv)
+        cost_value = pyo.value(costnpv)
         return cost_value
 
         
@@ -1184,7 +1143,7 @@ class SipModel():
 #        return cost
 
 
-    def computeCostGenerator(self,model,g,stage=2,include_om=False):
+    def computeCostGenerator(self,model,g,stage=1,include_om=False):
         '''Investment cost of generator NPV
         '''
         cost1 = self.costGen(model,g,stage=stage)
@@ -1217,7 +1176,7 @@ class SipModel():
 #        return cost
                 
                 
-    def computeGenerationCost(self,model,g,stage):
+    def computeGenerationCost(self,model,g,stage=1):
         '''compute NPV cost of generation (+ CO2 emissions)
         
         This corresponds to secondStageCost in abstract model        
@@ -1256,7 +1215,7 @@ class SipModel():
     
     
     
-    def computeCurtailment(self, model, g, t, stage=2):
+    def computeCurtailment(self, model, g, t, stage=1):
         '''compute curtailment [MWh] per generator per hour'''
         cur = 0
         gen_max = 0
@@ -1274,7 +1233,7 @@ class SipModel():
         
 
         
-    def computeAreaEmissions(self,model,c, stage=2, cost=False):
+    def computeAreaEmissions(self,model,c, stage=1, cost=False):
         '''compute total emissions from a load/country'''
         # TODO: ensure that all nodes are mapped to a country/load
         n = model.demNode[c]
@@ -1296,7 +1255,7 @@ class SipModel():
         return expr
         
                                 
-    def computeAreaRES(self, model,j, shareof, stage=2):
+    def computeAreaRES(self, model,j, shareof, stage=1):
         '''compute renewable share of demand or total generation capacity'''
         node = model.demNode[j]
         area = model.nodeArea[node]
@@ -1320,7 +1279,7 @@ class SipModel():
            print('Choose shareof dem or gen')
 
     
-    def computeAreaPrice(self, model, area, t, stage=2):
+    def computeAreaPrice(self, model, area, t, stage=1):
         '''cumpute the approximate area price based on max marginal cost'''
         mc = []
         for g in model.GEN:
@@ -1329,11 +1288,14 @@ class SipModel():
                 if model.nodeArea[model.genNode[g]]==area:
                     mc.append(model.genCostAvg[g]*model.genCostProfile[g,t]
                                 +model.genTypeEmissionRate[model.genType[g]]*model.CO2price.value)
-        price = max(mc)
+        if mc:
+            price = max(mc)
+        else:
+            price=0
         return price
 
         
-    def computeAreaWelfare(self, model, c, t, stage=2):
+    def computeAreaWelfare(self, model, c, t, stage=1):
         '''compute social welfare for a given area and time step
         
         Returns: Welfare, ProducerSurplus, ConsumerSurplus, 
@@ -1425,7 +1387,7 @@ class SipModel():
         return cost/2
         
         
-    def computeAreaCostGen(self,model,c):
+    def computeAreaCostGen(self,model,c,stage=1):
         '''compute capital costs for new generator capacity'''
         node = model.demNode[c]
         area = model.nodeArea[node]
@@ -1434,7 +1396,7 @@ class SipModel():
         for g in model.GEN:
             if model.nodeArea[model.genNode[g]]==area:
                 typ = model.genType[g]
-                gen_capex += model.genTypeCost[typ]*model.genNewCapacity[g].value*model.genCostScale[g]
+                gen_capex += model.genTypeCost[typ]*model.genNewCapacity[g,stage].value*model.genCostScale[g]
                 
         return gen_capex  
         
@@ -1457,19 +1419,17 @@ class SipModel():
         # ordering
         df_branches = pd.DataFrame(columns=['from','to','fArea','tArea','type',
                                            'existingCapacity','expand','newCables','newCapacity',
-                                           'flow12avg_1','flow21avg_1',
-                                           'existingCapacity2','expand2','newCables2','newCapacity2',
-                                           'flow12avg_2', 'flow21avg_2',
-                                           'cost_withOM','congestion_rent'])
-        df_nodes = pd.DataFrame(columns=['num','area','newNodes1','newNodes2',
+                                           'flow12avg','flow21avg',
+                                           'cost_withOM','congestion_rent',
+                                           'existingCapacity_2','expand_2'])
+        df_nodes = pd.DataFrame(columns=['num','area','newNodes',
                                          'cost','cost_withOM'])
-        df_gen = pd.DataFrame(columns=['num','node','area','type',
+        df_gen = pd.DataFrame(columns=['num','node','area','type','emission_rate',
                                        'pmax','expand','newCapacity',
-                                       'pmax2','expand2','newCapacity2'])
+                                       'pmax2','expand2','newCapacity'])
         df_load = pd.DataFrame(columns=['num','node','area','Pavg','Pmin','Pmax',
-                                        'emissions','emissionCap', 'emission_cost',
-                                        'price_avg','RES%dem','RES%gen', 'IM', 'EX',
-                                        'CS', 'PS', 'CR', 'CAPEX', 'Welfare'])
+                                        'emissions_1','emissionCap', 'emission_cost_1',
+                                        'price_avg'])
         
         for j in model.BRANCH:
             df_branches.loc[j,'num'] = j
@@ -1480,34 +1440,34 @@ class SipModel():
             df_branches.loc[j,'type'] = model.branchType[j]
             df_branches.loc[j,'existingCapacity'] = model.branchExistingCapacity[j]
             df_branches.loc[j,'expand'] = model.branchExpand[j]
-            df_branches.loc[j,'existingCapacity2'] = model.branchExistingCapacity2[j]
-            df_branches.loc[j,'expand2'] = model.branchExpand2[j]
+            df_branches.loc[j,'existingCapacity_2'] = model.branchExistingCapacity2[j]
+            df_branches.loc[j,'expand_2'] = model.branchExpand2[j]
             for s in model.STAGE:
                 if s == 1:
                     df_branches.loc[j,'newCables'] = model.branchNewCables[j,s].value
                     df_branches.loc[j,'newCapacity'] = model.branchNewCapacity[j,s].value
-                    df_branches.loc[j,'flow12avg_1'] = np.mean([
+                    df_branches.loc[j,'flow12avg'] = np.mean([
                         model.branchFlow12[(j,t,s)].value for t in model.TIME])
-                    df_branches.loc[j,'flow21avg_1'] = np.mean([
+                    df_branches.loc[j,'flow21avg'] = np.mean([
                         model.branchFlow21[(j,t,s)].value for t in model.TIME])
                     cap1 = model.branchExistingCapacity[j] + model.branchNewCapacity[j,s].value  
-                    df_branches.loc[j,'flow12%_1'] = (
-                            df_branches.loc[j,'flow12avg_1']/cap1)
-                    df_branches.loc[j,'flow21%_1'] = (
-                            df_branches.loc[j,'flow21avg_1']/cap1)   
-                elif s==2:
-                    df_branches.loc[j,'newCables2'] = model.branchNewCables[j,s].value
-                    df_branches.loc[j,'newCapacity2'] = model.branchNewCapacity[j,s].value
-                    df_branches.loc[j,'flow12avg_2'] = np.mean([
+                    df_branches.loc[j,'flow12%'] = (
+                            df_branches.loc[j,'flow12avg']/cap1)
+                    df_branches.loc[j,'flow21%'] = (
+                            df_branches.loc[j,'flow21avg']/cap1)   
+                elif s>1:
+                    df_branches.loc[j,'newCables_'+str(s)] = model.branchNewCables[j,s].value
+                    df_branches.loc[j,'newCapacity_'+str(s)] = model.branchNewCapacity[j,s].value
+                    df_branches.loc[j,'flow12avg_'+str(s)] = np.mean([
                         model.branchFlow12[(j,t,s)].value for t in model.TIME])
-                    df_branches.loc[j,'flow21avg_2'] = np.mean([
+                    df_branches.loc[j,'flow21avg_'+str(s)] = np.mean([
                         model.branchFlow21[(j,t,s)].value for t in model.TIME])
                     cap1 = model.branchExistingCapacity[j] + model.branchNewCapacity[j,s-1].value
                     cap2 = cap1 + model.branchExistingCapacity2[j] + model.branchNewCapacity[j,s].value
-                    df_branches.loc[j,'flow12%_2'] = (
-                            df_branches.loc[j,'flow12avg_2']/cap2)
+                    df_branches.loc[j,'flow12%_'+str(s)] = (
+                            df_branches.loc[j,'flow12avg_'+str(s)]/cap2)
                     df_branches.loc[j,'flow21%_2'] = (
-                            df_branches.loc[j,'flow21avg_2']/cap2)                
+                            df_branches.loc[j,'flow21avg_'+str(s)]/cap2)                
             #branch costs
             df_branches.loc[j,'cost'] = sum(self.computeCostBranch(model,j,stage) for stage in model.STAGE)
             df_branches.loc[j,'cost_withOM'] = sum(self.computeCostBranch(
@@ -1520,9 +1480,9 @@ class SipModel():
             df_nodes.loc[j,'area'] = model.nodeArea[j]
             for s in model.STAGE:
                 if s==1:
-                    df_nodes.loc[j,'newNodes1'] = model.newNodes[j,s].value
-                elif s==2:
-                    df_nodes.loc[j,'newNodes2'] = model.newNodes[j,s].value
+                    df_nodes.loc[j,'newNodes'] = model.newNodes[j,s].value
+                elif s>1:
+                    df_nodes.loc[j,'newNodes_'+str(s)] = model.newNodes[j,s].value
             df_nodes.loc[j,'cost'] = self.computeCostNode(model,j)
             df_nodes.loc[j,'cost_withOM'] = self.computeCostNode(model,j,
                 include_om=True)
@@ -1540,49 +1500,48 @@ class SipModel():
             df_gen.loc[j,'emission_rate'] = model.genTypeEmissionRate[model.genType[j]]
             for s in model.STAGE:
                 if s==1:
-                    df_gen.loc[j,'emission1'] = (model.genTypeEmissionRate[model.genType[j]]*sum(
+                    df_gen.loc[j,'emission'] = (model.genTypeEmissionRate[model.genType[j]]*sum(
                         model.generation[j,t,s].value*model.samplefactor[t] for t in model.TIME))
-                    df_gen.loc[j,'Pavg1'] = np.mean([
+                    df_gen.loc[j,'Pavg'] = np.mean([
                         model.generation[(j,t,s)].value for t in model.TIME])
-                    df_gen.loc[j,'Pmin1'] = np.min([
+                    df_gen.loc[j,'Pmin'] = np.min([
                         model.generation[(j,t,s)].value for t in model.TIME])
-                    df_gen.loc[j,'Pmax1'] = np.max([
+                    df_gen.loc[j,'Pmax'] = np.max([
                         model.generation[(j,t,s)].value for t in model.TIME])
-                    df_gen.loc[j,'curtailed_avg1'] = np.mean([
+                    df_gen.loc[j,'curtailed_avg'] = np.mean([
                         self.computeCurtailment(model,j,t,stage=1) for t in model.TIME])
                     df_gen.loc[j,'newCapacity'] = model.genNewCapacity[j,s].value
-                    df_gen.loc[j,'cost_NPV1'] = self.computeGenerationCost(model,j,stage=1)
-                elif s==2:
-                    df_gen.loc[j,'emission2'] = (model.genTypeEmissionRate[model.genType[j]]*sum(
+                    df_gen.loc[j,'cost_NPV'] = self.computeGenerationCost(model,j,stage=1)
+                elif s>1:
+                    df_gen.loc[j,'emission_'+str(s)] = (model.genTypeEmissionRate[model.genType[j]]*sum(
                         model.generation[j,t,s].value*model.samplefactor[t] for t in model.TIME))
-                    df_gen.loc[j,'Pavg2'] = np.mean([
+                    df_gen.loc[j,'Pavg_'+str(s)] = np.mean([
                         model.generation[(j,t,s)].value for t in model.TIME])
-                    df_gen.loc[j,'Pmin2'] = np.min([
+                    df_gen.loc[j,'Pmin_'+str(s)] = np.min([
                         model.generation[(j,t,s)].value for t in model.TIME])
-                    df_gen.loc[j,'Pmax2'] = np.max([
+                    df_gen.loc[j,'Pmax_'+str(s)] = np.max([
                         model.generation[(j,t,s)].value for t in model.TIME])
-                    df_gen.loc[j,'curtailed_avg2'] = np.mean([
-                        self.computeCurtailment(model,j,t,stage=2) for t in model.TIME])
-                    df_gen.loc[j,'newCapacity2'] = model.genNewCapacity[j,s].value
-                    df_gen.loc[j,'cost_NPV2'] = self.computeGenerationCost(model,j,stage=2)
+                    df_gen.loc[j,'curtailed_avg_'+str(s)] = np.mean([
+                        self.computeCurtailment(model,j,t,stage=s) for t in model.TIME])
+                    df_gen.loc[j,'newCapacity_'+str(s)] = model.genNewCapacity[j,s].value
+                    df_gen.loc[j,'cost_NPV_'+str(s)] = self.computeGenerationCost(model,j,stage=s)
                 
             df_gen.loc[j,'cost_investment'] = sum(self.computeCostGenerator(model,j,stage) for stage in model.STAGE)
             df_gen.loc[j,'cost_investment_withOM'] = sum(self.computeCostGenerator(model,j,stage,
                 include_om=True) for stage in model.STAGE)
 
-        print("TODO: powergim.saveDeterministicResults LOAD:"
-                "only showing phase 2 (after 2nd stage investments)")
-        stage=2
+        print("TODO: incorporate multistage results processing...")
+        
         def _n(n,p):
-            return n+str(p)
+            return n+'_'+str(p)
             
         for j in model.LOAD:
             df_load.loc[j,'num'] = j
             df_load.loc[j,'node'] = model.demNode[j]
             df_load.loc[j,'area'] = model.nodeArea[model.demNode[j]]
             df_load.loc[j,'price_avg'] = np.mean(
-                [self.computeAreaPrice(model,df_load.loc[j,'area'], t,stage=stage)
-                for t in model.TIME])
+                [self.computeAreaPrice(model,df_load.loc[j,'area'], t,s)
+                for t in model.TIME for s in model.STAGE])
             df_load.loc[j,'Pavg'] = np.mean([self.computeDemand(model,j,t)
                 for t in model.TIME])
             df_load.loc[j,'Pmin'] = np.min([self.computeDemand(model,j,t)
@@ -1590,54 +1549,43 @@ class SipModel():
             df_load.loc[j,'Pmax'] = np.max([self.computeDemand(model,j,t)
                 for t in model.TIME])
             df_load.loc[j,'emissionCap'] = model.emissionCap[j]
-            df_load.loc[j,_n('emissions',stage)] = self.computeAreaEmissions(model,j,
-                                                stage=stage)
-            df_load.loc[j,_n('emission_cost',stage)] = self.computeAreaEmissions(model,j, 
-                                                stage=stage,cost=True)
-            df_load.loc[j,_n('RES%dem',stage)] = self.computeAreaRES(model,j,stage=stage,
-                                                            shareof='dem')
-            df_load.loc[j,_n('RES%gen',stage)] = self.computeAreaRES(model,j,stage=stage,
-                                                            shareof='gen')
-            df_load.loc[j,_n('Welfare',stage)] = sum(self.computeAreaWelfare(model,j,t,stage=stage)['W']*model.samplefactor[t]
-                                            for t in model.TIME)
-            df_load.loc[j,_n('PS',stage)] = sum(self.computeAreaWelfare(model,j,t,stage=stage)['PS']*model.samplefactor[t]
-                                            for t in model.TIME)
-            df_load.loc[j,_n('CS',stage)] = sum(self.computeAreaWelfare(model,j,t,stage=stage)['CS']*model.samplefactor[t]
-                                            for t in model.TIME)
-            df_load.loc[j,_n('CR',stage)] = sum(self.computeAreaWelfare(model,j,t,stage=stage)['CR']*model.samplefactor[t]
-                                            for t in model.TIME)
-            df_load.loc[j,_n('IM',stage)] = sum(self.computeAreaWelfare(model,j,t,stage=stage)['IM']*model.samplefactor[t]
-                                            for t in model.TIME)
-            df_load.loc[j,_n('EX',stage)] = sum(self.computeAreaWelfare(model,j,t,stage=stage)['X']*model.samplefactor[t]
-                                            for t in model.TIME)
-            df_load.loc[j,_n('CAPEX1',stage)] = self.computeAreaCostBranch(model,j,stage,
-                                            include_om=False)
-        
+            for s in model.STAGE:
+                df_load.loc[j,_n('emissions',s)] = self.computeAreaEmissions(model,j,
+                                                    stage=s)
+                df_load.loc[j,_n('emission_cost',s)] = self.computeAreaEmissions(model,j, 
+                                                    stage=s,cost=True)
+                df_load.loc[j,_n('RES%dem',s)] = self.computeAreaRES(model,j,stage=s,
+                                                                shareof='dem')
+                df_load.loc[j,_n('RES%gen',s)] = self.computeAreaRES(model,j,stage=s,
+                                                                shareof='gen')
+                df_load.loc[j,_n('Welfare',s)] = sum(self.computeAreaWelfare(model,j,t,stage=s)['W']*model.samplefactor[t]
+                                                for t in model.TIME)
+                df_load.loc[j,_n('PS',s)] = sum(self.computeAreaWelfare(model,j,t,stage=s)['PS']*model.samplefactor[t]
+                                                for t in model.TIME)
+                df_load.loc[j,_n('CS',s)] = sum(self.computeAreaWelfare(model,j,t,stage=s)['CS']*model.samplefactor[t]
+                                                for t in model.TIME)
+                df_load.loc[j,_n('CR',s)] = sum(self.computeAreaWelfare(model,j,t,stage=s)['CR']*model.samplefactor[t]
+                                                for t in model.TIME)
+                df_load.loc[j,_n('IM',s)] = sum(self.computeAreaWelfare(model,j,t,stage=s)['IM']*model.samplefactor[t]
+                                                for t in model.TIME)
+                df_load.loc[j,_n('EX',s)] = sum(self.computeAreaWelfare(model,j,t,stage=s)['X']*model.samplefactor[t]
+                                                for t in model.TIME)
+                df_load.loc[j,_n('CAPEX',s)] = self.computeAreaCostBranch(model,j,s,
+                                                include_om=False)
+            
         df_cost = pd.DataFrame(columns=['value','unit'])
         df_cost.loc['InvestmentCosts','value'] = sum(
-            model.investmentCost[s].value for s in model.STAGE)/1e9
+            model.investmentCost[s].value for s in model.STAGE)/10**9
         df_cost.loc['OperationalCosts','value'] = sum(
-            model.opCost[s].value for s in model.STAGE)/1e9
+            model.opCost[s].value for s in model.STAGE)/10**9
         df_cost.loc['newTransmission','value'] = sum(
-            self.computeCostBranch(model,b,stage,include_om=True) 
-            for b in model.BRANCH for stage in model.STAGE)/1e9
+            self.computeCostBranch(model,b,stage,include_om=True) for b in model.BRANCH for stage in model.STAGE)/10**9
         df_cost.loc['newGeneration','value'] = sum(
-            self.computeCostGenerator(model,g,stage,include_om=True) 
-            for g in model.GEN for stage in model.STAGE)/1e9
-        df_cost.loc['newNodes','value'] = sum(
-            self.computeCostNode(model,n,include_om=True) 
-            for n in model.NODE)/1e9
+            self.computeCostGenerator(model,g,stage,include_om=True) for g in model.GEN for stage in model.STAGE)/10**9
         df_cost.loc['InvestmentCosts','unit'] = '10^9 EUR'
         df_cost.loc['OperationalCosts','unit'] = '10^9 EUR'
         df_cost.loc['newTransmission','unit'] = '10^9 EUR'
         df_cost.loc['newGeneration','unit'] = '10^9 EUR'
-        df_cost.loc['newNodes','unit'] = '10^9 EUR'
-            
-        #model.solutions.load_from(results)
-        #print('First stage costs: ', 
-        #      pyo.value(model.firstStageCost)/10**9, 'bnEUR')
-        #print('Second stage costs: ', 
-        #      pyo.value(model.secondStageCost)/10**9, 'bnEUR')
 
         writer = pd.ExcelWriter(excel_file) 
         df_cost.to_excel(excel_writer=writer,sheet_name="cost") 
@@ -1645,7 +1593,7 @@ class SipModel():
         df_nodes.to_excel(excel_writer=writer,sheet_name="nodes") 
         df_gen.to_excel(excel_writer=writer,sheet_name="generation") 
         df_load.to_excel(excel_writer=writer,sheet_name="demand") 
-        writer.save()
+
 
 
     def extractResultingGridData(self,grid_data,
@@ -1928,7 +1876,7 @@ class SipModel():
         return
         
     def plotWelfare(self, model, areas=None,timeMaxMin=None,relative=False,
-                      showTitle=False,variable="energy",gentypes=None, stage=2):
+                      showTitle=False,variable="energy",gentypes=None, stage=1):
         '''
         Plot welfare
         
