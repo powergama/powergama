@@ -315,24 +315,12 @@ class SipModel():
         # VARIABLES ##########################################################
     
         # investment: new branch capacity
-        def branchNewCapacity_bounds(model,j,h):
-            if h>1:
-                return (0,model.branchMaxNewCapacity[j]*model.branchExpand2[j])
-            else:
-                return (0,model.branchMaxNewCapacity[j]*model.branchExpand[j])
         model.branchNewCapacity = pyo.Var(model.BRANCH, model.STAGE, 
-                                          within = pyo.NonNegativeReals,
-                                          bounds = branchNewCapacity_bounds)                                  
+                                          within = pyo.NonNegativeReals)                                  
 
-        # investment: new branch cables
-        def branchNewCables_bounds(model,j,h):
-            if h>1:
-                return (0,model.maxNewBranchNum*model.branchExpand2[j])
-            else:
-                return (0,model.maxNewBranchNum*model.branchExpand[j])                                  
+        # investment: new branch cables                            
         model.branchNewCables = pyo.Var(model.BRANCH, model.STAGE, 
-                                        within = pyo.NonNegativeIntegers,
-                                        bounds = branchNewCables_bounds)
+                                        within = pyo.NonNegativeIntegers)
                                         
 
         # investment: new nodes
@@ -340,14 +328,8 @@ class SipModel():
 
         
         # investment: generation capacity
-        def genNewCapacity_bounds(model,g,h):
-            if h>1:
-                return (0,model.genNewCapMax[g]*model.genExpand2[g])
-            else:
-                return (0,model.genNewCapMax[g]*model.genExpand[g])
         model.genNewCapacity = pyo.Var(model.GEN, model.STAGE,
-                                       within = pyo.NonNegativeReals,
-                                       bounds = genNewCapacity_bounds)
+                                       within = pyo.NonNegativeReals)
 
         
         # branch power flow (also given by constraints??)
@@ -363,21 +345,78 @@ class SipModel():
         model.generation = pyo.Var(model.GEN, model.TIME,model.STAGE, 
                                    within = pyo.NonNegativeReals)
         # load shedding
-        def loadShed_bounds(model, c, t, h):
-            ub = model.maxShed[c,t]
-            #ub = 0
-            #for c in model.LOAD:
-            #    if model.demNode[c]==n:
-            #        ub += model.demandAvg[c]*model.demandProfile[c,t]
-            return (0,ub)
         model.loadShed = pyo.Var(model.LOAD, model.TIME, model.STAGE,
-                                 domain = pyo.NonNegativeReals,
-                                 bounds = loadShed_bounds) 
+                                 domain = pyo.NonNegativeReals) 
         
         
         
         # CONSTRAINTS ########################################################
-
+        
+        # 1 STAGE: INVESTMENTS
+        
+        # No new branch if not allowed by the user
+        def maxNewCapUser_rule(model,j,h):
+            if h>1:
+                expr = (model.branchNewCapacity[j,h] <=
+                        model.branchMaxNewCapacity[j]*model.branchExpand2[j])
+            else:
+                expr = (model.branchNewCapacity[j,h] <=
+                        model.branchMaxNewCapacity[j]*model.branchExpand[j])
+            return expr
+        model.cmaxNewCapacityUser = pyo.Constraint(model.BRANCH, model.STAGE,
+                                               rule=maxNewCapUser_rule)
+        
+        # No new branch capacity without new cables determined by type 
+        def maxNewCapType_rule(model,j,h):
+            typ = model.branchType[j]
+            expr = (model.branchNewCapacity[j,h] <= 
+                    model.branchtypeMaxCapacity[typ]*model.branchNewCables[j,h])
+            return expr
+        model.cmaxNewCapacity = pyo.Constraint(model.BRANCH, model.STAGE,
+                                               rule=maxNewCapType_rule)
+        # Number of new branches restricted 
+        def branchNewCables_rule(model,j,h):
+            if h>1:
+                expr = (model.branchNewCables[j,h] <= 
+                        model.maxNewBranchNum*model.branchExpand2[j])
+            else:
+                expr = (model.branchNewCables[j,h] <= 
+                        model.maxNewBranchNum*model.branchExpand[j])
+            return expr
+        model.cmaxNewBranchNumber = pyo.Constraint(model.BRANCH, model.STAGE,
+                                                   rule=branchNewCables_rule)   
+                              
+        # A node required at each branch endpoint
+        def newNodes_rule(model,n,h):
+            expr = 0
+            numnodes = model.nodeExistingNumber[n]
+            for x in range(h):
+                numnodes += model.newNodes[n,x+1]
+            for j in model.BRANCH:
+                if model.branchNodeFrom[j]==n or model.branchNodeTo[j]==n:
+                    expr += model.branchNewCables[j,h]
+            expr = (expr <= self.M_const * numnodes)
+            if ((type(expr) is bool) and (expr==True)):
+                expr = pyo.Constraint.Skip
+            return expr
+        model.cNewNodes = pyo.Constraint(model.NODE,model.STAGE,
+                                          rule=newNodes_rule)
+        
+        def genNewCapacity_rule(model,g,h):
+            if h>1:
+                expr = (model.genNewCapacity[g,h] <= 
+                        model.genNewCapMax[g]*model.genExpand2[g])
+            else:
+                expr = (model.genNewCapacity[g,h] <= 
+                        model.genNewCapMax[g]*model.genExpand[g])
+            return expr
+        model.cmaxNewGenerationCapacity = pyo.Constraint(model.GEN, model.STAGE,
+                                                         rule= genNewCapacity_rule)
+        
+        
+        
+        # 2 STAGE: OPERATIONS
+        
         # Power flow limitations (in both directions)                
         def maxflow12_rule(model,j,t,h):
             cap = model.branchExistingCapacity[j]
@@ -401,32 +440,6 @@ class SipModel():
         model.cMaxFlow21 = pyo.Constraint(model.BRANCH, model.TIME,model.STAGE,
                                          rule=maxflow21_rule)
                                          
-        # No new branch capacity without new cables
-        def maxNewCap_rule(model,j,h):
-            typ = model.branchType[j]
-            expr = (model.branchNewCapacity[j,h] 
-                    <= model.branchtypeMaxCapacity[typ]
-                        *model.branchNewCables[j,h])
-            return expr
-        model.cmaxNewCapacity = pyo.Constraint(model.BRANCH, model.STAGE,
-                                               rule=maxNewCap_rule)
-
-                                            
-        # A node required at each branch endpoint
-        def newNodes_rule(model,n,h):
-            expr = 0
-            numnodes = model.nodeExistingNumber[n]
-            for x in range(h):
-                numnodes += model.newNodes[n,x+1]
-            for j in model.BRANCH:
-                if model.branchNodeFrom[j]==n or model.branchNodeTo[j]==n:
-                    expr += model.branchNewCables[j,h]
-            expr = (expr <= self.M_const * numnodes)
-            if ((type(expr) is bool) and (expr==True)):
-                expr = pyo.Constraint.Skip
-            return expr
-        model.cNewNodes = pyo.Constraint(model.NODE,model.STAGE,
-                                          rule=newNodes_rule)
           
         # Generator output limitations
         # TODO: add option to set minimum output = timeseries for renewable,
@@ -470,6 +483,15 @@ class SipModel():
             return expr
         model.cMaxEnergy = pyo.Constraint(model.GEN,model.STAGE,
                                                rule=maxEnergy_rule)
+        
+        # Load shedding??
+#        def loadShed_bounds(model, c, t, h):
+#            ub = model.maxShed[c,t]
+#            #ub = 0
+#            #for c in model.LOAD:
+#            #    if model.demNode[c]==n:
+#            #        ub += model.demandAvg[c]*model.demandProfile[c,t]
+#            return (0,ub)
 
 
         # Emissions restriction per country/load
