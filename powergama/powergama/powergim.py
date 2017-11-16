@@ -351,22 +351,10 @@ class SipModel():
 
         
         # branch power flow (also given by constraints??)
-        def branchFlow_bounds(model,j,t,h):
-            if h == 1:
-                ub = (model.branchExistingCapacity[j]+
-                        branchNewCapacity_bounds(model,j,h)[1])
-            elif h == 2:
-                ub = (model.branchExistingCapacity[j]+
-                        model.branchExistingCapacity2[j]+
-                        branchNewCapacity_bounds(model,j,h-1)[1]+
-                        branchNewCapacity_bounds(model,j,h)[1])
-            return (0,ub)
         model.branchFlow12 = pyo.Var(model.BRANCH, model.TIME,model.STAGE, 
-                                     within = pyo.NonNegativeReals,
-                                     bounds = branchFlow_bounds)
+                                     within = pyo.NonNegativeReals)
         model.branchFlow21 = pyo.Var(model.BRANCH, model.TIME, model.STAGE,
-                                     within = pyo.NonNegativeReals,
-                                     bounds = branchFlow_bounds)
+                                     within = pyo.NonNegativeReals)
 
         # voltage angle
         model.voltageAngle = pyo.Var(model.NODE,model.TIME,model.STAGE, within=pyo.Reals)
@@ -1426,7 +1414,7 @@ class SipModel():
                                          'cost','cost_withOM'])
         df_gen = pd.DataFrame(columns=['num','node','area','type','emission_rate',
                                        'pmax','expand','newCapacity',
-                                       'pmax2','expand2','newCapacity'])
+                                       'pmax2','expand2'])
         df_load = pd.DataFrame(columns=['num','node','area','Pavg','Pmin','Pmax',
                                         'emissions_1','emissionCap', 'emission_cost_1',
                                         'price_avg'])
