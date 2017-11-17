@@ -106,19 +106,17 @@ class SipModel():
             salvagefactor = (
                 int(stage-1)*model.stage2TimeDelta/model.financeYears)*(
                     1/((1+model.financeInterestrate)
-                    **(model.financeYears-model.stage2TimeDelta*int(stage-1))))
+                    **(model.financeYears - model.stage2TimeDelta*int(stage-1))))
         if includeOM:
             omfactor = model.omRate * (
                 annuityfactor(model.financeInterestrate,
-                              model.financeYears)
-                -annuityfactor(model.financeInterestrate,
-                               int(stage-1)*model.stage2TimeDelta))
+                              model.financeYears - int(stage-1)*model.stage2TimeDelta))
 
         discount_t0 = (1/((1+model.financeInterestrate)
                         **(model.stage2TimeDelta*int(stage-1))))
 
-        investment = investment*discount_t0
-        pv_cost = investment*(1 + omfactor - salvagefactor)
+        #investment = investment*discount_t0
+        pv_cost = investment*(1 + omfactor - salvagefactor)*discount_t0
         return pv_cost
 
     def costInvestments(self,model,stage,
@@ -131,7 +129,8 @@ class SipModel():
         for n in model.NODE:
             investment += self.costNode(model,n,stage)            
         for g in model.GEN:
-            investment += self.costGen(model,g,stage)
+            investment += self.costGen(model,g,stage)*annuityfactor(
+                        model.financeInterestrate,model.financeYears)
         # add O&M costs and compute NPV:
         cost = self.npvInvestment(model,stage,investment,
                                   includeOM,subtractSalvage)
@@ -140,8 +139,8 @@ class SipModel():
     def costOperation(self,model, stage):
         """Operational costs: cost of gen, load shed (NPV)"""
         opcost = 0
-        #discount_t0 = (1/((1+model.financeInterestrate)
-        #    **(model.stage2TimeDelta*int(stage-1))))
+        discount_t0 = (1/((1+model.financeInterestrate)
+            **(model.stage2TimeDelta*int(stage-1))))
         
         # operation cost per year:
         opcost = sum(model.generation[i,t,stage]*model.samplefactor[t]*(
@@ -154,10 +153,13 @@ class SipModel():
         # compute present value of future annual costs
         if stage == len(model.STAGE):
             #from year stage2TimeDelta until financeYears
+#            opcost = opcost*(
+#                annuityfactor(model.financeInterestrate,model.financeYears)
+#                - annuityfactor(model.financeInterestrate,
+#                                int(stage-1)*model.stage2TimeDelta))
             opcost = opcost*(
-                annuityfactor(model.financeInterestrate,model.financeYears)
-                - annuityfactor(model.financeInterestrate,
-                                int(stage-1)*model.stage2TimeDelta))
+                annuityfactor(model.financeInterestrate,model.financeYears
+                              - int(stage-1)*model.stage2TimeDelta))
         else:
             #from year 0
             opcost = opcost*annuityfactor(model.financeInterestrate,
@@ -165,15 +167,15 @@ class SipModel():
 
         #Harald: this is already discounted back to year 0 from the present 
         # value calculation above
-        #opcost = opcost*discount_t0
+        opcost = opcost*discount_t0
         
         return opcost
 
     def costOperationSingleGen(self,model, g, stage):
         """Operational costs: cost of gen, load shed (NPV)"""
         opcost = 0
-        #discount_t0 = (1/((1+model.financeInterestrate)
-        #    **(model.stage2TimeDelta*int(stage-1))))
+        discount_t0 = (1/((1+model.financeInterestrate)
+            **(model.stage2TimeDelta*int(stage-1))))
         
         # operation cost per year:
         opcost = sum(model.generation[g,t,stage]*model.samplefactor[t]*(
@@ -184,13 +186,12 @@ class SipModel():
         # compute present value of future annual costs
         if stage == len(model.STAGE):
             opcost = opcost*(
-                annuityfactor(model.financeInterestrate,model.financeYears)
-                - annuityfactor(model.financeInterestrate,
-                                int(stage-1)*model.stage2TimeDelta))
+                annuityfactor(model.financeInterestrate, model.financeYears
+                              - int(stage-1)*model.stage2TimeDelta))
         else:
             opcost = opcost*annuityfactor(model.financeInterestrate,
                                           model.stage2TimeDelta)            
-        #opcost = opcost*discount_t0        
+        opcost = opcost*discount_t0        
         return opcost
         
     
@@ -475,11 +476,8 @@ class SipModel():
                 cap += model.genCapacity2[g]
             for x in range(h):
                 cap += model.genNewCapacity[g,x+1]
-            if model.genPAvg[g]>0:
-                expr = (sum(model.generation[g,t,h] for t in model.TIME) 
+            expr = (sum(model.generation[g,t,h] for t in model.TIME) 
                             <= (model.genPAvg[g]*cap*len(model.TIME)))
-            else:
-                expr = pyo.Constraint.Skip
             return expr
         model.cMaxEnergy = pyo.Constraint(model.GEN,model.STAGE,
                                                rule=maxEnergy_rule)
@@ -560,46 +558,45 @@ class SipModel():
                 for n2 in n2s:
                     rhs -= model.coeff_B[n,n2]*model.voltageAngle[n2,t,h]                
                 expr = (expr == rhs)
-            
-            if ((type(expr) is bool) and (expr==True)):
-                # Trivial constraint
-                expr = pyo.Constraint.Skip
+#            if ((type(expr) is bool) and (expr==True)):
+#                # Trivial constraint
+#                expr = pyo.Constraint.Skip
             return expr
-        model.cPowerbalance = pyo.Constraint(model.NODE,model.TIME,model.STAGE,
+        model.cPowerbalance = pyo.Constraint(model.NODE, model.TIME, model.STAGE,
                                              rule=powerbalance_rule)
         
-        # Power balance (power flow vs voltage angle)                               
-        def flowangle_rule(model,b,t,h):
-            if not any([model.branchReactance[b] for b in model.BRANCH])>0:
-                return pyo.Constraint.Skip
-            else:
-                lhs = model.branchFlow12[b,t,h]+model.branchFlow21[b,t,h]
-                lhs = lhs/const.baseMVA
-                rhs = 0
-                #TODO speed up- remove for loop
-                n2s = [k[1]  for k in model.coeff_DA.keys() if k[0]==b]
-                for n2 in n2s:
-                    rhs += model.coeff_DA[b,n2]*model.voltageAngle[n2,t,h]                
-                #for n2 in model.NODE:
-                #    if (b,n2) in model.coeff_DA.keys():
-                #        rhs += model.coeff_DA[b,n2]*model.varVoltageAngle[n2]
-                expr = (lhs==rhs)
-                return expr
-        model.cFlowAngle = pyo.Constraint(model.BRANCH, model.TIME, model.STAGE, rule=flowangle_rule)
-        
-        # Reference voltag angle     
-        def referenceNode_rule(model,n,t,h):
-            if not any([model.branchReactance[b] for b in model.BRANCH])>0:
-                return pyo.Constraint.Skip
-            else:
-                if n in model.refNodes.keys():
-                    expr = (model.voltageAngle[n,t,h] == 0)
-                else:
-                    expr = pyo.Constraint.Skip
-                return expr
-        model.cReferenceNode = pyo.Constraint(model.NODE,model.TIME,model.STAGE,
-                                              rule=referenceNode_rule)  
-        
+#        # Power balance (power flow vs voltage angle)                               
+#        def flowangle_rule(model,b,t,h):
+#            if not any([model.branchReactance[b] for b in model.BRANCH])>0:
+#                return pyo.Constraint.Skip
+#            else:
+#                lhs = model.branchFlow12[b,t,h]+model.branchFlow21[b,t,h]
+#                lhs = lhs/const.baseMVA
+#                rhs = 0
+#                #TODO speed up- remove for loop
+#                n2s = [k[1]  for k in model.coeff_DA.keys() if k[0]==b]
+#                for n2 in n2s:
+#                    rhs += model.coeff_DA[b,n2]*model.voltageAngle[n2,t,h]                
+#                #for n2 in model.NODE:
+#                #    if (b,n2) in model.coeff_DA.keys():
+#                #        rhs += model.coeff_DA[b,n2]*model.varVoltageAngle[n2]
+#                expr = (lhs==rhs)
+#                return expr
+#        model.cFlowAngle = pyo.Constraint(model.BRANCH, model.TIME, model.STAGE, rule=flowangle_rule)
+#        
+#        # Reference voltag angle     
+#        def referenceNode_rule(model,n,t,h):
+#            if not any([model.branchReactance[b] for b in model.BRANCH])>0:
+#                return pyo.Constraint.Skip
+#            else:
+#                if n in model.refNodes.keys():
+#                    expr = (model.voltageAngle[n,t,h] == 0)
+#                else:
+#                    expr = pyo.Constraint.Skip
+#                return expr
+#        model.cReferenceNode = pyo.Constraint(model.NODE,model.TIME,model.STAGE,
+#                                              rule=referenceNode_rule)  
+#        
 
         # OBJECTIVE ##############################################################
         model.investmentCost = pyo.Var(model.STAGE, within=pyo.Reals) 
@@ -1249,12 +1246,11 @@ class SipModel():
         n = model.demNode[c]
         expr = 0
         gen=model.generation
-        if stage==1:
+        if stage==len(model.STAGE):
+            ar = (annuityfactor(model.financeInterestrate, model.financeYears
+                                - model.stage2TimeDelta*int(stage-1)))
+        else:
             ar = annuityfactor(model.financeInterestrate,model.stage2TimeDelta)
-        elif stage==2:
-            ar = (annuityfactor(model.financeInterestrate,model.financeYears)
-                -annuityfactor(model.financeInterestrate,model.stage2TimeDelta))
-                
         for g in model.GEN:
             if model.genNode[g]==n:
                 expr += sum(gen[g,t,stage].value*model.samplefactor[t]*
