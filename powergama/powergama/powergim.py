@@ -340,7 +340,7 @@ class SipModel():
                                      within = pyo.NonNegativeReals)
 
         # voltage angle
-        model.voltageAngle = pyo.Var(model.NODE,model.TIME,model.STAGE, within=pyo.Reals)
+        #model.voltageAngle = pyo.Var(model.NODE,model.TIME,model.STAGE, within=pyo.Reals)
         
         # generator output (bounds set by constraint)
         model.generation = pyo.Var(model.GEN, model.TIME,model.STAGE, 
@@ -966,7 +966,7 @@ class SipModel():
         return dat_str
         
         
-    def createScenarioTreeModel(self,num_scenarios,probabilities=None):
+    def createScenarioTreeModel(self,num_scenarios,stages=1, probabilities=None):
         '''Generate model instance with data. Alternative to .dat files
         
         Parameters
@@ -984,47 +984,77 @@ class SipModel():
         This method may be called by "pysp_scenario_tree_model_callback()" in
         the model input file instead of using input .dat files
         '''
+        import matplotlib.pyplot as plt
         
         if probabilities is None:
             # equal probability:
             probabilities = [1/num_scenarios]*num_scenarios
-        #if probabilities is None:
-        #    st_model = tsm.CreateConcreteTwoStageScenarioTreeModel(
-        #                        num_scenarios)
-
-        G = networkx.DiGraph() 
-        G.add_node("root")
-        for i in range(len(probabilities)):
-            G.add_edge("root","Scenario{}".format(i+1),
-                       probability=probabilities[i])
-        stage_names=['Stage1','Stage2']
-
-        st_model = tsm.ScenarioTreeModelFromNetworkX(G,
-                         edge_probability_attribute="probability",
-                         stage_names=stage_names)
-    
-        first_stage = st_model.Stages.first()
-        second_stage = st_model.Stages.last()
-    
-        # First Stage
-        st_model.StageCost[first_stage] = 'firstStageCost'
-        st_model.StageVariables[first_stage].add('branchNewCables')
-        st_model.StageVariables[first_stage].add('branchNewCapacity')
-        st_model.StageVariables[first_stage].add('newNodes')
-        st_model.StageVariables[first_stage].add('genNewCapacity')
-    
-        # Second Stage
-        st_model.StageCost[second_stage] = 'secondStageCost'
-        st_model.StageVariables[second_stage].add('generation')
-        st_model.StageVariables[second_stage].add('branchFlow12')
-        st_model.StageVariables[second_stage].add('branchFlow21')
-        st_model.StageVariables[second_stage].add('genNewCapacity')
-        st_model.StageVariables[second_stage].add('branchNewCables')
-        st_model.StageVariables[second_stage].add('branchNewCapacity')
-        st_model.StageVariables[second_stage].add('newNodes')
+        if stages==1:
+            G = networkx.DiGraph() 
+            G.add_node("root")
+            for i in range(len(probabilities)):
+                G.add_edge("root","Scenario{}".format(i+1),
+                           probability=probabilities[i])
+            stage_names=['Stage1','Stage2']
             
-        st_model.ScenarioBasedData=False
+            st_model = tsm.ScenarioTreeModelFromNetworkX(
+                                G,
+                                edge_probability_attribute="probability",
+                                stage_names=stage_names)
+        
+            first_stage = st_model.Stages.first()
+            second_stage = st_model.Stages.last()
+        
+            # First Stage
+            st_model.StageCost[first_stage] = 'investmentCost[1]'
+            st_model.StageVariables[first_stage].add('branchNewCables')
+            st_model.StageVariables[first_stage].add('branchNewCapacity')
+            st_model.StageVariables[first_stage].add('newNodes')
+            st_model.StageVariables[first_stage].add('genNewCapacity')
+            # Second Stage
+            st_model.StageCost[second_stage] = 'opCost[1]'
+            st_model.StageVariables[second_stage].add('generation')
+            st_model.StageVariables[second_stage].add('branchFlow12')
+            st_model.StageVariables[second_stage].add('branchFlow21')
+            st_model.StageVariables[second_stage].add('loadShed')
+            #st_model.StageVariables[second_stage].add('genNewCapacity')
+            #st_model.StageVariables[second_stage].add('branchNewCables')
+            #st_model.StageVariables[second_stage].add('branchNewCapacity')
+            #st_model.StageVariables[second_stage].add('newNodes')
+            st_model.ScenarioBasedData=False
+        else:
+            stg = stages-1 
+            branching = int(len(probabilities)/stages)
+            #branching = 2
+            G = networkx.balanced_tree(branching, stg, networkx.DiGraph())
+            
+            st_model = tsm.ScenarioTreeModelFromNetworkX(
+                                G,
+                                edge_probability_attribute=None)
+
+            for i in range(stages):
+                currentStage = st_model.Stages[i]
+                nextStage = st_model.Stages[i+1]
+                st_model.StageCost[currentStage] = 'investmentCost['+currentStage+']'
+                st_model.StageVariables[currentStage].add('branchNewCables')
+                st_model.StageVariables[currentStage].add('branchNewCapacity')
+                st_model.StageVariables[currentStage].add('newNodes')
+                st_model.StageVariables[currentStage].add('genNewCapacity')
                 
+                st_model.StageCost[nextStage] = 'investmentCost['+nextStage+']'
+                st_model.StageVariables[second_stage].add('generation')
+                st_model.StageVariables[second_stage].add('branchFlow12')
+                st_model.StageVariables[second_stage].add('branchFlow21')
+                st_model.StageVariables[second_stage].add('loadShed')
+                
+                
+        networkx.draw_networkx(G)
+        plt.savefig('scenarioTree.pdf', bbox_inches='tight',dpi=300); plt.close()
+        networkx.draw_circular(G)
+        plt.savefig('scenarioTree_circular.pdf', bbox_inches='tight',dpi=300); plt.close()
+        networkx.draw_spectral(G)
+        plt.savefig('scenarioTree_spectral.pdf', bbox_inches='tight',dpi=300); plt.close()
+
         return st_model
         
         
