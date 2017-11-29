@@ -951,11 +951,28 @@ class SipModel():
               
 
         # OBJECTIVE ##############################################################
+        
+        model.investmentCost = pyo.Var(model.STAGE, within=pyo.Reals) 
+        model.opCost = pyo.Var(model.STAGE, within=pyo.Reals)
+            
+        def investmentCost_rule(model,stage):
+            """Investment cost, including lifetime O&M costs (NPV)"""
+            expr = (model.investmentCost[stage] == self.costInvestments(model,stage))
+            return expr
+        model.cInvestmentCost = pyo.Constraint(model.STAGE,
+                                              rule=investmentCost_rule)
+        
+        def opCost_rule(model, stage):
+            """Operational costs: cost of gen, load shed (NPV)"""
+            expr = (model.opCost[stage] == self.costOperation(model,stage))
+            return expr           
+        model.cOpCost = pyo.Constraint(model.STAGE, 
+                                       rule=opCost_rule)
             
         def stageCost_rule(model,stage):
             """Investment cost, including lifetime O&M costs (NPV)"""
-            expr = self.costInvestments(model,stage)
-            expr += self.costOperation(model,stage)
+            expr = model.investmentCost[stage]
+            expr += model.opCost[stage]
             return expr
         model.stageCost = pyo.Expression(model.STAGE,
                                          rule=stageCost_rule)
@@ -1416,9 +1433,9 @@ class SipModel():
         # Multi-horizon formulation with invest + operation in same stage
         stg = stages-1 
         #branching = int(len(probabilities)/stages)
-        branching = int(num_scenarios/stages)
+        branching = 2
         G = networkx.balanced_tree(branching, stg, networkx.DiGraph())
-        leaf_nodes = [x for x in G.nodes_iter() if G.out_degree(x)==0 and G.in_degree(x)==1]
+        leaf_nodes = [x for x in G.nodes() if G.out_degree(x)==0 and G.in_degree(x)==1]
         for i,j in enumerate(leaf_nodes):
             G.node[j]['name'] = "Scenario{}".format(i+1)
         st_model = tsm.ScenarioTreeModelFromNetworkX(
@@ -1438,9 +1455,15 @@ class SipModel():
             st_model.StageVariables[currentStage].add('branchFlow12[*,*,'+str(stg)+']')
             st_model.StageVariables[currentStage].add('branchFlow21[*,*,'+str(stg)+']')
             st_model.StageVariables[currentStage].add('loadShed[*,*,'+str(stg)+']')
-                
-        networkx.draw_networkx(G)
-        plt.savefig('scenarioTree.pdf', bbox_inches='tight',dpi=300); plt.close()
+            st_model.StageDerivedVariables[currentStage].add('investmentCost['+str(stg)+']')
+            st_model.StageDerivedVariables[currentStage].add('opCost['+str(stg)+']')
+        
+        #plt.title('{} Scenarios'.format(num_scenarios))
+        #pos = networkx.graphviz_layout(G, prog='dot')
+        #networkx.draw(G, pos, with_labels=False, arrows=False)
+        #plt.savefig('scenTree_{}scenarios.pdf'.format(num_scenarios), bbox_inches='tight',dpi=300); plt.close()        
+        #networkx.draw_networkx(G)
+        #plt.savefig('scenarioTree.pdf', bbox_inches='tight',dpi=300); plt.close()
         #networkx.draw_circular(G)
         #plt.savefig('scenarioTree_circular.pdf', bbox_inches='tight',dpi=300); plt.close()
         #networkx.draw_spectral(G)
@@ -2026,7 +2049,8 @@ class SipModel():
 
     def extractResultingGridData(self,grid_data,
                                  model=None,file_ph=None,
-                                 stage=1,scenario=None, newData=False):
+                                 stage=1,scenario=None, newData=False,
+                                 node=None):
         '''Extract resulting optimal grid layout from simulation results
         
         Parameters
@@ -2101,41 +2125,156 @@ class SipModel():
                 for k,row in df_newNodes.iterrows():
                     res_N['existing'][row['var_indx']] += int(row['value'])
                 for k,row in df_newGen.iterrows():
-                    res_G['pmax'][int(row['var_indx'])] += float(row['value'])                
-            if stage>=2:
+                    res_G['pmax'][int(row['var_indx'])] += float(row['value'])   
+                grid_res.branch['capacity'] = res_brC['capacity']
+                grid_res.node['existing'] = res_N['existing']
+                grid_res.generator['pmax'] = res_G['pmax']
+                grid_res.branch = grid_res.branch[grid_res.branch['capacity'] 
+                    > self._NUMERICAL_THRESHOLD_ZERO]
+                grid_res.node = grid_res.node[grid_res.node['existing'] 
+                    > self._NUMERICAL_THRESHOLD_ZERO]
+                return grid_res
+            else:
                 if scenario is None:
                     raise Exception('Missing input "scenario"')
+                #sNodes = df_ph['node'][df_ph['stage']==stage].unique().tolist()
                 res_brC['capacity'] += grid_res.branch['capacity2']
                 res_G['pmax'] += grid_res.generator['pmax2']
                     
                 df_branchNewCapacity = df_ph[
                     (df_ph['var']=='branchNewCapacity') &
                     (df_ph['stage']==stage) &
-                    (df_ph['node']=='LeafNode_Scenario{}'.format(scenario))]
+                    (df_ph['node']==node)]
                 df_newNodes = df_ph[(df_ph['var']=='newNodes') &
                     (df_ph['stage']==stage) &
-                    (df_ph['node']=='LeafNode_Scenario{}'.format(scenario))]
+                    (df_ph['node']==node)]
                 df_newGen = df_ph[(df_ph['var']=='genNewCapacity') &
                     (df_ph['stage']==stage) &
-                    (df_ph['node']=='LeafNode_Scenario{}'.format(scenario))]
+                    (df_ph['node']==node)]
 
                 for k,row in df_branchNewCapacity.iterrows():
-                    res_brC['capacity'][int(row['var_indx'])] += float(row['value'])
-                for k,row in df_newNodes.iterrows():
-                    res_N['existing'][row['var_indx']] += int(row['value'])
+                    res_brC['capacity'][int(row['var_indx'].split(":")[0])] += float(row['value'])
+                #for k,row in df_newNodes.iterrows():
+                #    res_N['existing'][int(row['var_indx'].split(":")[0])] += int(row['value'])
                 for k,row in df_newGen.iterrows():
-                    res_G['pmax'][int(row['var_indx'])] += float(row['value'])                
+                    res_G['pmax'][int(row['var_indx'].split(":")[0])] += float(row['value'])     
+                grid_res.branch['capacity'] = res_brC['capacity']
+                grid_res.node['existing'] = res_N['existing']
+                grid_res.generator['pmax'] = res_G['pmax']
+                grid_res.branch = grid_res.branch[grid_res.branch['capacity'] 
+                    > self._NUMERICAL_THRESHOLD_ZERO]
+                grid_res.node = grid_res.node[grid_res.node['existing'] 
+                    > self._NUMERICAL_THRESHOLD_ZERO]
+                return grid_res
         else:
             raise Exception('Missing input parameter')
             
-        grid_res.branch['capacity'] = res_brC['capacity']
-        grid_res.node['existing'] = res_N['existing']
-        grid_res.generator['pmax'] = res_G['pmax']
-        grid_res.branch = grid_res.branch[grid_res.branch['capacity'] 
-            > self._NUMERICAL_THRESHOLD_ZERO]
-        grid_res.node = grid_res.node[grid_res.node['existing'] 
-            > self._NUMERICAL_THRESHOLD_ZERO]
-        return grid_res
+    def extractStageData(self,grid_data,
+                             file_ph=None,
+                             file_stage=None,
+                             plot=False,
+                             excel_file=False):
+        '''Extract resulting optimal grid layout from simulation results
+        
+        Parameters
+        ==========
+        grid_data : powergama.GridData
+            grid data class
+        model : Pyomo model
+            concrete instance of optimisation model containing det. results
+        file_ph : string
+            CSV file containing results from stochastic solution
+            
+        Use either model or file_ph parameter        
+        
+        Returns
+        =======
+        GridData object reflecting optimal solution
+        '''
+        import copy
+        import matplotlib.pyplot as plt
+        
+        df_ph = pd.read_csv(file_ph,header=None,skipinitialspace=True,
+                            names=['stage','node','var','var_indx','value'])
+        
+        df_stg = pd.read_csv(file_stage, header=None, skipinitialspace=True,
+                             names=['stage','node','scenario','var','var_indx','value'])
+        
+        df_newBranchCapacity = df_ph[(df_ph['var']=='branchNewCapacity')]
+        df_newGen = df_ph[(df_ph['var']=='genNewCapacity')]
+        df_costs = df_ph[(df_ph['var']=='investmentCost')]
+        df_costs.rename(columns={'value':'capex'}, inplace=True)
+        df_costs['opex'] = df_ph['value'][(df_ph['var']=='opCost')].values
+        
+        
+        if plot:
+            # boxplot of total stage costs
+            plt.figure(figsize=(16,10))
+            ax = df_stg.drop(['node','var_indx'], axis=1).groupby('stage').boxplot(subplots=False)
+            ax.set_xticklabels(df_stg['stage'].unique())
+            ax.set_ylabel('Total Stage Costs [€]')
+            plt.savefig(plot+'stageCost_boxplot.pdf', bbox_inches='tight',dpi=300)
+            # average capex and opex per stage
+            ax = df_costs.drop(['node','var_indx'], axis=1).groupby('stage').mean().plot(kind='bar', figsize=(16,10), stacked=True, rot=0)
+            ax.set_ylabel('Expected Stage Costs [€]'); ax.set_xlabel('')   
+            plt.savefig(plot+'stageCost_StackedBar.pdf', bbox_inches='tight',dpi=300)
+            # capacity investment per stage stacked on technology
+            gen2tech = grid_data.generator['type']
+            df_newBranchCapacity['b_idx'], df_newBranchCapacity['stg_idx'] = df_newBranchCapacity['var_indx'].str.split(':').str
+            df_newGen['g_idx'], df_newGen['stg_idx'] = df_newGen['var_indx'].str.split(':').str
+            df_newGen['g_idx'] = df_newGen['g_idx'].astype(int)
+            df_newGen['tech'] = df_newGen['g_idx'].map(gen2tech)
+            df_newTech = df_newGen.drop(['node','var_indx','g_idx'], axis=1).groupby(['stage','tech']).sum().unstack('tech')
+            df_newTech.columns = df_newTech.columns.droplevel(level=0)
+            df_newTech['transmission'] = df_newBranchCapacity.groupby('stage').sum().value
+            df_newTech['div'] = [2**x for x in range(len(df_newTech))]
+            df_newTech = df_newTech.div(df_newTech['div'], axis=0).drop('div', axis=1)
+            ax = df_newTech.plot(kind='bar', figsize=(16,10), stacked=True, rot=0, subplots=False)
+            ax.set_ylabel('Expected Stage Costs [€]'); ax.set_xlabel('') 
+            plt.savefig(plot+'stageCapacityMix_StackedBar.pdf', bbox_inches='tight',dpi=300)
+        
+        if excel_file:
+            df_stg = df_stg.drop(['var_indx','node'], axis=1).groupby(['scenario','stage']).mean().unstack('stage')
+            df_stg.columns = df_stg.columns.droplevel(level=0)
+            df_costs = df_costs.drop(['var_indx'], axis=1).groupby(['stage','node']).mean()
+            df_newTech = df_newGen.drop(['var_indx','g_idx'], axis=1).groupby(['stage','node','tech']).sum().unstack('tech')
+            df_newTech.columns = df_newTech.columns.droplevel(level=0)
+            df_newTech['transmission'] = df_newBranchCapacity.groupby(['stage','node']).sum().value
+            
+            writer = pd.ExcelWriter(excel_file) 
+            df_stg.to_excel(excel_writer=writer,sheet_name="StageCosts") 
+            df_costs.to_excel(excel_writer=writer,sheet_name="TreeCosts")     
+            df_newTech.to_excel(excel_writer=writer,sheet_name="TreeCapacity") 
+            writer.close()
+        
+        return df_costs
+
+        
+
+
+
+            
+
+            
+
+#                for k,row in df_branchNewCapacity.iterrows():
+#                    res_brC['capacity'][int(row['var_indx'].split(":")[0])] += float(row['value'])
+#                #for k,row in df_newNodes.iterrows():
+#                #    res_N['existing'][int(row['var_indx'].split(":")[0])] += int(row['value'])
+#                for k,row in df_newGen.iterrows():
+#                    res_G['pmax'][int(row['var_indx'].split(":")[0])] += float(row['value'])     
+#                grid_res.branch['capacity'] = res_brC['capacity']
+#                grid_res.node['existing'] = res_N['existing']
+#                grid_res.generator['pmax'] = res_G['pmax']
+#                grid_res.branch = grid_res.branch[grid_res.branch['capacity'] 
+#                    > self._NUMERICAL_THRESHOLD_ZERO]
+#                grid_res.node = grid_res.node[grid_res.node['existing'] 
+#                    > self._NUMERICAL_THRESHOLD_ZERO]
+#                return grid_res
+#        else:
+#            raise Exception('Missing input parameter')
+            
+        
     
     def loadResults(self, filename,sheet):
         '''load results from excel into pandas dataframe'''
