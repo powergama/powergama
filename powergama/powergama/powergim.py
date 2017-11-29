@@ -2168,6 +2168,7 @@ class SipModel():
                 return grid_res
         else:
             raise Exception('Missing input parameter')
+        return grid_res
             
     def extractStageData(self,grid_data,
                              file_ph=None,
@@ -2230,7 +2231,7 @@ class SipModel():
             df_newTech['div'] = [2**x for x in range(len(df_newTech))]
             df_newTech = df_newTech.div(df_newTech['div'], axis=0).drop('div', axis=1)
             ax = df_newTech.plot(kind='bar', figsize=(16,10), stacked=True, rot=0, subplots=False)
-            ax.set_ylabel('Expected Stage Costs [€]'); ax.set_xlabel('') 
+            ax.set_ylabel('Expected Expansion [MW]'); ax.set_xlabel('') 
             plt.savefig(plot+'stageCapacityMix_StackedBar.pdf', bbox_inches='tight',dpi=300)
         
         if excel_file:
