@@ -148,7 +148,7 @@ class SipModel():
         # operation cost per year:
         opcost = sum(model.generation[i,t,stage]*model.samplefactor[t]*(
                     model.genCostAvg[i]*model.genCostProfile[i,t]
-                    +model.genTypeEmissionRate[model.genType[i]]*model.CO2price)
+                    +model.genTypeEmissionRate[model.genType[i]]*model.CO2price[stage])
                     for i in model.GEN for t in model.TIME)
         opcost += sum(model.loadShed[c,t,stage]*model.VOLL*model.samplefactor[t]
                         for c in model.LOAD for t in model.TIME)
@@ -183,7 +183,7 @@ class SipModel():
         # operation cost per year:
         opcost = sum(model.generation[g,t,stage]*model.samplefactor[t]*(
                     model.genCostAvg[g]*model.genCostProfile[g,t]
-                    +model.genTypeEmissionRate[model.genType[g]]*model.CO2price)
+                    +model.genTypeEmissionRate[model.genType[g]]*model.CO2price[stage])
                     for t in model.TIME)
 
         # compute present value of future annual costs
@@ -227,7 +227,8 @@ class SipModel():
         model.financeInterestrate = pyo.Param(within=pyo.Reals)
         model.financeYears = pyo.Param(within=pyo.Reals)
         model.omRate = pyo.Param(within=pyo.Reals)
-        model.CO2price = pyo.Param(within=pyo.NonNegativeReals)
+        model.CO2price = pyo.Param(model.STAGE,
+                                   within=pyo.NonNegativeReals)
         model.VOLL = pyo.Param(within=pyo.NonNegativeReals)
         model.stage2TimeDelta = pyo.Param(within=pyo.NonNegativeReals)
         model.maxNewBranchNum = pyo.Param(within=pyo.NonNegativeIntegers)
@@ -302,7 +303,8 @@ class SipModel():
         #consumers
         # the split int an average value, and a profile is to make it easier
         # to generate scenarios (can keep profile, but adjust demandAvg)
-        model.demandAvg = pyo.Param(model.LOAD,within=pyo.Reals)
+        model.demandAvg = pyo.Param(model.LOAD,model.STAGE,
+                                    within=pyo.Reals)
         model.demandProfile = pyo.Param(model.LOAD,model.TIME,
                                         within=pyo.Reals)
         model.emissionCap = pyo.Param(model.LOAD, within=pyo.NonNegativeReals)
@@ -542,7 +544,7 @@ class SipModel():
             # consumed power
             for c in model.LOAD:
                 if model.demNode[c]==n:
-                    expr += -model.demandAvg[c]*model.demandProfile[c,t]
+                    expr += -model.demandAvg[c,h]*model.demandProfile[c,t]
             
             if not any([model.branchReactance[b] for b in model.BRANCH])>0:
                 expr = (expr == 0)
@@ -650,11 +652,13 @@ class SipModel():
         
 
         # PARAMETERS #########################################################
-        model.samplefactor = pyo.Param(model.TIME, within=pyo.NonNegativeReals)
+        model.samplefactor = pyo.Param(model.TIME, 
+                                       within=pyo.NonNegativeReals)
         model.financeInterestrate = pyo.Param(within=pyo.Reals)
         model.financeYears = pyo.Param(within=pyo.Reals)
         model.omRate = pyo.Param(within=pyo.Reals)
-        model.CO2price = pyo.Param(within=pyo.NonNegativeReals)
+        model.CO2price = pyo.Param(model.STAGE, 
+                                   within=pyo.NonNegativeReals)
         model.VOLL = pyo.Param(within=pyo.NonNegativeReals)
         model.stage2TimeDelta = pyo.Param(within=pyo.NonNegativeReals)
         model.maxNewBranchNum = pyo.Param(within=pyo.NonNegativeIntegers)
@@ -723,17 +727,14 @@ class SipModel():
         model.branchNodeFrom = pyo.Param(model.BRANCH,within=model.NODE)
         model.branchNodeTo = pyo.Param(model.BRANCH,within=model.NODE)
         model.nodeArea = pyo.Param(model.NODE,within=model.AREA)
-        model.coeff_B = pyo.Param(model.NODE,model.NODE,within=pyo.Reals)
-        model.coeff_DA = pyo.Param(model.BRANCH,model.NODE,within=pyo.Reals)
         
         #consumers
         # the split int an average value, and a profile is to make it easier
         # to generate scenarios (can keep profile, but adjust demandAvg)
-        model.demandAvg = pyo.Param(model.LOAD,within=pyo.Reals)
+        model.demandAvg = pyo.Param(model.LOAD, model.STAGE, 
+                                    within=pyo.Reals)
         model.demandProfile = pyo.Param(model.LOAD,model.TIME,
                                         within=pyo.Reals)
-        model.emissionCap = pyo.Param(model.LOAD, within=pyo.NonNegativeReals)
-        model.maxShed = pyo.Param(model.LOAD, model.TIME, within=pyo.NonNegativeReals)
         
         # VARIABLES ##########################################################
     
@@ -941,7 +942,7 @@ class SipModel():
             # consumed power
             for c in model.LOAD:
                 if model.demNode[c]==n:
-                    expr += -model.demandAvg[c]*model.demandProfile[c,t]
+                    expr += -model.demandAvg[c,h]*model.demandProfile[c,t]
             
             expr = (expr == 0)
             
@@ -1068,6 +1069,63 @@ class SipModel():
       
         
         #Parameters:
+        # Read input data from XML file
+        import xml
+        tree = xml.etree.ElementTree.parse(datafile)
+        root = tree.getroot()
+        
+        di['NODETYPE'] = {None:[]}
+        di['nodetypeCost'] = {}
+        for i in root.findall('./nodetype/item'):
+            name = i.attrib['name']
+            di['NODETYPE'][None].append(name)
+            di['nodetypeCost'][(name,'L')] = float(i.attrib['L'])
+            di['nodetypeCost'][(name,'S')] = float(i.attrib['S'])
+
+        di['BRANCHTYPE'] = {None:[]}
+        di['branchtypeCost'] = {}
+        di['branchtypeMaxCapacity'] = {}
+        di['branchLossfactor'] = {}
+        for i in root.findall('./branchtype/item'):
+            name = i.attrib['name']
+            di['BRANCHTYPE'][None].append(name)
+            di['branchtypeCost'][(name,'B')] = float(i.attrib['B'])
+            di['branchtypeCost'][(name,'Bd')] = float(i.attrib['Bd'])
+            di['branchtypeCost'][(name,'Bdp')] = float(i.attrib['Bdp'])
+            di['branchtypeCost'][(name,'CL')] = float(i.attrib['CL'])
+            di['branchtypeCost'][(name,'CLp')] = float(i.attrib['CLp'])
+            di['branchtypeCost'][(name,'CS')] = float(i.attrib['CS'])
+            di['branchtypeCost'][(name,'CSp')] = float(i.attrib['CSp'])
+            di['branchtypeMaxCapacity'][name] = float(i.attrib['maxCap'])
+            di['branchLossfactor'][(name,'fix')] = float(i.attrib['lossFix'])
+            di['branchLossfactor'][(name,'slope')] = float(i.attrib['lossSlope'])
+                                                        
+        di['GENTYPE'] = {None:[]}
+        di['genTypeCost'] = {}
+        di['genTypeEmissionRate'] = {}
+        for i in root.findall('./gentype/item'):
+            name = i.attrib['name']
+            di['GENTYPE'][None].append(name)
+            di['genTypeCost'][name] = float(i.attrib['CX']) 
+            di['genTypeEmissionRate'][name] = float(i.attrib['CO2']) 
+        
+        di['CO2price'] = {}
+        for i in root.findall('./parameters'):
+            di['financeInterestrate'] = {None: 
+                float(i.attrib['financeInterestrate'])}
+            di['financeYears'] = {None: 
+                float(i.attrib['financeYears'])}
+            di['omRate'] = {None: 
+                float(i.attrib['omRate'])}
+            di['VOLL'] = {None: 
+                float(i.attrib['VOLL'])}
+            di['stage2TimeDelta'] = {None: 
+                float(i.attrib['stage2TimeDelta'])}
+            di['STAGE'] = {None: 
+                list(range(1,int(i.attrib['stages'])+1))}
+            for h in list(range(1,int(i.attrib['stages'])+1)):
+                di['CO2price'][h] = float(i.attrib['CO2price'])
+                
         di['maxNewBranchNum'] = {None: maxNewBranchNum}
         di['samplefactor'] = {}
         if hasattr(grid_data.profiles, 'frequency'):
@@ -1161,69 +1219,14 @@ class SipModel():
         di['maxShed'] = {}
         for k,row in grid_data.consumer.iterrows():
             di['demNode'][k] = row['node']
-            di['demandAvg'][k] = row['demand_avg']
+            for h in list(range(1,len(di['STAGE'][None])+1)):
+                di['demandAvg'][(k,h)] = row['demand_avg']
             di['emissionCap'][k] = row['emission_cap']
             ref = row['demand_ref']
             for i,t in enumerate(grid_data.timerange):
                 di['demandProfile'][(k,t)] = grid_data.profiles[ref][i]
                 di['maxShed'][(k,t)] = grid_data.profiles[ref][i]*row['demand_avg']
         
-
-        # Read input data from XML file
-        import xml
-        tree = xml.etree.ElementTree.parse(datafile)
-        root = tree.getroot()
-        
-        di['NODETYPE'] = {None:[]}
-        di['nodetypeCost'] = {}
-        for i in root.findall('./nodetype/item'):
-            name = i.attrib['name']
-            di['NODETYPE'][None].append(name)
-            di['nodetypeCost'][(name,'L')] = float(i.attrib['L'])
-            di['nodetypeCost'][(name,'S')] = float(i.attrib['S'])
-
-        di['BRANCHTYPE'] = {None:[]}
-        di['branchtypeCost'] = {}
-        di['branchtypeMaxCapacity'] = {}
-        di['branchLossfactor'] = {}
-        for i in root.findall('./branchtype/item'):
-            name = i.attrib['name']
-            di['BRANCHTYPE'][None].append(name)
-            di['branchtypeCost'][(name,'B')] = float(i.attrib['B'])
-            di['branchtypeCost'][(name,'Bd')] = float(i.attrib['Bd'])
-            di['branchtypeCost'][(name,'Bdp')] = float(i.attrib['Bdp'])
-            di['branchtypeCost'][(name,'CL')] = float(i.attrib['CL'])
-            di['branchtypeCost'][(name,'CLp')] = float(i.attrib['CLp'])
-            di['branchtypeCost'][(name,'CS')] = float(i.attrib['CS'])
-            di['branchtypeCost'][(name,'CSp')] = float(i.attrib['CSp'])
-            di['branchtypeMaxCapacity'][name] = float(i.attrib['maxCap'])
-            di['branchLossfactor'][(name,'fix')] = float(i.attrib['lossFix'])
-            di['branchLossfactor'][(name,'slope')] = float(i.attrib['lossSlope'])
-                                                        
-        di['GENTYPE'] = {None:[]}
-        di['genTypeCost'] = {}
-        di['genTypeEmissionRate'] = {}
-        for i in root.findall('./gentype/item'):
-            name = i.attrib['name']
-            di['GENTYPE'][None].append(name)
-            di['genTypeCost'][name] = float(i.attrib['CX']) 
-            di['genTypeEmissionRate'][name] = float(i.attrib['CO2'])                                               
-        
-        for i in root.findall('./parameters'):
-            di['financeInterestrate'] = {None: 
-                float(i.attrib['financeInterestrate'])}
-            di['financeYears'] = {None: 
-                float(i.attrib['financeYears'])}
-            di['omRate'] = {None: 
-                float(i.attrib['omRate'])}
-            di['CO2price'] = {None: 
-                float(i.attrib['CO2price'])}
-            di['VOLL'] = {None: 
-                float(i.attrib['VOLL'])}
-            di['stage2TimeDelta'] = {None: 
-                float(i.attrib['stage2TimeDelta'])}
-            di['STAGE'] = {None: 
-                list(range(1,int(i.attrib['stages'])+1))}
         
          # Compute matrices used in power flow equaions 
 #        import scipy.sparse
@@ -1421,20 +1424,20 @@ class SipModel():
 
         return st_model
  
-    def createMultiHorizonST(self,num_scenarios,stages=1, probabilities=None):
+    def createMultiHorizonST(self,num_scenarios, num_branches, num_stages=1, probabilities=None):
         '''Multi-horizon scenario-tree
         '''
         import matplotlib.pyplot as plt
+        #import os
+        #os.environ["PATH"] += os.pathsep + 'C:/Program Files (x86)/Graphviz2.38/bin/'
         
         if probabilities is None:
             # equal probability:
             probabilities = [1/num_scenarios]*num_scenarios
 
         # Multi-horizon formulation with invest + operation in same stage
-        stg = stages-1 
-        #branching = int(len(probabilities)/stages)
-        branching = 2
-        G = networkx.balanced_tree(branching, stg, networkx.DiGraph())
+        stg = num_stages-1 
+        G = networkx.balanced_tree(num_branches, stg, networkx.DiGraph())
         leaf_nodes = [x for x in G.nodes() if G.out_degree(x)==0 and G.in_degree(x)==1]
         for i,j in enumerate(leaf_nodes):
             G.node[j]['name'] = "Scenario{}".format(i+1)
@@ -1443,7 +1446,7 @@ class SipModel():
                             edge_probability_attribute=None,
                             scenario_name_attribute='name')
         
-        for i in range(stages):
+        for i in range(num_stages):
             stg = i+1
             currentStage = st_model.Stages[stg]
             st_model.StageCost[currentStage] = 'stageCost['+str(stg)+']'
@@ -1458,8 +1461,9 @@ class SipModel():
             st_model.StageDerivedVariables[currentStage].add('investmentCost['+str(stg)+']')
             st_model.StageDerivedVariables[currentStage].add('opCost['+str(stg)+']')
         
+        #from networkx.drawing.nx_agraph import graphviz_layout
         #plt.title('{} Scenarios'.format(num_scenarios))
-        #pos = networkx.graphviz_layout(G, prog='dot')
+        #pos = graphviz_layout(G, prog='dot')
         #networkx.draw(G, pos, with_labels=False, arrows=False)
         #plt.savefig('scenTree_{}scenarios.pdf'.format(num_scenarios), bbox_inches='tight',dpi=300); plt.close()        
         #networkx.draw_networkx(G)
@@ -1661,7 +1665,9 @@ class SipModel():
                 
     def computeDemand(self,model,c,t):
         '''compute demand at specified load ant time'''
-        return model.demandAvg[c]*model.demandProfile[c,t]
+        # TODO: incorporate stages
+        stage=1
+        return model.demandAvg[c,stage]*model.demandProfile[c,t]
     
     
     
@@ -1700,7 +1706,7 @@ class SipModel():
                             model.genTypeEmissionRate[model.genType[g]]
                             for t in model.TIME)
         if cost:
-            expr = expr * model.CO2price.value * ar
+            expr = expr * model.CO2price[stage].value * ar
         return expr
         
                                 
@@ -1712,7 +1718,7 @@ class SipModel():
         costlimit_RES=1 # limit for what to consider renewable generator
         gen_p=model.generation
         gen = 0
-        dem = sum(model.demandAvg[j]*model.demandProfile[j,t] for t in model.TIME)
+        dem = sum(model.demandAvg[j,stage]*model.demandProfile[j,t] for t in model.TIME)
         for g in model.GEN:
             if model.nodeArea[model.genNode[g]]==area:
                 if model.genCostAvg[g] <= costlimit_RES:
@@ -1736,7 +1742,7 @@ class SipModel():
             if gen > 0:
                 if model.nodeArea[model.genNode[g]]==area:
                     mc.append(model.genCostAvg[g]*model.genCostProfile[g,t]
-                                +model.genTypeEmissionRate[model.genType[g]]*model.CO2price.value)
+                                +model.genTypeEmissionRate[model.genType[g]]*model.CO2price[stage].value)
         if mc:
             price = max(mc)
         else:
@@ -1753,7 +1759,7 @@ class SipModel():
         node = model.demNode[c]
         area = model.nodeArea[node]
         PS = 0; CS = 0; CR = 0; GC = 0; gen = 0; 
-        dem = model.demandAvg[c]*model.demandProfile[c,t]
+        dem = model.demandAvg[c,stage]*model.demandProfile[c,t]
         price = self.computeAreaPrice(model, area, t, stage)
         #branch_capex = self.computeAreaCostBranch(model,c,include_om=True) #npv
         #gen_capex = self.computeAreaCostGen(model,c) #annualized
@@ -1768,7 +1774,7 @@ class SipModel():
                 gen += gen_p[g,t,stage].value
                 GC += gen_p[g,t,stage].value*(
                     model.genCostAvg[g]*model.genCostProfile[g,t]
-                    +model.genTypeEmissionRate[model.genType[g]]*model.CO2price.value)
+                    +model.genTypeEmissionRate[model.genType[g]]*model.CO2price[stage].value)
         CS = (model.VOLL-price)*dem
         CC = price*dem
         PS = price*gen - GC
@@ -2209,6 +2215,7 @@ class SipModel():
         
         
         if plot:
+            import matplotlib.cm as cm
             # boxplot of total stage costs
             plt.figure(figsize=(16,10))
             ax = df_stg.drop(['node','var_indx'], axis=1).groupby('stage').boxplot(subplots=False)
@@ -2220,8 +2227,11 @@ class SipModel():
             ax.set_ylabel('Expected Stage Costs [€]'); ax.set_xlabel('')   
             plt.savefig(plot+'stageCost_StackedBar.pdf', bbox_inches='tight',dpi=300)
             # capacity investment per stage stacked on technology
+            colours = cm.tab20c_r(np.linspace(0, 1, 1+len(grid_data.generator['type'].unique())))
+            
             gen2tech = grid_data.generator['type']
             df_newBranchCapacity['b_idx'], df_newBranchCapacity['stg_idx'] = df_newBranchCapacity['var_indx'].str.split(':').str
+            df_newBranchCapacity['b_idx'] = df_newBranchCapacity['b_idx'].astype(int)
             df_newGen['g_idx'], df_newGen['stg_idx'] = df_newGen['var_indx'].str.split(':').str
             df_newGen['g_idx'] = df_newGen['g_idx'].astype(int)
             df_newGen['tech'] = df_newGen['g_idx'].map(gen2tech)
@@ -2230,7 +2240,7 @@ class SipModel():
             df_newTech['transmission'] = df_newBranchCapacity.groupby('stage').sum().value
             df_newTech['div'] = [2**x for x in range(len(df_newTech))]
             df_newTech = df_newTech.div(df_newTech['div'], axis=0).drop('div', axis=1)
-            ax = df_newTech.plot(kind='bar', figsize=(16,10), stacked=True, rot=0, subplots=False)
+            ax = df_newTech.plot(kind='bar', figsize=(16,10), stacked=True, rot=0, subplots=False, color=colours)
             ax.set_ylabel('Expected Expansion [MW]'); ax.set_xlabel('') 
             plt.savefig(plot+'stageCapacityMix_StackedBar.pdf', bbox_inches='tight',dpi=300)
         
@@ -2241,11 +2251,15 @@ class SipModel():
             df_newTech = df_newGen.drop(['var_indx','g_idx'], axis=1).groupby(['stage','node','tech']).sum().unstack('tech')
             df_newTech.columns = df_newTech.columns.droplevel(level=0)
             df_newTech['transmission'] = df_newBranchCapacity.groupby(['stage','node']).sum().value
+            df_newGen = df_newGen.drop(['var_indx'], axis=1).groupby(['stage','node','g_idx','tech']).sum().unstack(['g_idx','tech'])
+            df_newBranchCapacity = df_newBranchCapacity.drop(['var_indx'], axis=1).groupby(['stage','node','b_idx']).sum().unstack(['b_idx'])
             
             writer = pd.ExcelWriter(excel_file) 
             df_stg.to_excel(excel_writer=writer,sheet_name="StageCosts") 
             df_costs.to_excel(excel_writer=writer,sheet_name="TreeCosts")     
             df_newTech.to_excel(excel_writer=writer,sheet_name="TreeCapacity") 
+            df_newGen.to_excel(excel_writer=writer,sheet_name="TreeGenerator") 
+            df_newBranchCapacity.to_excel(excel_writer=writer,sheet_name="TreeTransmission") 
             writer.close()
         
         return df_costs
