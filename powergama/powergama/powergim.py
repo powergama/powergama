@@ -1424,7 +1424,10 @@ class SipModel():
 
         return st_model
  
-    def createMultiHorizonST(self,num_scenarios, num_branches, num_stages=1, probabilities=None):
+    def createMultiHorizonST(self,num_scenarios, 
+                             num_branches, 
+                             num_stages=1, 
+                             probabilities=None):
         '''Multi-horizon scenario-tree
         '''
         import matplotlib.pyplot as plt
@@ -1439,8 +1442,10 @@ class SipModel():
         stg = num_stages-1 
         G = networkx.balanced_tree(num_branches, stg, networkx.DiGraph())
         leaf_nodes = [x for x in G.nodes() if G.out_degree(x)==0 and G.in_degree(x)==1]
+        
         for i,j in enumerate(leaf_nodes):
             G.node[j]['name'] = "Scenario{}".format(i+1)
+            #G.node[j]['probability'] = probabilities[i]
         st_model = tsm.ScenarioTreeModelFromNetworkX(
                             G,
                             edge_probability_attribute=None,
@@ -1454,12 +1459,17 @@ class SipModel():
             st_model.StageVariables[currentStage].add('branchNewCapacity[*,'+str(stg)+']')
             st_model.StageVariables[currentStage].add('newNodes[*,'+str(stg)+']')
             st_model.StageVariables[currentStage].add('genNewCapacity[*,'+str(stg)+']')
-            st_model.StageVariables[currentStage].add('generation[*,*,'+str(stg)+']')
-            st_model.StageVariables[currentStage].add('branchFlow12[*,*,'+str(stg)+']')
-            st_model.StageVariables[currentStage].add('branchFlow21[*,*,'+str(stg)+']')
-            st_model.StageVariables[currentStage].add('loadShed[*,*,'+str(stg)+']')
+#            st_model.StageVariables[currentStage].add('generation[*,*,'+str(stg)+']')
+#            st_model.StageVariables[currentStage].add('branchFlow12[*,*,'+str(stg)+']')
+#            st_model.StageVariables[currentStage].add('branchFlow21[*,*,'+str(stg)+']')
+#            st_model.StageVariables[currentStage].add('loadShed[*,*,'+str(stg)+']')
             st_model.StageDerivedVariables[currentStage].add('investmentCost['+str(stg)+']')
             st_model.StageDerivedVariables[currentStage].add('opCost['+str(stg)+']')
+            st_model.StageDerivedVariables[currentStage].add('generation[*,*,'+str(stg)+']')
+            st_model.StageDerivedVariables[currentStage].add('branchFlow12[*,*,'+str(stg)+']')
+            st_model.StageDerivedVariables[currentStage].add('branchFlow21[*,*,'+str(stg)+']')
+            st_model.StageDerivedVariables[currentStage].add('loadShed[*,*,'+str(stg)+']')
+
         
         #from networkx.drawing.nx_agraph import graphviz_layout
         #plt.title('{} Scenarios'.format(num_scenarios))
