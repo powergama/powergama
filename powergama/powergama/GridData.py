@@ -432,9 +432,11 @@ class GridData(object):
     def getIdxNodesWithLoad(self):
         """Indices of nodes that have load (consumer) attached to them"""        
         # Get index of node associated with all consumer        
-        indices = numpy.asarray(self.consumer.nodeIdx(self.node))
-        # Return indices only once (unique values)
-        indices = numpy.unique(indices)
+        #indices = numpy.asarray(self.consumer.nodeIdx(self.node))
+        ## Return indices only once (unique values)
+        #indices = numpy.unique(indices)
+        loadnodes = self.node[self.node['id'].isin(self.consumer['node'])]
+        indices = numpy.asarray(loadnodes.index)
         return indices
         
         

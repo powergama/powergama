@@ -23,6 +23,7 @@ powergama.GIS.makekml("output.kml",grid_data=data,res=res,
 import simplekml
 import math
 import numpy
+import matplotlib as mpl
 
 # Default category colours
 category_colours=["ffff6666","ffffff66","ff66ff66","ff66ffff",
@@ -54,10 +55,11 @@ def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,
     grid_data : powergama.GridData
         grid data object
     nodetype : string
-        how to plot nodes - 'nodalprice','powergim_type'
+        how to plot nodes - 'nodalprice', 'area', 'powergim_type'
     branchtype : string
         how to plot branches -
-        'capacity', 'flow', 'sensitivity', 'utilisation', 'powergim_type'
+        'capacity', 'flow', 'sensitivity', 'utilisation',
+        'area', 'powergim_type'
     res : powergama.Results (optional)
         result object (result from powergama simulation)
     timeMaxMin : [min,max]
@@ -69,14 +71,33 @@ def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,
     kml.document.name = title
 
     # Colours, X categories + NaN category + black(default)
-    colorbgr = category_colours
-    numCat = len(colorbgr)-2
-    defaultCat = numCat+1
+    colorbgr_n = category_colours
+    colorbgr_b = category_colours
+    numCat_n = len(colorbgr_n)-2
+    defaultCat_n = numCat_n+1
+    numCat_b = len(colorbgr_b)-2
+    defaultCat_b = numCat_b+1
     #balloonstyle messes up Google Earth sidebar, for some reason
     #balloontext = "<h3>$[name]</h3> $[description]"
 
+    if nodetype=='area':
+        N_categories = len(grid_data.node.area.unique())
+        rgb_colours = [mpl.cm.jet(i/N_categories) for i in range(N_categories)]
+        colorbgr_n = [simplekml.Color.rgb(int(c[0]*255),int(c[1]*255),int(c[2]*255)) 
+                    for c in rgb_colours]
+        numCat_n = N_categories
+        defaultCat_n=None
+    if branchtype=='area':
+        N_categories = len(grid_data.node.area.unique())
+        rgb_colours = [mpl.cm.jet(i/N_categories) for i in range(N_categories)]
+        colorbgr_b = [simplekml.Color.rgb(int(c[0]*255),int(c[1]*255),int(c[2]*255)) 
+                    for c in rgb_colours]
+        colorbgr_b.append('ffffffff') #white inter-area lines
+        numCat_b = N_categories+1
+        defaultCat_b=None
+
     styleNodes = []
-    for col in colorbgr:
+    for col in colorbgr_n:
         styleNode = simplekml.Style()
         styleNode.iconstyle.color = col
         styleNode.iconstyle.icon.href = point_icon_href
@@ -98,7 +119,7 @@ def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,
     #styleConsumer.balloonstyle.text = balloontext
 
     styleBranches = []
-    for col in colorbgr:
+    for col in colorbgr_b:
         styleBranch = simplekml.Style()
         styleBranch.linestyle.color = col
         styleBranch.linestyle.width = linewidth
@@ -124,17 +145,21 @@ def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,
         # Obs: some values may be numpy.nan
         maxnodalprice = numpy.nanmax(meannodalprices)
         minnodalprice = numpy.nanmin(meannodalprices)
-        steprange = (maxnodalprice - minnodalprice) / numCat
+        steprange = (maxnodalprice - minnodalprice) / numCat_n
         categoryMax = [math.ceil(minnodalprice+steprange*(n+1))
-            for n in range(numCat)]
+            for n in range(numCat_n)]
         nodalpricelevelfolder=[]
-        for level in range(numCat):
+        for level in range(numCat_n):
             nodalpricelevelfolder.append(nodefolder.newfolder(
                 name="Price <= %s" % (str(categoryMax[level]))))
-        #nodalpricelevelfolder.append(nodalpricefolder.newfolder(
-        #    name="Price > %s" % (str(categoryMax[numCat-2]))))
         nodalpricelevelfolder.append(nodefolder.newfolder(
                 name="Price NaN" ))
+    elif nodetype=='area':
+        nodetypes = grid_data.node.area.unique().tolist()
+        nodetypefolder=dict()
+        for typ in nodetypes:
+            nodetypefolder[typ] = nodefolder.newfolder(
+                name="Area = {}".format(typ))
     elif nodetype=='powergim_type':
         nodetypes = grid_data.node.type.unique().tolist()
         nodetypefolder=dict()
@@ -149,7 +174,7 @@ def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,
         lon = grid_data.node.lon[i]
         lat = grid_data.node.lat[i]
         area = grid_data.node.area[i]
-        node_category=defaultCat
+        node_category=defaultCat_n
         #color = None
         description="ID: {} <br/> AREA: {}".format(name,area)
         if nodetype==None:
@@ -158,13 +183,12 @@ def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,
         elif nodetype=='nodalprice':
             nodalprice = meannodalprices[i]
             # Determine category
-            node_category=numCat
-            for category in range(numCat):
+            node_category=numCat_n
+            for category in range(numCat_n):
                 if nodalprice <= categoryMax[category]:
                     node_category=category
                     break
 
-            #color = colorbgr[node_category]
             description = """
             Index .. %s             <br/>
             Busname .. %s           <br/>
@@ -176,11 +200,22 @@ def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,
                 name=name,
                 description=description,
                 coords=[(lon,lat)])
+        elif nodetype=='area':
+            typ = grid_data.node.area[i]
+            description = """
+            Index .. %s             <br/>
+            Busname .. %s           <br/>
+            Area .. %s              <br/>
+            Lon .. %s, Lat .. %s    <br/>
+            """%(str(i),name,area,lon,lat)
+            node_category = nodetypes.index(typ)
+            pnt = nodetypefolder[typ].newpoint(name=name,
+                                            description=description,
+                                            coords=[(lon,lat)])
         elif nodetype=='powergim_type':
             typ = grid_data.node.type[i]
             description="ID: {}</br>Type: {}".format(name,typ)
             node_category = nodetypes.index(typ)
-            #color = colorbgr[node_category]
             pnt = nodetypefolder[typ].newpoint(name=name,
                                             description=description,
                                             coords=[(lon,lat)])
@@ -272,16 +307,23 @@ def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,
         #Max/min non-infinite value:
         max_value =  max(categoryValue[numpy.isfinite(categoryValue)])
         min_value =  min(categoryValue[numpy.isfinite(categoryValue)])
-        steprange = (max_value - min_value) / float(numCat)
+        steprange = (max_value - min_value) / float(numCat_b)
         categoryMax = [math.ceil(min_value+steprange*(n+1) )
-            for n in range(numCat)]
+            for n in range(numCat_b)]
         branchlevelfolder=[]
-        for level in range(numCat):
+        for level in range(numCat_b):
             branchlevelfolder.append(branchfolder.newfolder(
                 name="{} <= {}".format(categoryTitle,
                                        str(categoryMax[level]))))
         branchlevelfolder.append(branchfolder.newfolder(
                 name="{} NaN".format(categoryTitle) ))
+    elif branchtype=="area":
+        branchtypes = grid_data.node.area.unique().tolist()
+        branchtypes.append('INTERAREA')
+        branchlevelfolder=dict()
+        for typ in branchtypes:
+            branchlevelfolder[typ] = branchfolder.newfolder(
+                name="Area = {}".format(typ))
     elif branchtype=="powergim_type":
         branchtypes = grid_data.branch.type.unique().tolist()
         branchlevelfolder=dict()
@@ -304,12 +346,12 @@ def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,
         capacity = grid_data.branch.capacity[i]
         name = "{}=={}".format(startbus,endbus)
         description = "{}<br/>CAPACITY: {}".format(name,capacity)
-        branch_category=defaultCat
+        branch_category=defaultCat_b
 
         if branchtype in ['capacity','flow','utilisation','sensitivity']:
             # Determine category
-            branch_category=numCat
-            for category in range(numCat):
+            branch_category=numCat_b
+            for category in range(numCat_b):
                 if categoryValue[i] <= categoryMax[category]:
                     branch_category=category
                     break
@@ -353,6 +395,23 @@ def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,
                                                         visibility=0)
                 arrowpoint.style = styleFlowArrow
 
+        elif branchtype=='area':
+            msk1 = grid_data.node['id']==grid_data.branch.loc[i,'node_from']
+            msk2 = grid_data.node['id']==grid_data.branch.loc[i,'node_to']
+            area1 = grid_data.node.loc[msk1,'area'].iloc[0]
+            area2 = grid_data.node.loc[msk2,'area'].iloc[0]
+            if area1==area2:
+                typ = area1
+            else:
+                typ = "INTERAREA"
+            branch_category = branchtypes.index(typ)
+            description= """
+            {}=={} </br>
+            Capacity :   {}
+            """.format(startbus,endbus,capacity)
+            lin = branchlevelfolder[typ].newlinestring(name=name,
+                  description = description,
+                  coords=[(startbuslon,startbuslat),(endbuslon,endbuslat)])
         elif branchtype=='powergim_type':
             typ = grid_data.branch.type[i]
             branch_category = branchtypes.index(typ)
@@ -401,7 +460,10 @@ def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,
 
         lin.style = styleDcBranch
 
-    kml.save(kmlfile)
+    if kmlfile.split(".")[-1]=="kmz":
+        kml.savekmz(kmlfile)
+    else:
+        kml.save(kmlfile)
 
 
 def _pointBetween(nodeA,nodeB,weight):

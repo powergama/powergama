@@ -362,7 +362,7 @@ class LpProblem(object):
         G_subs = nx.connected_component_subgraphs(G)
         refnodes = []
         for gr in G_subs:
-            refnode = gr.nodes()[0]
+            refnode = list(gr.nodes)[0]
             refnodes.append(refnode)
             print("Found synchronous area (size = {}), using ref node = {}"
                     .format(gr.order(),refnode))
