@@ -84,7 +84,9 @@ class Results(object):
                                marginalprice,
                                flexload_power,
                                flexload_storage,
-                               flexload_storagevalue):
+                               flexload_storagevalue,
+                               branch_ac_losses=None,
+                               branch_dc_losses=None):
         '''Store results from optimal power flow for a new timestep
         
         timestep : int
@@ -121,10 +123,18 @@ class Results(object):
             position according to grid.getIdxConsumersWithFlexibleLoad()
         flexload_storagevalue : list
             position according to grid.getIdxConsumersWithFlexibleLoad()
+        branch_ac_losses : list
+            ac branch losses
+        branch_dc_losses : list
+            dc branch losses
         
         
         '''
-        
+        # Use zero if no branch power losses given:
+        if branch_ac_losses is None:
+            branch_ac_losses = [0]*len(branch_power)
+        if branch_dc_losses is None:
+            branch_dc_losses = [0]*len(dcbranch_power)
         # Store results in sqlite database on disk (to avoid memory problems)
         self.db.appendResults(
             timestep = timestep,
@@ -147,7 +157,9 @@ class Results(object):
             idx_storagegen = self.storage_idx_generators,
             idx_branchsens = self.idxConstrainedBranchCapacity,
             idx_pumpgen = self.pump_idx_generators,
-            idx_flexload = self.flex_idx_consumers)
+            idx_flexload = self.flex_idx_consumers,
+            branch_ac_losses=branch_ac_losses,
+            branch_dc_losses=branch_dc_losses)
        
         '''
         self.objectiveFunctionValue.append(objective_function)

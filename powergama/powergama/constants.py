@@ -22,7 +22,7 @@ baseAngle = 1
 '''Base value for voltage angle'''
 
 # Derived quantities
-baseZ = baseV**2/baseS
+#baseZ = baseV**2/baseS
 baseMVA = baseS*1e-6
 
 flexload_outside_cost = 1000.0

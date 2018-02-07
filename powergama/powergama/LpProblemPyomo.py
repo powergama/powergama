@@ -97,6 +97,10 @@ class LpProblem(object):
         model.coeff_B = pyo.Param(model.NODE,model.NODE,within=pyo.Reals)
         model.coeff_DA = pyo.Param(model.BRANCH_AC,model.NODE,within=pyo.Reals)
 
+        model.branchAcPowerLoss = pyo.Param(model.BRANCH_AC,within=pyo.Reals,
+                                            default=0, mutable=True)
+        model.branchDcPowerLoss = pyo.Param(model.BRANCH_AC,within=pyo.Reals,
+                                            default=0, mutable=True)
 
         # VARIABLES ##########################################################
 
@@ -109,7 +113,8 @@ class LpProblem(object):
         model.varFlexLoad = pyo.Var(model.LOAD_FLEX,
                                     within = pyo.NonNegativeReals)
         model.varLoadShed = pyo.Var(model.LOAD, within = pyo.NonNegativeReals)
-        model.varVoltageAngle = pyo.Var(model.NODE, within = pyo.Reals)
+        model.varVoltageAngle = pyo.Var(model.NODE, within = pyo.Reals,
+                                        initialize=0.0)
 # I wonder if these bound on voltage angle creates infeasibility
 # - is it really needed
 # TODO: Verify voltage angle bounds required
@@ -203,8 +208,16 @@ class LpProblem(object):
                 # positive sign for flow into node
                 if model.dcbranchNodeTo[b]==n:
                     lhs += model.varDcBranchFlow[b]
+                    lhs -= model.branchDcPowerLoss[b]/2
                 elif model.dcbranchNodeFrom[b]==n:
                     lhs -= model.varDcBranchFlow[b]
+                    lhs -= model.branchDcPowerLoss[b]/2
+            for b in model.BRANCH_AC:
+                # positive sign for flow into node
+                if model.branchNodeTo[b]==n:
+                    lhs -= model.branchAcPowerLoss[b]/2
+                elif model.branchNodeFrom[b]==n:
+                    lhs -= model.branchAcPowerLoss[b]/2
 
             lhs = lhs/const.baseMVA
 
@@ -337,7 +350,7 @@ class LpProblem(object):
 
         # Compute matrices used in power flow equaions
         print("Computing B and DA matrices...")
-        Bbus, DA = grid_data.computePowerFlowMatrices(const.baseZ)
+        Bbus, DA = grid_data.computePowerFlowMatrices()
 
         n_i = di['NODE'][None]
         b_i = di['BRANCH_AC'][None]
@@ -427,8 +440,6 @@ class LpProblem(object):
         return
 
 
-
-
     def _updateLpProblem(self,timestep):
         '''
         Function that updates LP problem for a given timestep, due to changed
@@ -452,23 +463,12 @@ class LpProblem(object):
                 This won't affect fuel based generators with zero storage,
                 since these should have inflow=p_max in any case
                 '''
-                #TODO: change from bounds to constraints
-                # (which gives interesting dual value, cf max flow)
-                #self.concretemodel.varGeneration[i].setlb(
-                #        min(P_inflow,P_min[i]))
-                #self.concretemodel.varGeneration[i].setub(P_inflow)
                 if P_min[i] > 0:
                     self.concretemodel.genPminLimit[i] = min(
                         P_inflow,P_min[i]) # Espen
                 self.concretemodel.genPmaxLimit[i] = P_inflow # Espen
             else:
                 #generator has storage
-                # max(...) is used to get non-negative value
-                # (due to numerical effects, storage may be slightly <0)
-                #self.concretemodel.varGeneration[i].setlb(
-                #        min(max(0,P_inflow+P_storage[i]), P_min[i]) )
-                #self.concretemodel.varGeneration[i].setub(
-                #        min(max(0,P_inflow+P_storage[i]), P_max[i]) )
                 if P_min[i] > 0:
                     self.concretemodel.genPminLimit[i] = min(
                         max(0,P_inflow+P_storage[i]), P_min[i]) # Espen
@@ -528,6 +528,31 @@ class LpProblem(object):
 
         return
 
+
+    def _updatePowerLosses(self,lossmethod):
+        '''Compute power losses from OPF solution and update parameters'''
+        if lossmethod==0:
+            pass
+        elif lossmethod==1:
+            for b in self.concretemodel.BRANCH_AC:
+                n_from = self.concretemodel.branchNodeFrom[b]
+                n_to = self.concretemodel.branchNodeTo[b]
+                theta_from = self.concretemodel.varVoltageAngle[n_from]
+                theta_to = self.concretemodel.varVoltageAngle[n_to]
+                x = self._grid.branch.loc[b,'reactance']
+                r = self._grid.branch.loc[b,'resistance']
+                # r and x are given in pu; theta
+                loss_pu = r * ((theta_to-theta_from)*const.baseAngle/x)**2
+                # convert from p.u. to physical unit
+                lossMVA = loss_pu*const.baseMVA
+                self.concretemodel.branchAcPowerLoss[b] = lossMVA            
+            for b in self.concretemodel.BRANCH_DC:
+                #TODO: Estimate DC branch power loss
+                self.concretemodel.branchDcPowerLoss[b] = 0.0
+        else:
+            raise Exception("Loss method={} is not implemented"
+                            .format(lossmethod))
+        
 
 
 
@@ -625,6 +650,15 @@ class LpProblem(object):
         # TODO: Only keep track of inflow spilled for generators with
         # nonzero inflow
 
+        # Extract power losses
+        acPowerLoss = list(self.concretemodel.branchAcPowerLoss.extract_values().values())
+        dcPowerLoss = list(self.concretemodel.branchDcPowerLoss.extract_values().values())
+        #acPowerLoss = [self.concretemodel.branchAcPowerLoss[i].value
+        #        for i in self.concretemodel.BRANCH_AC]
+        #dcPowerLoss = [self.concretemodel.branchDcPowerLoss[i].value
+        #        for i in self.concretemodel.BRANCH_DC]
+        #print(sum(acPowerLoss))
+
         results.addResultsFromTimestep(
             timestep = self._grid.timerange[0]+timestep,
             objective_function = F,
@@ -642,13 +676,16 @@ class LpProblem(object):
             marginalprice = storageprice,
             flexload_power = Pflexload,
             flexload_storage = flexload_storagelevel.tolist(),
-            flexload_storagevalue = flexload_marginalprice)
+            flexload_storagevalue = flexload_marginalprice,
+            branch_ac_losses = acPowerLoss,
+            branch_dc_losses = dcPowerLoss
+            )
 
         return
 
 
     def solve(self,results,solver='cbc',solver_path=None,warmstart=False,
-              savefiles=False):
+              savefiles=False,lossmethod=0):
         '''
         Solve LP problem for each time step in the time range
 
@@ -666,6 +703,10 @@ class LpProblem(object):
         savefiles : Boolean
             Save Pyomo model file and LP problem MPS file for each timestep
             This may be useful for debugging.
+        lossmethod : int (0, 1)
+            How to take into account power losses
+            0 = don't consider losses
+            1 = compute losses from previous time-step and add as load
 
         Returns
         -------
@@ -690,6 +731,16 @@ class LpProblem(object):
         #Enable access to dual values
         self.concretemodel.dual = pyo.Suffix(direction=pyo.Suffix.IMPORT)
 
+        if lossmethod==1:
+            print("Computing losses in first timestep")
+            self._updateLpProblem(timestep=0)
+            res = opt.solve(self.concretemodel,
+                        tee=False, #stream the solver output
+                        keepfiles=False, #print the LP file for examination
+                        symbolic_solver_labels=True) # use human readable names
+            #Now, powre flow values are computed for the first timestep, and
+            # power losses can be computed.
+            
         print("Solving...")
         numTimesteps = len(self._grid.timerange)
         count = 0
@@ -697,6 +748,7 @@ class LpProblem(object):
         for timestep in range(numTimesteps):
             # update LP problem (inflow, storage, profiles)
             self._updateLpProblem(timestep)
+            self._updatePowerLosses(lossmethod)
 
             # solve the LP problem
             if savefiles:

@@ -26,8 +26,9 @@ class GridData(object):
     keys_powergama = {
         'node': {'id':None, 'area':None, 'lat':None,'lon':None},
         'branch': {'node_from':None,'node_to':None,
-                   'reactance':None,'capacity':None},
-        'dcbranch': {'node_from':None, 'node_to':None, 'capacity':None},
+                   'reactance':None,'capacity':None,'resistance':0},
+        'dcbranch': {'node_from':None, 'node_to':None, 'capacity':None,
+                     'resistance':0},
         'generator': {'type':None,'desc':'', 'node':None,
                        'pmax':None,'pmin':None,'fuelcost':None,
                        'inflow_fac':None,'inflow_ref':None,
@@ -473,55 +474,22 @@ class GridData(object):
         return idx
 
 
-    def _susceptancePu(self,baseOhm):
+    def _susceptancePu(self,baseOhm=1):
+        '''If impedance is already given in pu, baseOhm should be 1
+        If not, well... baseOhm depends on the voltage level, so need to know
+        the nominal voltage at the bus to convert from ohm to pu.
+        '''
         return [-1/self.branch['reactance'][i]*baseOhm 
                 for i in self.branch.index.tolist()]
 
-    def computePowerFlowMatricesOBSOLETE(self,baseZ):
-        """
-        Compute and return dc power flow matrices B' and DA
-                
-        Returns sparse matrices (csr - compressed sparse row matrix)              
-        """
-        # node-branch incidence matrix
-        # element b,n is  1 if branch b starts at node n
-        #                -1 if branch b ends at node n
-        num_nodes = self.numNodes()
-        num_branches = self.numBranches()
-        
-        fromIdx = self.branchFromNodeIdx()
-        toIdx = self.branchToNodeIdx()
-        # get integer position (not necessary if index is int range
-        fromIdx = [self.node.index.get_loc(n) for n in fromIdx]
-        toIdx = [self.node.index.get_loc(n) for n in toIdx]
-        data = numpy.r_[numpy.ones(num_branches),-numpy.ones(num_branches)]
-        row = numpy.r_[range(num_branches),range(num_branches)]
-        col = numpy.r_[fromIdx, toIdx]
-        A_incidence_matrix = scipy.sparse.csr_matrix( (data, (row,col)),
-                                                     (num_branches,num_nodes))
-        
-        # Diagonal matrix
-        b = numpy.asarray(self._susceptancePu(baseZ))
-        D = scipy.sparse.csr_matrix(numpy.eye(num_branches)*b*(-1))
-        DA = D*A_incidence_matrix
-        
-        # Bprime matrix
-        ## build Bf such that Bf * Va is the vector of real branch powers injected
-        ## at each branch's "from" bus
-        Bf = scipy.sparse.csr_matrix((numpy.r_[b, -b],
-                                      (row, numpy.r_[fromIdx, toIdx])),
-                                       shape=(num_branches,num_nodes))
-        Bprime = A_incidence_matrix.T * Bf
-        
-        return Bprime, DA
 
-    def computePowerFlowMatrices(self,baseZ):
+    def computePowerFlowMatrices(self,baseZ=1):
         """
         Compute and return dc power flow matrices B' and DA
         
         Parameters
         ==========
-        baseZ : float
+        baseZ : float (impedance should already be in pu.)
         base value for impedance        
         
         Returns sparse matrices (csr - compressed sparse row matrix)

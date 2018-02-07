@@ -45,7 +45,8 @@ class Database(object):
             int(br_from[i]),
             int(br_to[i]),
             1.0*data.branch['capacity'][i],
-            1.0*data.branch['reactance'][i]
+            1.0*data.branch['reactance'][i],
+            1.0*data.branch['resistance'][i]
             ) for i in range(num_branches))
         
         if os.path.isfile(self.filename):
@@ -66,17 +67,18 @@ class Database(object):
             cur.executemany("INSERT INTO Grid_Generators VALUES(?,?,?)",
                             generators)
             cur.execute("CREATE TABLE Grid_Branches(indx INT, fromIndx INT,"
-                        +"toIndx INT, capacity DOUBLE, reactance DOUBLE)")
-            cur.executemany("INSERT INTO Grid_Branches VALUES(?,?,?,?,?)",
+                        +"toIndx INT, capacity DOUBLE, reactance DOUBLE,"
+                        +"resistance DOUBLE)")
+            cur.executemany("INSERT INTO Grid_Branches VALUES(?,?,?,?,?,?)",
                             branches)
     
             cur.execute("CREATE TABLE Res_ObjFunc(timestep INT, value DOUBLE)")
             cur.execute("CREATE TABLE Res_Branches(timestep INT, indx INT,"
-                        +"flow DOUBLE)")
+                        +"flow DOUBLE, loss DOUBLE)")
             cur.execute("CREATE TABLE Res_BranchesSens(timestep INT, indx INT,"
                         +"cap_sensitivity DOUBLE)")
             cur.execute("CREATE TABLE Res_Dcbranches(timestep INT, indx INT,"
-                        +"flow DOUBLE, cap_sensitivity DOUBLE)")
+                        +"flow DOUBLE, cap_sensitivity DOUBLE,loss DOUBLE)")
             cur.execute("CREATE TABLE Res_Nodes(timestep INT, indx INT,"
                         +"angle DOUBLE, nodalprice DOUBLE, loadshed DOUBLE)")
             cur.execute("CREATE TABLE Res_Generators(timestep INT, indx INT,"
@@ -120,7 +122,9 @@ class Database(object):
                        idx_storagegen,
                        idx_branchsens,
                        idx_pumpgen,
-                       idx_flexload):
+                       idx_flexload,
+                       branch_ac_losses,
+                       branch_dc_losses):
         '''
         Store results from a given timestep to the database
     
@@ -166,6 +170,10 @@ class Database(object):
             index in generator list of generators with pumping
         idx_flexload
             index in consumer list of flexible loads
+        branch_ac_losses : list
+            ac branch losses
+        branch_dc_losses : list
+            dc branch losses
         '''
         
         con = db.connect(self.filename)
@@ -176,16 +184,17 @@ class Database(object):
                     tuple((timestep,i,node_angle[i],
                           sensitivity_node_power[i],loadshed_power[i]) 
                     for i in range(len(sensitivity_node_power))))
-            cur.executemany("INSERT INTO Res_Branches VALUES(?,?,?)",
-                    tuple((timestep,i,branch_flow[i]) 
+            cur.executemany("INSERT INTO Res_Branches VALUES(?,?,?,?)",
+                    tuple((timestep,i,branch_flow[i],branch_ac_losses[i]) 
                     for i in range(len(branch_flow))))
             cur.executemany("INSERT INTO Res_BranchesSens VALUES(?,?,?)",
                     tuple((timestep,idx_branchsens[i],
                            sensitivity_branch_capacity[i]) 
                     for i in range(len(sensitivity_branch_capacity))))
-            cur.executemany("INSERT INTO Res_Dcbranches VALUES(?,?,?,?)",
+            cur.executemany("INSERT INTO Res_Dcbranches VALUES(?,?,?,?,?)",
                     tuple((timestep,i,dcbranch_flow[i],
-                          sensitivity_dcbranch_capacity[i]) 
+                          sensitivity_dcbranch_capacity[i],
+                          branch_dc_losses[i]) 
                     for i in range(len(dcbranch_flow))))
             cur.executemany("INSERT INTO Res_Generators VALUES(?,?,?,?)",
                     tuple((timestep,i,generator_power[i],inflow_spilled[i]) 
