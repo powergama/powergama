@@ -1236,7 +1236,8 @@ class Results(object):
                     aggregated = [x+y for x,y in zip(sumGenAreaType,fillfrom)]
                     ax.fill_between(timerange,y1=aggregated,
                                      y2=fillfrom,
-                                     facecolor=colours[count])
+                                     facecolor=colours[count],
+                                     edgecolor="lightgrey")
                     #add this plot to get the legend right
                     ax.plot([],[],color=colours[count],linewidth=10,
                             label=gentype)
