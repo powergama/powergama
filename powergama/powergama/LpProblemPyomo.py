@@ -529,7 +529,7 @@ class LpProblem(object):
         return
 
 
-    def _updatePowerLosses(self,lossmethod):
+    def _updatePowerLosses(self,lossmethod,lossmultiplier=1):
         '''Compute power losses from OPF solution and update parameters'''
         if lossmethod==0:
             pass
@@ -545,7 +545,11 @@ class LpProblem(object):
                 loss_pu = r * ((theta_to-theta_from)*const.baseAngle/x)**2
                 # convert from p.u. to physical unit
                 lossMVA = loss_pu*const.baseMVA
-                self.concretemodel.branchAcPowerLoss[b] = lossMVA            
+                # A multiplication factor to account for reactive current losses
+                # (or more precicely, to get similar results as Giacomo in 
+                # the SmartNet project)
+                lossMVA = lossMVA * lossmultiplier
+                self.concretemodel.branchAcPowerLoss[b] = lossMVA           
             for b in self.concretemodel.BRANCH_DC:
                 #TODO: Estimate DC branch power loss
                 self.concretemodel.branchDcPowerLoss[b] = 0.0
@@ -685,7 +689,7 @@ class LpProblem(object):
 
 
     def solve(self,results,solver='cbc',solver_path=None,warmstart=False,
-              savefiles=False,lossmethod=0):
+              savefiles=False,lossmethod=0,lossmultiplier=1):
         '''
         Solve LP problem for each time step in the time range
 
@@ -748,7 +752,7 @@ class LpProblem(object):
         for timestep in range(numTimesteps):
             # update LP problem (inflow, storage, profiles)
             self._updateLpProblem(timestep)
-            self._updatePowerLosses(lossmethod)
+            self._updatePowerLosses(lossmethod,lossmultiplier)
 
             # solve the LP problem
             if savefiles:
