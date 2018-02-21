@@ -915,4 +915,18 @@ class Database(object):
             rows = cur.fetchall()
             values = [row[1] for row in rows]        
         return values
+    
+    def getResultBranchLossesSum(self,timeMaxMin):
+        '''Sum of losses for each time-step time step'''
+        con = db.connect(self.filename)
+        with con:        
+            cur = con.cursor()
+            cur.execute("SELECT indx,SUM(loss) FROM Res_Branches "
+                +"WHERE timestep>=? AND timestep<?"
+                +" GROUP BY timestep",
+                (timeMaxMin[0],timeMaxMin[-1]))
+            rows = cur.fetchall()
+            values = [row[1] for row in rows]        
+        return values
+        
                 

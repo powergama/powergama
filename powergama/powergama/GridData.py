@@ -194,6 +194,9 @@ class GridData(object):
         for k in keys['branch']:
             if k not in self.branch.keys():
                 self.branch[k] = keys['branch'][k]
+        for k in keys['dcbranch']:
+            if k not in self.dcbranch.keys():
+                self.dcbranch[k] = keys['dcbranch'][k]
         
         # Discard extra columns (comments etc)
         self.node = self.node[list(keys['node'].keys())]

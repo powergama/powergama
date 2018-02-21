@@ -728,9 +728,9 @@ class LpProblem(object):
                 print (":) Found solver here: {}".format(opt.executable()))
             else:
                 print(":( Could not find solver {}. Returning."
-                        .format(self.solver))
+                        .format(solver))
                 raise Exception("Could not find LP solver {}"
-                                .format(self.solver))
+                                .format(solver))
 
         #Enable access to dual values
         self.concretemodel.dual = pyo.Suffix(direction=pyo.Suffix.IMPORT)

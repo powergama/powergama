@@ -660,6 +660,7 @@ Latitude and longitude information is only used for plotting the grid on a map.
 
 \subsubsection{AC Branches}
 Branches have from and to references that must match a node identifier in the list of nodes.
+Impedance should be given as per unit system with the the base power being the global one (powergama.constants.baseS)
 
 \medskip
 %\begin{table}
@@ -670,7 +671,8 @@ Branches have from and to references that must match a node identifier in the li
 	\hline
 	``node\_from"	&	Node identifier 	& string	& \\
 	``node\_to"		&	Node identifier	& string	& \\
-	``reactance"	&	Reactance	& float	& ohm \\
+	``reactance"	&	Reactance	& float	& p.u \\
+	``resistance"	&	Resistance (OPT) & float & p.u. \\
 	``capacity"		&	Capacity & float		& MW \\
 	\hline
 \end{tabular}
