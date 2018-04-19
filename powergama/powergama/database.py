@@ -5,6 +5,7 @@ Module dealing with database IO
 
 import sqlite3 as db
 import os
+import pandas as pd
 
 class Database(object):
     '''
@@ -928,5 +929,32 @@ class Database(object):
             rows = cur.fetchall()
             values = [row[1] for row in rows]        
         return values
+        
+    def getResultBranches(self,timeMaxMin,br_indx=None):
+        '''Branch results for each time-step
+        
+        Parameters
+        ==========
+        timeMaxMin : [start,end]
+            tuple with time window start <= t < end
+        br_indx : list (optional)
+            list of branches to consider, None=include all
+        '''
+        con = db.connect(self.filename)
+        with con:        
+            if br_indx is None:
+                query = ("SELECT * FROM Res_Branches "
+                    +"WHERE timestep>=? AND timestep<?"
+                    +" GROUP BY indx,timestep")
+                df = pd.read_sql_query(query,con,
+                                       params=(timeMaxMin[0],timeMaxMin[-1]))
+            else:
+                query = ("SELECT * FROM Res_Branches "
+                    +"WHERE timestep>=? AND timestep<?  AND indx IN "
+                    +"{}"
+                    +" GROUP BY indx,timestep").format(tuple(br_indx))
+                df = pd.read_sql_query(query,con,
+                                       params=(timeMaxMin[0],timeMaxMin[-1]))
+        return df
         
                 

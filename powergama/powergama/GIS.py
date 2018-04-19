@@ -34,6 +34,9 @@ generator_colour = "ff0000ff" #red
 consumer_colour = "ffff00ff" #purple
 flowarrow_colour = "ff0000ff" #red
 
+#default max cap for colouring
+PRICE_MAX = 200
+
 # Default line width
 linewidth = 1.5
 
@@ -82,14 +85,16 @@ def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,
 
     if nodetype=='area':
         N_categories = len(grid_data.node.area.unique())
-        rgb_colours = [mpl.cm.jet(i/N_categories) for i in range(N_categories)]
+        #rgb_colours = [mpl.cm.jet(i/N_categories) for i in range(N_categories)]
+        rgb_colours = mpl.cm.tab20(numpy.arange(N_categories)%20)
         colorbgr_n = [simplekml.Color.rgb(int(c[0]*255),int(c[1]*255),int(c[2]*255)) 
                     for c in rgb_colours]
         numCat_n = N_categories
         defaultCat_n=None
     if branchtype=='area':
         N_categories = len(grid_data.node.area.unique())
-        rgb_colours = [mpl.cm.jet(i/N_categories) for i in range(N_categories)]
+        #rgb_colours = [mpl.cm.jet(i/N_categories) for i in range(N_categories)]
+        rgb_colours = mpl.cm.tab20(numpy.arange(N_categories)%20)
         colorbgr_b = [simplekml.Color.rgb(int(c[0]*255),int(c[1]*255),int(c[2]*255)) 
                     for c in rgb_colours]
         colorbgr_b.append('ffffffff') #white inter-area lines
@@ -143,7 +148,7 @@ def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,
         ## Show nodal price
         meannodalprices = res.getAverageNodalPrices(timeMaxMin)
         # Obs: some values may be numpy.nan
-        maxnodalprice = numpy.nanmax(meannodalprices)
+        maxnodalprice = min(PRICE_MAX,numpy.nanmax(meannodalprices))
         minnodalprice = numpy.nanmin(meannodalprices)
         steprange = (maxnodalprice - minnodalprice) / numCat_n
         categoryMax = [math.ceil(minnodalprice+steprange*(n+1))

@@ -29,6 +29,7 @@ expansion not considered -->
   CO2price="0"
   VOLL="0"
   stage2TimeDelta="1"
+  stages="2"
 />
 <!-- high curtailment cost to discourage curtailment --> 
 

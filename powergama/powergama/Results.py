@@ -1238,7 +1238,8 @@ class Results(object):
         if reversed_order:
             gentypes_ordered.reverse()
         numCurves = len(gentypes_ordered)+1
-        colours = cm.gist_rainbow(np.linspace(0, 1, numCurves))
+        #colours = cm.gist_rainbow(np.linspace(0, 1, numCurves))
+        colours = cm.tab20([i%20 for i in range(numCurves)])
         for gentype in gentypes_ordered:
             if gentype in generators[area]:
                 idxGen = generators[area][gentype]
@@ -1248,8 +1249,8 @@ class Results(object):
                     aggregated = [x+y for x,y in zip(sumGenAreaType,fillfrom)]
                     ax.fill_between(timerange,y1=aggregated,
                                      y2=fillfrom,
-                                     facecolor=colours[count],
-                                     edgecolor="lightgrey")
+                                     facecolor=colours[count])
+                    # could add edgecolor="lightgrey" 
                     #add this plot to get the legend right
                     ax.plot([],[],color=colours[count],linewidth=10,
                             label=gentype)
@@ -1800,50 +1801,70 @@ class Results(object):
         else:
             print("Variable not valid")
             return
-        all_generators = self.grid.getGeneratorsPerAreaAndType()
+
+        df = self.grid.generator[['node','type','pmax']].merge(
+                self.grid.node[['id','area']],how="left",
+                left_on="node",right_on="id")
+        df['VALUE'] = gen_output
+        dfplot = df[['area','type','VALUE']].groupby(
+                ['area','type']).sum()['VALUE'].unstack()
+        
+#        all_generators = self.grid.getGeneratorsPerAreaAndType()
         if areas is None:
-            areas = all_generators.keys()
+            #areas = all_generators.keys()
+            #areas = self.grid.getAllAreas()
+            areas = dfplot.index.unique()
         if gentypes is None:
             gentypes = self.grid.getAllGeneratorTypes()
+            #gentypes = dfplot.columns.unique()
         if relative:
-            prodsum={}
-            for ar in areas:
-                flatlist = [v for sublist in all_generators[ar].values() 
-                            for v in sublist]
-                prodsum[ar] = sum([gen_output[i] for i in flatlist])
-                                
-        plt.figure()
-        ax = plt.subplot(111)
-        width = 0.8
-        previous = [0]*len(areas)
-        numCurves = len(gentypes)+1
-        colours = cm.hsv(np.linspace(0, 1, numCurves))
-        count=0
-        ind = range(len(areas))
-        for typ in gentypes:
-            A=[]
-            for ar in areas:
-                if typ in all_generators[ar]:
-                    prod = sum([gen_output[i] 
-                                    for i in all_generators[ar][typ]])
-                    if relative:
-                        prod = prod/prodsum[ar]
-                    A.append(prod)
-                else:
-                    A.append(0)
-    
-                
-            plt.bar(ind,A, width,label=typ,
-                    bottom=previous,color=colours[count])
-            previous = [previous[i]+A[i] for i in range(len(A))]
-            count = count+1
+            dfplot = dfplot.mul(dfplot.sum(axis=1),axis=0)
+#            prodsum={}
+#            for ar in areas:
+#                flatlist = [v for sublist in all_generators[ar].values() 
+#                            for v in sublist]
+#                prodsum[ar] = sum([gen_output[i] for i in flatlist])
+
+        #plt.figure()
+        dfplot.loc[areas,gentypes].plot(kind="bar",stacked=True)
         plt.legend()
-        handles, labels = ax.get_legend_handles_labels()
+        handles, labels = plt.gca().get_legend_handles_labels()
         handles.reverse()
         labels.reverse()
         plt.legend(handles, labels, loc=2,
                    bbox_to_anchor=(1.05,1), borderaxespad=0.0)
-        plt.xticks(np.arange(len(areas))+width/2., tuple(areas) )
+                                
+#        ax = plt.subplot(111)
+#        width = 0.8
+#        previous = [0]*len(areas)
+#        numCurves = len(gentypes)+1
+#        colours = cm.hsv(np.linspace(0, 1, numCurves))
+#        count=0
+#        ind = range(len(areas))
+#        for typ in gentypes:
+#            A=[]
+#            for ar in areas:
+#                if typ in all_generators[ar]:
+#                    prod = sum([gen_output[i] 
+#                                    for i in all_generators[ar][typ]])
+#                    if relative:
+#                        prod = prod/prodsum[ar]
+#                    A.append(prod)
+#                else:
+#                    A.append(0)
+#    
+#                
+#            plt.bar(ind,A, width,label=typ,
+#                    bottom=previous,color=colours[count])
+#            previous = [previous[i]+A[i] for i in range(len(A))]
+#            count = count+1
+#        plt.legend()
+#        handles, labels = ax.get_legend_handles_labels()
+#        handles.reverse()
+#        labels.reverse()
+#        plt.legend(handles, labels, loc=2,
+#                   bbox_to_anchor=(1.05,1), borderaxespad=0.0)
+#        plt.xticks(np.arange(len(areas))+width/2., tuple(areas) )
         if showTitle:
             plt.title(title)
         plt.show()
