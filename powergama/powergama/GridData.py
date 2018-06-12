@@ -51,8 +51,9 @@ class GridData(object):
                    'capacity2':0,'reactance':0,
                    'expand':None,'expand2':None, 'max_newCap':-1,'distance':-1,
                    'cost_scaling':None,'type':None},
-        'dcbranch' :{},
-        'generator': {'type':None,'node':None,'pmax':None,'pmax2':0,
+        'dcbranch' :{'node_from':'', 'node_to':'', 'capacity':0,
+                     'resistance':0},
+        'generator': {'type':None,'node':None,'desc':'','pmax':None,'pmax2':0,
                       'pmin':None,
                       'expand':None,'expand2':None,'p_maxNew':-1, 'cost_scaling':1,
                       'fuelcost':None,'fuelcost_ref':None,'pavg':0,
@@ -142,6 +143,7 @@ class GridData(object):
         #TODO use integer range index instead of id string, cf powergama
         self.node.set_index('id',inplace=True)
         self.node['id']=self.node.index
+        self.node.index.name = 'index'
         self.branch = pd.read_csv(branches,
                                   #usecols=self.keys_sipdata['branch'],
                                   dtype={'node_from':str,'node_to':str})
@@ -629,11 +631,12 @@ class GridData(object):
         each area
         '''
         generators = {}
-        for pumpIdx,cap in enumerate(self.generator['pump_cap']):
+        for pumpIdx,gen in self.generator.iterrows():
+            cap = gen['pump_cap']
             if cap>0 and cap<numpy.inf:
-                nodeName = self.generator['node'][pumpIdx]
-                nodeIdx = self.node['id'].index(nodeName)
-                areaName = self.node['area'][nodeIdx]
+                nodeId = self.generator.loc[pumpIdx,'node']
+                nodeIdx = self.node[self.node['id']==nodeId].index[0]
+                areaName = self.node.loc[nodeIdx,'area']
                 if areaName in generators:
                     generators[areaName].append(pumpIdx)
                 else:

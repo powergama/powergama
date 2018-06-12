@@ -394,14 +394,16 @@ class Results(object):
         avgsense = np.asarray(avgsense,dtype=float)
         return avgsense
     
-    def getAverageUtilisation(self,timeMaxMin=None):
+    def getAverageUtilisation(self,timeMaxMin=None,branchtype="ac"):
         '''
         Average branch utilisation over a given time period
 
         Parameters
         ----------
-        timeMaxMin (list) (default = None)
+        timeMaxMin :  (list) (default = None)
             [min, max] - lower and upper time interval
+        branchtype : str
+            ac or dc branch type
             
         Returns
         =======
@@ -409,10 +411,12 @@ class Results(object):
         '''
         if timeMaxMin is None:
             timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
-
-        cap =self.grid.branch.capacity
-        avgflow = self.getAverageBranchFlows(timeMaxMin)[2]
-        utilisation = [avgflow[i] / cap[i] for i in range(len(cap))] 
+        if branchtype=="ac":
+            cap =self.grid.branch.capacity
+        elif branchtype=="dc":
+            cap = self.grid.dcbranch.capacity
+        avgflow = self.getAverageBranchFlows(timeMaxMin,branchtype)[2]
+        utilisation = [avgflow[i] / cap.iloc[i] for i in range(len(cap))] 
         utilisation = np.asarray(utilisation)
         return utilisation
             

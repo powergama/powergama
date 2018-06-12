@@ -1589,7 +1589,8 @@ class SipModel():
                 for t in model.TIME])
             df_load.loc[j,'Pmax'] = np.max([self.computeDemand(model,j,t)
                 for t in model.TIME])
-            df_load.loc[j,'emissionCap'] = model.emissionCap[j]
+            if model.CO2price.value>0:
+                df_load.loc[j,'emissionCap'] = model.emissionCap[j]
             df_load.loc[j,_n('emissions',stage)] = self.computeAreaEmissions(model,j,
                                                 stage=stage)
             df_load.loc[j,_n('emission_cost',stage)] = self.computeAreaEmissions(model,j, 
