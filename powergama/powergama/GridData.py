@@ -248,6 +248,14 @@ class GridData(object):
         for c in self.branch['node_to']:
             if not c in self.node['id'].values:
                 raise Exception("Branch to node does not exist: '%s'" %c)
+
+        #dcbranch nodes
+        for c in self.dcbranch['node_from']:
+            if not c in self.node['id'].values:
+                raise Exception("DC Branch from node does not exist: '%s'" %c)
+        for c in self.dcbranch['node_to']:
+            if not c in self.node['id'].values:
+                raise Exception("DC Branch to node does not exist: '%s'" %c)
                 
 
     def _readProfileFromFile(self,filename,timerange):          
