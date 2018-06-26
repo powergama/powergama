@@ -373,7 +373,7 @@ class Results(object):
         return energybalance
            
 
-    def getAverageBranchSensitivity(self,timeMaxMin=None):
+    def getAverageBranchSensitivity(self,timeMaxMin=None,branchtype="ac"):
         '''
         Average branch capacity sensitivity over a given time period
         
@@ -381,6 +381,8 @@ class Results(object):
         ----------
         timeMaxMin (list) (default = None)
             [min, max] - lower and upper time interval
+        branchtype : str
+            ac or dc branch type
             
         Returns
         =======
@@ -389,7 +391,7 @@ class Results(object):
         if timeMaxMin is None:
             timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
 
-        avgsense = self.db.getResultBranchSensMean(timeMaxMin)
+        avgsense = self.db.getResultBranchSensMean(timeMaxMin,branchtype)
         # use asarray to convert None to nan
         avgsense = np.asarray(avgsense,dtype=float)
         return avgsense

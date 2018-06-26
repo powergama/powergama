@@ -32,7 +32,7 @@ def plotMap(pg_data,pg_res=None,filename=None,
         name of output file (html)
     nodetype : str ('nodalprice','area') or None (default)
         how to colour nodes
-    branchtype : str ('utilisation') or None (default)
+    branchtype : str ('utilisation','sensitivity') or None (default)
         how to colour branches
     filter_node : list
         max/min value used for colouring nodes (e.g. nodalprice)
@@ -40,7 +40,12 @@ def plotMap(pg_data,pg_res=None,filename=None,
         max/min value used for colouring branches (e.g. utilisation)
     kwargs : arguments passed on to folium.Map(...)
     '''
-    
+  
+    if branca.__version__<='0.2.0':
+        cmSet1 = branca.colormap.linear.Set1
+    else:
+        cmSet1 = branca.colormap.linear.Set1_03
+
 #    nodetype=None,branchtype=None,dcbranchtype=None,
 #                    show_node_labels=False,branch_style='c',latlon=None,
 #                    timeMaxMin=None,
@@ -90,9 +95,12 @@ def plotMap(pg_data,pg_res=None,filename=None,
         branch.loc[branch.index.isin(br_ind),'sensitivity'] = branch_sensitivity
         #DC branch utilisation:
         dcbranch_utilisation = pg_res.getAverageUtilisation(branchtype="dc")
+        dcbranch_sensitivity = pg_res.getAverageBranchSensitivity(branchtype="dc")
         dcbr_ind = pg_data.getIdxDcBranchesWithFlowConstraints()
         dcbranch['utilisation'] = 0
         dcbranch.loc[dcbranch.index.isin(dcbr_ind),'utilisation'] = dcbranch_utilisation
+        dcbranch['sensitivity'] = 0
+        dcbranch.loc[dcbranch.index.isin(dcbr_ind),'sensitivity'] = dcbranch_sensitivity
     
     m = folium.Map(location=[node['lat'].median(), node['lon'].median()],
                              zoom_start=4,**kwargs)
@@ -130,7 +138,7 @@ def plotMap(pg_data,pg_res=None,filename=None,
     elif nodetype=="area":
         value_col="area_ind"
         val_max=node[value_col].max()
-        cm_node = branca.colormap.linear.Set1.scale(0,val_max).to_step(10)
+        cm_node = cmSet1.scale(0,val_max).to_step(10)
         #cm_node.caption = 'Area'   
         #m.add_child(cm_node)
     elif nodetype=="type":
@@ -138,7 +146,7 @@ def plotMap(pg_data,pg_res=None,filename=None,
         node['type_num'] = type_val
         value_col="type_num"
         val_max=node[value_col].max()
-        cm_node = branca.colormap.linear.Set1.scale(0,val_max).to_step(10)
+        cm_node = cmSet1.scale(0,val_max).to_step(10)
     else:
         value_col=None
         
@@ -178,7 +186,7 @@ def plotMap(pg_data,pg_res=None,filename=None,
         value_col = 'sensitivity'
         if filter_branch is None:
             filter_branch = [branch[value_col].min(),branch[value_col].max()]
-        cm_branch = branca.colormap.LinearColormap(['green', 'yellow', 'red'],
+        cm_branch = branca.colormap.LinearColormap(['red', 'yellow', 'green'],
                                                vmin=filter_branch[0], 
                                                vmax=filter_branch[1])
         cm_branch.caption = 'Branch capacity sensitivity'
@@ -188,7 +196,7 @@ def plotMap(pg_data,pg_res=None,filename=None,
         branch['type_num'] = type_val
         value_col="type_num"
         val_max=branch[value_col].max()
-        cm_branch = branca.colormap.linear.Set1.scale(0,val_max).to_step(10)
+        cm_branch = cmSet1.scale(0,val_max).to_step(10)
     else:
         value_col=None
     locationsB=[]
@@ -215,14 +223,14 @@ def plotMap(pg_data,pg_res=None,filename=None,
                       colour=colour).add_to(feature_group_Branches)
     
     print("DC branches...")
-    if branchtype=="utilisation":
-        value_col = 'utilisation'
-        #cm_branch = branca.colormap.LinearColormap(['green', 'yellow', 'red'],
-        #                                       vmin=0, vmax=1)
-        #cm_branch.caption = 'AC branch utilisation'
-        #m.add_child(cm_branch)
-    else:
-        value_col=None
+#    if branchtype=="utilisation":
+#        value_col = 'utilisation'
+#        #cm_branch = branca.colormap.LinearColormap(['green', 'yellow', 'red'],
+#        #                                       vmin=0, vmax=1)
+#        #cm_branch.caption = 'AC branch utilisation'
+#        #m.add_child(cm_branch)
+#    else:
+#        value_col=None
     locationsBdc=[]
     for i,n in dcbranch.iterrows():
         if not (n[['lat_x','lon_x','lat_y','lon_y']].isnull().any()):
@@ -262,7 +270,7 @@ def plotMap(pg_data,pg_res=None,filename=None,
 
     print("Generators...")
     #feature_group_Generator = folium.FeatureGroup(name='Generators').add_to(m)
-    cm_stepG = branca.colormap.linear.Set1.scale(0,len(gentypes)-1).to_step(
+    cm_stepG = cmSet1.scale(0,len(gentypes)-1).to_step(
             len(gentypes))
 
     groups = generator.groupby("node")
@@ -330,6 +338,8 @@ def plotMap(pg_data,pg_res=None,filename=None,
     if filename:
         print("Saving map to file {}".format(filename))
         m.save(filename)
+    
+    return m
 
 
 class FeatureCollection(folium.map.FeatureGroup):

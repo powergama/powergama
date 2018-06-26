@@ -78,7 +78,7 @@ class Database(object):
                         +"flow DOUBLE, loss DOUBLE)")
             cur.execute("CREATE TABLE Res_BranchesSens(timestep INT, indx INT,"
                         +"cap_sensitivity DOUBLE)")
-            cur.execute("CREATE TABLE Res_Dcbranches(timestep INT, indx INT,"
+            cur.execute("CREATE TABLE Res_DcBranches(timestep INT, indx INT,"
                         +"flow DOUBLE, cap_sensitivity DOUBLE,loss DOUBLE)")
             cur.execute("CREATE TABLE Res_Nodes(timestep INT, indx INT,"
                         +"angle DOUBLE, nodalprice DOUBLE, loadshed DOUBLE)")
@@ -192,7 +192,7 @@ class Database(object):
                     tuple((timestep,idx_branchsens[i],
                            sensitivity_branch_capacity[i]) 
                     for i in range(len(sensitivity_branch_capacity))))
-            cur.executemany("INSERT INTO Res_Dcbranches VALUES(?,?,?,?,?)",
+            cur.executemany("INSERT INTO Res_DcBranches VALUES(?,?,?,?,?)",
                     tuple((timestep,i,dcbranch_flow[i],
                           sensitivity_dcbranch_capacity[i],
                           branch_dc_losses[i]) 
@@ -372,7 +372,7 @@ class Database(object):
             if ac:
                 table = "Res_Branches"
             else:
-                table = "Res_Dcbranches"
+                table = "Res_DcBranches"
             cur.execute("SELECT flow FROM " + table
                 +" WHERE timestep>=? AND timestep<? AND indx=?"
                 +" ORDER BY timestep",
@@ -419,7 +419,7 @@ class Database(object):
         if ac:
             table = "Res_Branches"
         else:
-            table = "Res_Dcbranches"
+            table = "Res_DcBranches"
         
         con = db.connect(self.filename)
         with con:        
@@ -458,15 +458,21 @@ class Database(object):
         values = [values_pos,values_neg,values_abs]
         return values
 
-    def getResultBranchSens(self,branchindx,timeMaxMin):
+    def getResultBranchSens(self,branchindx,timeMaxMin,acdc='ac'):
         '''Get branch capacity sensitivity at specified branch'''
+        if acdc=='ac':
+            branch_table = 'Res_BranchesSens'
+        elif acdc=='dc':
+            branch_table = 'Res_DcBranches'
+        else:
+            raise Exception('branch type must be "ac" or "dc"')
         con = db.connect(self.filename)
         with con:        
             cur = con.cursor()
-            cur.execute("SELECT cap_sensitivity FROM Res_BranchesSens "
+            cur.execute("SELECT cap_sensitivity FROM ? "
                 +"WHERE timestep>=? AND timestep<? AND indx=?"
                 +" ORDER BY timestep",
-                (timeMaxMin[0],timeMaxMin[-1],branchindx))
+                (branch_table,timeMaxMin[0],timeMaxMin[-1],branchindx))
             rows = cur.fetchall()
         values = [row[0] for row in rows]        
         return values
@@ -482,13 +488,21 @@ class Database(object):
                 else [None]*(timeMaxMin[1]-timeMaxMin[0]))
         return sens
 
-    def getResultBranchSensMean(self,timeMaxMin):
-        '''Get average sensitivity of all  branches'''
+    def getResultBranchSensMean(self,timeMaxMin,acdc="ac"):
+        '''Get average sensitivity of all  branches
+        acdc = 'ac' or 'dc'
+        '''
+        if acdc=='ac':
+            branch_table = 'Res_BranchesSens'
+        elif acdc=='dc':
+            branch_table = 'Res_DcBranches'
+        else:
+            raise Exception('branch type must be "ac" or "dc"')
         con = db.connect(self.filename)
         with con:        
             cur = con.cursor()
             cur.execute("SELECT indx,AVG(cap_sensitivity)"
-                +" FROM Res_BranchesSens"
+                +" FROM {}".format(branch_table)
                 +" WHERE timestep>=? AND timestep<?"
                 +" GROUP BY indx ORDER BY indx",
                 (timeMaxMin[0],timeMaxMin[-1]))
@@ -604,7 +618,7 @@ class Database(object):
         if acdc=='ac':
             branch_table = 'Res_Branches'
         elif acdc=='dc':
-            branch_table = 'Res_Dcbranches'
+            branch_table = 'Res_DcBranches'
         else:
             raise Exception('branch type must be "ac" or "dc"')
                 

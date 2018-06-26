@@ -293,11 +293,11 @@ class GridData(object):
         Save data to new input files
         ''' 
 
-        file_nodes = prefix+"nodes.csv"
-        file_branches = prefix+"branches.csv"
-        file_consumers = prefix+"consumers.csv"     
-        file_generators = prefix+"generators.csv"       
-        file_dcbranch = prefix+"hvdc.csv"       
+        file_nodes = prefix+"node.csv"
+        file_branches = prefix+"branch.csv"
+        file_consumers = prefix+"consumer.csv"     
+        file_generators = prefix+"generator.csv"       
+        file_dcbranch = prefix+"dcbranch.csv"       
 
         sep = self.CSV_SEPARATOR        
         if sep is None:

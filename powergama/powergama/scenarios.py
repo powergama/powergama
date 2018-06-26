@@ -9,7 +9,7 @@ import powergama.constants as const
 
 _EMPTY = pd.np.nan
 
-def saveScenario(base_grid_data, scenario_file):
+def saveScenario(base_grid_data, scenario_file,verbose=True):
     '''
     Saves the data in the current grid model to a scenario file of the 
     format used to create new scenarios
@@ -23,6 +23,9 @@ def saveScenario(base_grid_data, scenario_file):
     
         
     '''
+    def printV(*args,**kwargs):
+        if verbose:
+            print(*args,**kwargs)
     
     areas_grid = base_grid_data.getAllAreas()
     consumers = base_grid_data.getConsumersPerArea()
@@ -45,14 +48,14 @@ def saveScenario(base_grid_data, scenario_file):
             demandprofiles_set = set(load_profile)
             demand_ref = " ".join(str(x) for x in demandprofiles_set)
 
-            print("  demand_avg={0:12.2f} <> demand_ref={1:1s}"
+            printV("  demand_avg={0:12.2f} <> demand_ref={1:1s}"
                     .format(demand_sum_MW,demand_ref))
             # avg demand is in MW, whereas input file is GWh
             data["demand_annual"][co] = (
                 demand_sum_MW*const.hoursperyear/const.MWh_per_GWh  )
             data["demand_profile"][co] = demand_ref
         else:
-            print("  -- no consumers -- ")
+            printV("  -- no consumers -- ")
             data["demand_annual"][co] = ''
             data["demand_profile"][co] = ''
             
@@ -129,7 +132,7 @@ def saveScenario(base_grid_data, scenario_file):
                     pump_efficiency = (float(sum(pumpeff_this_area))
                                         /len(pumpeff_this_area))
                     
-                print (("  {0:1s}: cap={1:6.0f}, storage={2:1.0f}"+
+                printV(("  {0:1s}: cap={1:6.0f}, storage={2:1.0f}"+
                         ", fuelcost_avg={3:6.2f},\n    storval_avg={4:1s}"+
                         ", inflow_fac={5:6.2f}, inflow_ref={6:1s}"+
                         ", \n    storval_fill={7:1s} & _time={8:1s}")
@@ -178,7 +181,7 @@ def saveScenario(base_grid_data, scenario_file):
                 data["pump_capacity_%s"%gentype][co] = pump_capacity
                 data["pump_efficiency_%s"%gentype][co] = pump_efficiency
             else:
-                print("  {0:1s}:None".format(gentype))
+                printV("  {0:1s}:None".format(gentype))
 				
         # end collecting data
                 
@@ -188,10 +191,10 @@ def saveScenario(base_grid_data, scenario_file):
         #isPresent = bool([a for a in data[k].values() if a != None])
         isPresent = any(data[k].values())
         if not isPresent:
-            print("DOES NOT HAVE ",k)
+            printV("DOES NOT HAVE ",k)
             keys_delete.append(k)
     for k in keys_delete:
-        print("ignoring ",k)
+        printV("ignoring ",k)
         del(data[k])
 
     # print to file   
@@ -248,17 +251,17 @@ def newScenario(base_grid_data, scenario_file, newfile_prefix):
     generators = base_grid_data.getGeneratorsPerAreaAndType()
 
     # copy existing parameters
-    load_new = base_grid_data.consumer.demand_avg[:]        
-    loadprofiles_new = base_grid_data.consumer.demand_ref[:]   
-    inflow_new = base_grid_data.generator.inflow_fac[:]
-    inflowprofiles_new = base_grid_data.generator.inflow_ref[:]
-    gencap_new = base_grid_data.generator.pmax[:]
-    gencost_new = base_grid_data.generator.fuelcost[:]
-    storagecap_new = base_grid_data.generator.storage_cap[:]
-    storagelevel_new = base_grid_data.generator.storage_ini[:]
-    storval_basevalue_new = base_grid_data.generator.storage_price[:]
-    storval_filling_ref_new = base_grid_data.generator.storval_filling_ref[:]
-    storval_time_ref_new =  base_grid_data.generator.storval_time_ref[:]
+    load_new = base_grid_data.consumer.demand_avg.copy()      
+    loadprofiles_new = base_grid_data.consumer.demand_ref.copy()
+    inflow_new = base_grid_data.generator.inflow_fac.copy()
+    inflowprofiles_new = base_grid_data.generator.inflow_ref.copy()
+    gencap_new = base_grid_data.generator.pmax.copy()
+    gencost_new = base_grid_data.generator.fuelcost.copy()
+    storagecap_new = base_grid_data.generator.storage_cap.copy()
+    storagelevel_new = base_grid_data.generator.storage_ini.copy()
+    storval_basevalue_new = base_grid_data.generator.storage_price.copy()
+    storval_filling_ref_new = base_grid_data.generator.storval_filling_ref.copy()
+    storval_time_ref_new =  base_grid_data.generator.storval_time_ref.copy()
     
         
     for parameter in datadict:
@@ -404,20 +407,20 @@ def newScenario(base_grid_data, scenario_file, newfile_prefix):
 
 
     # Updating variables
-    base_grid_data.consumer.demand_avg[:] = load_new[:]
-    base_grid_data.consumer.demand_ref[:] = loadprofiles_new[:]
-    base_grid_data.generator.inflow_fac[:] = inflow_new[:]
-    base_grid_data.generator.inflow_ref[:] = inflowprofiles_new[:]
-    base_grid_data.generator.pmax[:] = gencap_new[:]
-    base_grid_data.generator.fuelcost[:] = gencost_new[:]
-    base_grid_data.generator.storage_cap[:] = storagecap_new[:]
-    base_grid_data.generator.storage_ini[:] = storagelevel_new[:]
-    base_grid_data.generator.storage_price[:] = storval_basevalue_new[:]
-    base_grid_data.generator.storval_filling_ref[:] = storval_filling_ref_new[:]
-    base_grid_data.generator.storval_time_ref[:] = storval_time_ref_new[:]
+    base_grid_data.consumer.demand_avg = load_new[:]
+    base_grid_data.consumer.demand_ref = loadprofiles_new[:]
+    base_grid_data.generator.inflow_fac = inflow_new[:]
+    base_grid_data.generator.inflow_ref = inflowprofiles_new[:]
+    base_grid_data.generator.pmax = gencap_new[:]
+    base_grid_data.generator.fuelcost = gencost_new[:]
+    base_grid_data.generator.storage_cap = storagecap_new[:]
+    base_grid_data.generator.storage_ini = storagelevel_new[:]
+    base_grid_data.generator.storage_price = storval_basevalue_new[:]
+    base_grid_data.generator.storval_filling_ref = storval_filling_ref_new[:]
+    base_grid_data.generator.storval_time_ref = storval_time_ref_new[:]
     
     base_grid_data.writeGridDataToFiles(prefix=newfile_prefix)
-    return
+    return base_grid_data
 
 
 
