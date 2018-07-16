@@ -381,7 +381,7 @@ class Database(object):
         values = [row[0] for row in rows]        
         return values
 
-    def getResultBranchFlowAll(self,timeMaxMin):
+    def getResultBranchFlowAll(self,timeMaxMin,acdc='ac'):
         '''
         Get branch flow at all branches (list of tuples)
         
@@ -391,10 +391,15 @@ class Database(object):
         (timestep, branch index, flow)
         
         '''
+        if acdc=='ac':
+            table = 'Res_Branches'
+        elif acdc=='dc':
+            table = 'Res_DcBranches'
+    
         con = db.connect(self.filename)
         with con:        
             cur = con.cursor()
-            cur.execute("SELECT timestep,indx,flow FROM Res_Branches"
+            cur.execute("SELECT timestep,indx,flow FROM {}".format(table)
                 +" WHERE timestep>=? AND timestep<?"
                 +" ORDER BY indx,timestep",
                 (timeMaxMin[0],timeMaxMin[-1]))
@@ -931,12 +936,15 @@ class Database(object):
             values = [row[1] for row in rows]        
         return values
     
-    def getResultBranchLossesSum(self,timeMaxMin):
+    def getResultBranchLossesSum(self,timeMaxMin,acdc='ac'):
         '''Sum of losses for each time-step time step'''
+        sqlTable = 'Res_Branches'
+        if acdc=='dc':
+            sqlTable = 'Res_DcBranches'
         con = db.connect(self.filename)
         with con:        
             cur = con.cursor()
-            cur.execute("SELECT indx,SUM(loss) FROM Res_Branches "
+            cur.execute("SELECT indx,SUM(loss) FROM {} ".format(sqlTable)
                 +"WHERE timestep>=? AND timestep<?"
                 +" GROUP BY timestep",
                 (timeMaxMin[0],timeMaxMin[-1]))
@@ -944,7 +952,7 @@ class Database(object):
             values = [row[1] for row in rows]        
         return values
         
-    def getResultBranches(self,timeMaxMin,br_indx=None):
+    def getResultBranches(self,timeMaxMin,br_indx=None,acdc='ac'):
         '''Branch results for each time-step
         
         Parameters
@@ -954,16 +962,20 @@ class Database(object):
         br_indx : list (optional)
             list of branches to consider, None=include all
         '''
+        if acdc=='ac':
+            table='Res_Branches'
+        elif acdc=='dc':
+            table = 'Res_DcBranches'
         con = db.connect(self.filename)
         with con:        
             if br_indx is None:
-                query = ("SELECT * FROM Res_Branches "
+                query = ("SELECT * FROM {} ".format(table)
                     +"WHERE timestep>=? AND timestep<?"
                     +" GROUP BY indx,timestep")
                 df = pd.read_sql_query(query,con,
                                        params=(timeMaxMin[0],timeMaxMin[-1]))
             else:
-                query = ("SELECT * FROM Res_Branches "
+                query = ("SELECT * FROM {} ".format(table)
                     +"WHERE timestep>=? AND timestep<?  AND indx IN "
                     +"{}"
                     +" GROUP BY indx,timestep").format(tuple(br_indx))

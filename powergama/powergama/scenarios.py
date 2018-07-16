@@ -208,7 +208,7 @@ def saveScenario(base_grid_data, scenario_file,verbose=True):
 
 
 
-def newScenario(base_grid_data, scenario_file, newfile_prefix):
+def newScenario(base_grid_data, scenario_file, newfile_prefix=None):
     '''
     Create new dataset by modifying grid model according to scenario file
     
@@ -419,7 +419,8 @@ def newScenario(base_grid_data, scenario_file, newfile_prefix):
     base_grid_data.generator.storval_filling_ref = storval_filling_ref_new[:]
     base_grid_data.generator.storval_time_ref = storval_time_ref_new[:]
     
-    base_grid_data.writeGridDataToFiles(prefix=newfile_prefix)
+    if newfile_prefix is not None:
+        base_grid_data.writeGridDataToFiles(prefix=newfile_prefix)
     return base_grid_data
 
 

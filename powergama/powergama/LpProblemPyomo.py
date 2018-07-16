@@ -31,6 +31,7 @@ import sys
 import warnings
 import pandas as pd
 import networkx as nx
+import powergama
 
 #needed for code to work both for python 2.7 and 3:
 try:
@@ -189,6 +190,9 @@ class LpProblem(object):
         model.cFlexload = pyo.Constraint(model.LOAD_FLEX,rule=flexload_rule)
 
         #5 Power balance (power flow equation)  (Pnode = B theta)
+        #TODO: Speed this up by not looping over all generators etc for each
+        # node, use instead a dictionary with key=node, value=list of generators
+        # make it from grp=pg_data.generator.groupby('node')
         def powerbalance_rule(model,n):
             lhs = 0
             for g in model.GEN:
@@ -337,7 +341,7 @@ class LpProblem(object):
                                     / grid_data.consumer['flex_on_off'][i])
                                 for i in di['LOAD_FLEX'][None] }
         # use fixed load shedding penalty of 1000 €/MWh
-        di['loadShedCost'] = {None: 1000}
+        di['loadShedCost'] = {None: powergama.constants.loadshedcost}
 
         di['genNode'] = grid_data.generator['node'].to_dict()
         di['demNode'] = grid_data.consumer['node'].to_dict()
@@ -425,14 +429,15 @@ class LpProblem(object):
 
         # Initial values of marginal costs, storage and storage values
         self._storage = (
-            grid.generator['storage_ini']*grid.generator['storage_cap'] )
+            grid.generator['storage_ini']*grid.generator['storage_cap'] 
+            ).fillna(0)
 
         self._storage_flexload = (
                 grid.consumer['flex_storagelevel_init']
                 * grid.consumer['flex_storage']
                 * grid.consumer['flex_fraction']
                 * grid.consumer['demand_avg']
-                )
+                ).fillna(0)
 
         self._energyspilled = grid.generator['storage_cap'].copy(deep=True)
         self._energyspilled[:]=0
@@ -529,30 +534,38 @@ class LpProblem(object):
         return
 
 
-    def _updatePowerLosses(self,lossmethod,lossmultiplier=1):
+    def _updatePowerLosses(self,lossmethod,lossmultiplier=1,dclossmultiplier=1):
         '''Compute power losses from OPF solution and update parameters'''
         if lossmethod==0:
             pass
         elif lossmethod==1:
             for b in self.concretemodel.BRANCH_AC:
-                n_from = self.concretemodel.branchNodeFrom[b]
-                n_to = self.concretemodel.branchNodeTo[b]
-                theta_from = self.concretemodel.varVoltageAngle[n_from]
-                theta_to = self.concretemodel.varVoltageAngle[n_to]
-                x = self._grid.branch.loc[b,'reactance']
+#                n_from = self.concretemodel.branchNodeFrom[b]
+#                n_to = self.concretemodel.branchNodeTo[b]
+#                theta_from = self.concretemodel.varVoltageAngle[n_from]
+#                theta_to = self.concretemodel.varVoltageAngle[n_to]
+#                x = self._grid.branch.loc[b,'reactance']
+#                r = self._grid.branch.loc[b,'resistance']
+#                # r and x are given in pu; theta
+#                loss_pu = r * ((theta_to-theta_from)*const.baseAngle/x)**2
+#                # convert from p.u. to physical unit
+#                lossMVA = loss_pu*const.baseMVA
+                #TODO: simpler (check and replace):
                 r = self._grid.branch.loc[b,'resistance']
-                # r and x are given in pu; theta
-                loss_pu = r * ((theta_to-theta_from)*const.baseAngle/x)**2
-                # convert from p.u. to physical unit
-                lossMVA = loss_pu*const.baseMVA
+                lossMVA = r * self.concretemodel.varAcBranchFlow[b]**2/const.baseMVA
                 # A multiplication factor to account for reactive current losses
                 # (or more precicely, to get similar results as Giacomo in 
                 # the SmartNet project)
                 lossMVA = lossMVA * lossmultiplier
                 self.concretemodel.branchAcPowerLoss[b] = lossMVA           
             for b in self.concretemodel.BRANCH_DC:
-                #TODO: Estimate DC branch power loss
-                self.concretemodel.branchDcPowerLoss[b] = 0.0
+                #TODO: Test this before adding
+                r_pu = self._grid.dcbranch.loc[b,'resistance']
+                p_pu = self.concretemodel.varDcBranchFlow[b]/const.baseMVA
+                loss_pu = r_pu * p_pu**2
+                lossMVA = loss_pu * const.baseMVA * dclossmultiplier
+                self.concretemodel.branchDcPowerLoss[b] = lossMVA
+                #self.concretemodel.branchDcPowerLoss[b] = 0.0
         else:
             raise Exception("Loss method={} is not implemented"
                             .format(lossmethod))
@@ -689,7 +702,8 @@ class LpProblem(object):
 
 
     def solve(self,results,solver='cbc',solver_path=None,warmstart=False,
-              savefiles=False,lossmethod=0,lossmultiplier=1):
+              savefiles=False,lossmethod=0,lossmultiplier=1,
+              dclossmultiplier=1):
         '''
         Solve LP problem for each time step in the time range
 
@@ -711,6 +725,10 @@ class LpProblem(object):
             How to take into account power losses
             0 = don't consider losses
             1 = compute losses from previous time-step and add as load
+        lossmultiplier : float
+            Multiplier factor to scale computed AC losses, used with method 1
+        dclossmultiplier : float
+            Multiplier factor to scale computed DC losses, used with method 1
 
         Returns
         -------
@@ -752,7 +770,7 @@ class LpProblem(object):
         for timestep in range(numTimesteps):
             # update LP problem (inflow, storage, profiles)
             self._updateLpProblem(timestep)
-            self._updatePowerLosses(lossmethod,lossmultiplier)
+            self._updatePowerLosses(lossmethod,lossmultiplier,dclossmultiplier)
 
             # solve the LP problem
             if savefiles:

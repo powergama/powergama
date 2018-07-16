@@ -1769,7 +1769,56 @@ class Results(object):
         return
         # End plotGridMap
 
+    def getEnergyMix(self,areas=None,timeMaxMin=None,relative=False,
+                      showTitle=True,variable="energy",gentypes=None):
+        '''
+        Get energy, generation capacity or spilled energy per area per type
+        
+        Parameters
+        ----------
+        areas : list of sting
+            Which areas to include, default=None means include all
+        timeMaxMin : list of two integers
+            Time range, [min,max]
+        relative : boolean
+            Whether to plot absolute (false) or relative (true) values
+        variable : string ("energy","capacity","spilled")
+            Which variable to plot (default is energy production)
+        gentypes : list
+            List of generator types to include. None gives all.
+        '''   
+        
+        if timeMaxMin is None:
+            timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
+
+        if variable=="energy":
+            print("Getting energy output from all generators...")
+            gen_output=self.db.getResultGeneratorPowerSum(timeMaxMin)
+        elif variable=="capacity":
+            gen_output = self.grid.generator.pmax
+        elif variable=="spilled":
+            gen_output=self.db.getResultGeneratorSpilledSums(timeMaxMin)
+        else:
+            print("Variable not valid")
+            return
+
+        df = self.grid.generator[['node','type','pmax']].merge(
+                self.grid.node[['id','area']],how="left",
+                left_on="node",right_on="id")
+        df['VALUE'] = gen_output
+        dfplot = df[['area','type','VALUE']].groupby(
+                ['area','type']).sum()['VALUE'].unstack()
+        
+        if areas is None:
+            areas = dfplot.index.unique()
+        if gentypes is None:
+            gentypes = self.grid.getAllGeneratorTypes()
+        if relative:
+            dfplot = dfplot.mul(1/dfplot.sum(axis=1),axis=0)
+                               
+        return dfplot
  
+    
     def plotEnergyMix(self,areas=None,timeMaxMin=None,relative=False,
                       showTitle=True,variable="energy",gentypes=None):
         '''
@@ -1791,47 +1840,18 @@ class Results(object):
         
         if timeMaxMin is None:
             timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
-        #timerange = range(timeMaxMin[0],timeMaxMin[-1])
-        #fillfrom=[0]*len(timerange)
-        #count = 0
-        if variable=="energy":
-            print("Getting energy output from all generators...")
-            gen_output=self.db.getResultGeneratorPowerSum(timeMaxMin)
-            title = "Energy mix"
-        elif variable=="capacity":
-            gen_output = self.grid.generator.pmax
-            title = "Capacity mix"
-        elif variable=="spilled":
-            gen_output=self.db.getResultGeneratorSpilledSums(timeMaxMin)
-            title = "Energy spilled"
-        else:
-            print("Variable not valid")
-            return
 
-        df = self.grid.generator[['node','type','pmax']].merge(
-                self.grid.node[['id','area']],how="left",
-                left_on="node",right_on="id")
-        df['VALUE'] = gen_output
-        dfplot = df[['area','type','VALUE']].groupby(
-                ['area','type']).sum()['VALUE'].unstack()
-        
-#        all_generators = self.grid.getGeneratorsPerAreaAndType()
-        if areas is None:
-            #areas = all_generators.keys()
-            #areas = self.grid.getAllAreas()
-            areas = dfplot.index.unique()
-        if gentypes is None:
-            gentypes = self.grid.getAllGeneratorTypes()
-            #gentypes = dfplot.columns.unique()
-        if relative:
-            dfplot = dfplot.mul(dfplot.sum(axis=1),axis=0)
-#            prodsum={}
-#            for ar in areas:
-#                flatlist = [v for sublist in all_generators[ar].values() 
-#                            for v in sublist]
-#                prodsum[ar] = sum([gen_output[i] for i in flatlist])
+        dfplot = self.getEnergyMix(areas=areas,timeMaxMin=timeMaxMin,
+                                   relative=relative,
+                                   variable=variable,gentypes=gentypes)
 
-        #plt.figure()
+        titles = {'energy':'Energy mix',
+                  'capacity':'Capacity mix',
+                  'spilled':'Energy spilled'}
+        title=''
+        if variable in titles:
+            title=titles[variable]
+            
         dfplot.loc[areas,gentypes].plot(kind="bar",stacked=True)
         plt.legend()
         handles, labels = plt.gca().get_legend_handles_labels()
@@ -1840,43 +1860,13 @@ class Results(object):
         plt.legend(handles, labels, loc=2,
                    bbox_to_anchor=(1.05,1), borderaxespad=0.0)
                                 
-#        ax = plt.subplot(111)
-#        width = 0.8
-#        previous = [0]*len(areas)
-#        numCurves = len(gentypes)+1
-#        colours = cm.hsv(np.linspace(0, 1, numCurves))
-#        count=0
-#        ind = range(len(areas))
-#        for typ in gentypes:
-#            A=[]
-#            for ar in areas:
-#                if typ in all_generators[ar]:
-#                    prod = sum([gen_output[i] 
-#                                    for i in all_generators[ar][typ]])
-#                    if relative:
-#                        prod = prod/prodsum[ar]
-#                    A.append(prod)
-#                else:
-#                    A.append(0)
-#    
-#                
-#            plt.bar(ind,A, width,label=typ,
-#                    bottom=previous,color=colours[count])
-#            previous = [previous[i]+A[i] for i in range(len(A))]
-#            count = count+1
-#        plt.legend()
-#        handles, labels = ax.get_legend_handles_labels()
-#        handles.reverse()
-#        labels.reverse()
-#        plt.legend(handles, labels, loc=2,
-#                   bbox_to_anchor=(1.05,1), borderaxespad=0.0)
-#        plt.xticks(np.arange(len(areas))+width/2., tuple(areas) )
         if showTitle:
             plt.title(title)
         plt.show()
+        return dfplot
 
     
-    def plotTimeseriesColour(self,areas,value='nodalprice'):
+    def plotTimeseriesColour(self,areas,value='nodalprice',filter_values=None):
         '''
         Plot timeseries values with days on x-axis and hour of day on y-axis
                
@@ -1896,8 +1886,8 @@ class Results(object):
         #print("Analysing...")
         p={}
         pm={}
-        stepsperday = 24/self.grid.timeDelta
-        numdays = len(self.grid.timerange)/stepsperday
+        stepsperday = int(24/self.grid.timeDelta)
+        numdays = int(len(self.grid.timerange)/stepsperday)
         for a in areas:
             if value=='nodalprice':
                 p[a] = self.getAreaPrices(area=a)
@@ -1916,8 +1906,12 @@ class Results(object):
             pm[a]=np.reshape(p[a],(numdays,stepsperday)).T
         
         #print("Plotting...")
-        vmin=min([min(p[a]) for a in areas])
-        vmax=max([max(p[a]) for a in areas])
+        if not filter_values:
+            vmin=min([min(p[a]) for a in areas])
+            vmax=max([max(p[a]) for a in areas])
+        else:
+            vmin = filter_values[0]
+            vmax = filter_values[1]
         num_areas = len(areas)
         fig,axes = plt.subplots(nrows=num_areas,ncols=1,figsize=(20,1.5*len(areas)))
         

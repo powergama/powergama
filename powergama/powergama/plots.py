@@ -17,7 +17,7 @@ import pandas as pd
     
 def plotMap(pg_data,pg_res=None,filename=None,
             nodetype=None,branchtype=None,
-            filter_node=[0,100],filter_branch=None,
+            filter_node=[0,100],filter_branch=None, timeMaxMin=None,
             **kwargs):
     '''
     Plot PowerGAMA data/results on map
@@ -45,6 +45,9 @@ def plotMap(pg_data,pg_res=None,filename=None,
         cmSet1 = branca.colormap.linear.Set1
     else:
         cmSet1 = branca.colormap.linear.Set1_03
+
+    if timeMaxMin is None:
+        timeMaxMin = [pg_data.timerange[0],pg_data.timerange[-1]+1]
 
 #    nodetype=None,branchtype=None,dcbranchtype=None,
 #                    show_node_labels=False,branch_style='c',latlon=None,
@@ -83,20 +86,21 @@ def plotMap(pg_data,pg_res=None,filename=None,
     node['area_ind'] = 0.5+node['area_ind']%10
     
     if pg_res is not None:
-        nodalprices = pg_res.getAverageNodalPrices()
+        nodalprices = pg_res.getAverageNodalPrices(timeMaxMin)
         node['nodalprice'] = nodalprices
-        branch_sensitivity = pg_res.getAverageBranchSensitivity()
-        #AC branch utilisation:
-        branch_utilisation = pg_res.getAverageUtilisation()
+        branch_sensitivity = pg_res.getAverageBranchSensitivity(timeMaxMin)
+        branch_utilisation = pg_res.getAverageUtilisation(timeMaxMin)
         br_ind = pg_data.getIdxBranchesWithFlowConstraints()
-        branch['utilisation'] = 0 
-        branch.loc[branch.index.isin(br_ind),'utilisation'] = branch_utilisation
+        branch['flow'] = pg_res.getAverageBranchFlows(timeMaxMin)[2]
+        #branch['utilisation'] = 0 
+        branch['utilisation'] = branch_utilisation
         branch['sensitivity'] = 0
         branch.loc[branch.index.isin(br_ind),'sensitivity'] = branch_sensitivity
         #DC branch utilisation:
-        dcbranch_utilisation = pg_res.getAverageUtilisation(branchtype="dc")
-        dcbranch_sensitivity = pg_res.getAverageBranchSensitivity(branchtype="dc")
+        dcbranch_utilisation = pg_res.getAverageUtilisation(timeMaxMin,branchtype="dc")
+        dcbranch_sensitivity = pg_res.getAverageBranchSensitivity(timeMaxMin,branchtype="dc")
         dcbr_ind = pg_data.getIdxDcBranchesWithFlowConstraints()
+        dcbranch['flow'] = pg_res.getAverageBranchFlows(timeMaxMin,branchtype="dc")[2]
         dcbranch['utilisation'] = 0
         dcbranch.loc[dcbranch.index.isin(dcbr_ind),'utilisation'] = dcbranch_utilisation
         dcbranch['sensitivity'] = 0
@@ -191,6 +195,15 @@ def plotMap(pg_data,pg_res=None,filename=None,
                                                vmax=filter_branch[1])
         cm_branch.caption = 'Branch capacity sensitivity'
         m.add_child(cm_branch)
+    elif branchtype=="flow":
+        value_col = 'flow'
+        if filter_branch is None:
+            filter_branch = [branch[value_col].min(),branch[value_col].max()]
+        cm_branch = branca.colormap.LinearColormap(['red', 'yellow', 'green'],
+                                               vmin=filter_branch[0], 
+                                               vmax=filter_branch[1])
+        cm_branch.caption = 'Branch flow (abs value)'
+        m.add_child(cm_branch)
     elif branchtype=="type":
         type_val,types = branch['type'].factorize()
         branch['type_num'] = type_val
@@ -206,8 +219,8 @@ def plotMap(pg_data,pg_res=None,filename=None,
                     "AC Branch={} ({}-{}), capacity={:g}".format(
                             i,n['node_from'],n['node_to'],n['capacity'])]
             if pg_res is not None:
-                data[2] = "{}; utilisation={:g}".format(
-                        data[2],n['utilisation'])
+                data[2] = "{}; flow={:g}; utilisation={:g}".format(
+                        data[2],n['flow'],n['utilisation'])
             if value_col is not None:
                 colHex = cm_branch(n[value_col])
                 data.append(colHex)
@@ -238,8 +251,8 @@ def plotMap(pg_data,pg_res=None,filename=None,
                     "DC Branch={} ({}-{}), capacity={:g}".format(
                             i,n['node_from'],n['node_to'],n['capacity'])]
             if pg_res is not None:
-                data[2] = "{}; utilisation={:g}".format(
-                        data[2],n['utilisation'])
+                data[2] = "{}; flow={:g}; utilisation={:g}".format(
+                        data[2],n['flow'],n['utilisation'])
             if value_col is not None:
                 colHex = cm_branch(n[value_col])
                 data.append(colHex)
