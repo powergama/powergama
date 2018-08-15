@@ -1851,7 +1851,10 @@ class Results(object):
         title=''
         if variable in titles:
             title=titles[variable]
-            
+        if areas is None:
+            areas = dfplot.index
+        if gentypes is None:
+            gentypes = dfplot.columns
         dfplot.loc[areas,gentypes].plot(kind="bar",stacked=True)
         plt.legend()
         handles, labels = plt.gca().get_legend_handles_labels()
