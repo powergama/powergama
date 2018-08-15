@@ -1769,23 +1769,19 @@ class Results(object):
         return
         # End plotGridMap
 
-    def getEnergyMix(self,areas=None,timeMaxMin=None,relative=False,
-                      showTitle=True,variable="energy",gentypes=None):
+    def getEnergyMix(self,timeMaxMin=None,relative=False,
+                      showTitle=True,variable="energy"):
         '''
         Get energy, generation capacity or spilled energy per area per type
         
         Parameters
         ----------
-        areas : list of sting
-            Which areas to include, default=None means include all
         timeMaxMin : list of two integers
             Time range, [min,max]
         relative : boolean
             Whether to plot absolute (false) or relative (true) values
         variable : string ("energy","capacity","spilled")
             Which variable to plot (default is energy production)
-        gentypes : list
-            List of generator types to include. None gives all.
         '''   
         
         if timeMaxMin is None:
@@ -1809,10 +1805,6 @@ class Results(object):
         dfplot = df[['area','type','VALUE']].groupby(
                 ['area','type']).sum()['VALUE'].unstack()
         
-        if areas is None:
-            areas = dfplot.index.unique()
-        if gentypes is None:
-            gentypes = self.grid.getAllGeneratorTypes()
         if relative:
             dfplot = dfplot.mul(1/dfplot.sum(axis=1),axis=0)
                                
@@ -1826,7 +1818,7 @@ class Results(object):
         
         Parameters
         ----------
-        areas : list of sting
+        areas : list of strings
             Which areas to include, default=None means include all
         timeMaxMin : list of two integers
             Time range, [min,max]
@@ -1841,9 +1833,9 @@ class Results(object):
         if timeMaxMin is None:
             timeMaxMin = [self.timerange[0],self.timerange[-1]+1]
 
-        dfplot = self.getEnergyMix(areas=areas,timeMaxMin=timeMaxMin,
+        dfplot = self.getEnergyMix(timeMaxMin=timeMaxMin,
                                    relative=relative,
-                                   variable=variable,gentypes=gentypes)
+                                   variable=variable)
 
         titles = {'energy':'Energy mix',
                   'capacity':'Capacity mix',
