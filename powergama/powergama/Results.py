@@ -1878,7 +1878,6 @@ class Results(object):
         Example: res.plotTimeseriescolour(['ES'],value='gen%solar_csp%wind')        
         '''        
         
-        #print("Analysing...")
         p={}
         pm={}
         stepsperday = int(24/self.grid.timeDelta)
