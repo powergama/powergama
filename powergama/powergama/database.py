@@ -617,6 +617,11 @@ class Database(object):
         branches_neg = indices of branches with negative flow direction 
         timeMaxMin = [start, end]
         acdc = 'ac' or 'dc'
+        
+        Note: This function can be used to get net import, but not separate
+        import/export values (requires summing positive and negative values
+        separately)
+        
         '''
         values_pos=[]
         values_neg=[]

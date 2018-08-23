@@ -10,6 +10,7 @@ import numpy as np
 import math
 import powergama.database as db
 import csv
+import pandas as pd
 
 class Results(object):
     '''
@@ -206,7 +207,7 @@ class Results(object):
         avgflow = self.db.getResultBranchFlowsMean(timeMaxMin,ac)
         #np.mean(branchflow,axis=1)
         return avgflow
-
+                
 
     def getNodalPrices(self,node,timeMaxMin=None):
         if timeMaxMin is None:
@@ -705,20 +706,25 @@ class Results(object):
         [flow from 1 to 2, flow from 2 to 1, average absolute flow]
         '''
         
-        # Version control of database module. Must be 3.7.x or newer
-        major = int(list(self.db.sqlite_version)[0])
-        minor = int(list(self.db.sqlite_version)[2])
-        version = major + minor / 10.0
-        # print version
-        if version < 3.7 :
-            print('current SQLite version: ', self.db.sqlite_version)
-            print('getAverageInterareaBranchFlow() requires 3.7.x or newer')
-            return
+#        # Version control of database module. Must be 3.7.x or newer
+#        major = int(list(self.db.sqlite_version)[0])
+#        minor = int(list(self.db.sqlite_version)[1])
+#        version = major + minor / 10.0
+#        # print version
+#        if ((major < 4) and (minor < 7)):
+#            print('current SQLite version: {} ({})'
+#                  .format(self.db.sqlite_version,version))
+#            print('getAverageInterareaBranchFlow() requires 3.7.x or newer')
+#            return
             
         if timeMaxMin is None:
             timeMaxMin = [self.timerange[0],self.timerange[-1] + 1]
     
-        results = self.db.getAverageInterareaBranchFlow(timeMaxMin)
+        try:
+            results = self.db.getAverageInterareaBranchFlow(timeMaxMin)
+        except Exception as err:
+            print("Error occured. Maybe because you are using sqlite<3.7")
+            raise(err)
         
         if filename is not None:
             headers = ('branch','fromArea','toArea','average negative flow',
@@ -902,6 +908,60 @@ class Results(object):
             
         res = [a+b for a,b in zip(res_ac,res_dc)]
         return res
+
+
+    def getImportExport(self,areas=None,timeMaxMin=None,acdc=['ac','dc']):        
+        '''Return time series for import and export for a specified area'''
+        if timeMaxMin is None:
+            timeMaxMin = [self.timerange[0],self.timerange[-1] + 1]
+        if areas is None:
+            areas = self.grid.getAllAreas()
+        
+        df_importexport= pd.DataFrame(index=areas,columns=['import','export'])
+        for area in areas:
+            # find the associated branches (pos = into area)
+            br = self.grid.getInterAreaBranches(area_to=area,acdc='ac')
+            #br_p = br['branches_pos']
+            #br_n = br['branches_neg']
+            dcbr = self.grid.getInterAreaBranches(area_to=area,acdc='dc')
+            #dcbr_p = dcbr['branches_pos']
+            #dcbr_n = dcbr['branches_neg']
+            flow_in = 0
+            flow_out = 0
+            for acdc_type in acdc:
+                br_pos=self.db.getResultBranches(timeMaxMin,
+                                br_indx=br['branches_pos'],acdc=acdc_type)
+                br_neg=self.db.getResultBranches(timeMaxMin,
+                                br_indx=br['branches_neg'],acdc=acdc_type)
+                flow_in += (br_pos[br_pos['flow']>0]['flow'].sum()
+                            -br_neg[br_neg['flow']<0]['flow'].sum())
+                flow_out += (br_neg[br_neg['flow']>0]['flow'].sum()
+                            -br_pos[br_pos['flow']<0]['flow'].sum() )
+            
+            #ie =  self.db.getBranchesSumFlow(branches_pos=br_p,branches_neg=br_n,
+            #                                 timeMaxMin=timeMaxMin,
+            #                                 acdc='ac')
+            # DC branches
+
+#            dcie =  self.db.getBranchesSumFlow(branches_pos=dcbr_p,
+#                                                 branches_neg=dcbr_n,
+#                                                 timeMaxMin=timeMaxMin,
+#                                                 acdc='dc')
+#            import_a = (sum(v for v in ie['pos'] if v>=0) 
+#                         +sum(-v for v in ie['neg'] if v<0)
+#                         #+sum(v for v in dcie['pos'] if v>=0) 
+#                         #+sum(-v for v in dcie['neg'] if v<0)
+#                         )
+#            export_a = (sum(-v for v in ie['pos'] if v<0) 
+#                         +sum(v for v in ie['neg'] if v>=0)
+#                         #+sum(-v for v in dcie['pos'] if v<0) 
+#                         #+sum(v for v in dcie['neg'] if v>=0)
+#                         )
+            df_importexport.loc[area,'import'] = flow_in
+            df_importexport.loc[area,'export'] = flow_out
+            
+        return df_importexport
+    
         
     def getDemandPerArea(self,area,timeMaxMin=None):
         '''Returns demand timeseries for given area, as dictionary with
