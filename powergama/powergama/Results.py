@@ -1907,7 +1907,7 @@ class Results(object):
             vmin = filter_values[0]
             vmax = filter_values[1]
         num_areas = len(areas)
-        fig,axes = plt.subplots(nrows=num_areas,ncols=1,figsize=(20,1.5*len(areas)))
+        fig,axes = plt.subplots(nrows=num_areas,ncols=1,figsize=((min(max(6,(len(self.grid.timerange)/100)),20)),(max(5,1.5*len(areas)))))
         
         for n in range(num_areas):
             ax=plt.subplot(num_areas,1,n+1)
@@ -2290,6 +2290,21 @@ class Results(object):
    
         
         
+    def PrintTime(self,text,time):
+        HoursUsed = math.floor(time/60/60)
+        MinutesUsed = math.floor(((time/60/60)-HoursUsed)*60)
+        SecondsUsed = int(round(((((time/60/60)-HoursUsed)*60)-MinutesUsed)*60))
+        print()
+        print("{} = {} hours, {} minutes and {} seconds"
+                      .format(text, HoursUsed, MinutesUsed, SecondsUsed))
+
+        
+        
+        
+        
+        
+        
+        
 def _myround(x, base=1,method='round'):
     '''Round to nearest multiple of base'''
     if method=='round':
@@ -2300,3 +2315,34 @@ def _myround(x, base=1,method='round'):
         return int(base * math.ceil(float(x)/base))
     else:
         raise
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
