@@ -95,7 +95,8 @@ class GridData(object):
             raise Exception("Rounding error")
 
             
-    def readGridData(self,nodes,ac_branches,dc_branches,generators,consumers):
+    def readGridData(self,nodes,ac_branches,dc_branches,generators,consumers,
+                     remove_extra_columns=False):
         '''Read grid data from files into data variables'''
         
         self.node = pd.read_csv(nodes,
@@ -124,7 +125,8 @@ class GridData(object):
         #self.node.set_index('id',inplace=True,append=False)
         #self.node['id']=self.node.index
         self._checkGridData()
-        self._addDefaultColumns(keys=self.keys_powergama)
+        self._addDefaultColumns(keys=self.keys_powergama,
+                                remove_extra_columns=remove_extra_columns)
         self._fillEmptyCells(keys=self.keys_powergama)
         
     def readSipData(self,nodes,branches,generators,consumers):
@@ -184,7 +186,7 @@ class GridData(object):
                     keys['branch'][col])
         
         
-    def _addDefaultColumns(self,keys):
+    def _addDefaultColumns(self,keys,remove_extra_columns=False):
         '''insert optional columns with default values when none
         are provided in input files'''
         for k in keys['generator']:
@@ -201,11 +203,12 @@ class GridData(object):
                 self.dcbranch[k] = keys['dcbranch'][k]
         
         # Discard extra columns (comments etc)
-        self.node = self.node[list(keys['node'].keys())]
-        self.branch = self.branch[list(keys['branch'].keys())]
-        self.dcbranch = self.dcbranch[list(keys['dcbranch'].keys())]
-        self.generator = self.generator[list(keys['generator'].keys())]
-        self.consumer = self.consumer[list(keys['consumer'].keys())]
+        if remove_extra_columns:
+            self.node = self.node[list(keys['node'].keys())]
+            self.branch = self.branch[list(keys['branch'].keys())]
+            self.dcbranch = self.dcbranch[list(keys['dcbranch'].keys())]
+            self.generator = self.generator[list(keys['generator'].keys())]
+            self.consumer = self.consumer[list(keys['consumer'].keys())]
                 
                 
     def _checkGridDataFields(self,keys):

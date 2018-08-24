@@ -919,24 +919,29 @@ class Results(object):
         
         df_importexport= pd.DataFrame(index=areas,columns=['import','export'])
         for area in areas:
+            print(area,end=",")
             # find the associated branches (pos = into area)
-            br = self.grid.getInterAreaBranches(area_to=area,acdc='ac')
+            #br = self.grid.getInterAreaBranches(area_to=area,acdc='ac')
             #br_p = br['branches_pos']
             #br_n = br['branches_neg']
-            dcbr = self.grid.getInterAreaBranches(area_to=area,acdc='dc')
+            #dcbr = self.grid.getInterAreaBranches(area_to=area,acdc='dc')
             #dcbr_p = dcbr['branches_pos']
             #dcbr_n = dcbr['branches_neg']
             flow_in = 0
             flow_out = 0
             for acdc_type in acdc:
+                br = self.grid.getInterAreaBranches(area_to=area,
+                                                    acdc=acdc_type)
                 br_pos=self.db.getResultBranches(timeMaxMin,
                                 br_indx=br['branches_pos'],acdc=acdc_type)
                 br_neg=self.db.getResultBranches(timeMaxMin,
                                 br_indx=br['branches_neg'],acdc=acdc_type)
-                flow_in += (br_pos[br_pos['flow']>0]['flow'].sum()
-                            -br_neg[br_neg['flow']<0]['flow'].sum())
-                flow_out += (br_neg[br_neg['flow']>0]['flow'].sum()
-                            -br_pos[br_pos['flow']<0]['flow'].sum() )
+                if br_pos.shape[0]>0:
+                    flow_in += br_pos[br_pos['flow']>0]['flow'].sum()
+                    flow_out -= br_pos[br_pos['flow']<0]['flow'].sum() 
+                if br_neg.shape[0]>0:
+                    flow_in -= br_neg[br_neg['flow']<0]['flow'].sum()
+                    flow_out += br_neg[br_neg['flow']>0]['flow'].sum()
             
             #ie =  self.db.getBranchesSumFlow(branches_pos=br_p,branches_neg=br_n,
             #                                 timeMaxMin=timeMaxMin,
@@ -959,7 +964,7 @@ class Results(object):
 #                         )
             df_importexport.loc[area,'import'] = flow_in
             df_importexport.loc[area,'export'] = flow_out
-            
+        print()    
         return df_importexport
     
         
