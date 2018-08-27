@@ -2290,16 +2290,6 @@ class Results(object):
    
         
         
-    def PrintTime(self,text,time):
-        HoursUsed = math.floor(time/60/60)
-        MinutesUsed = math.floor(((time/60/60)-HoursUsed)*60)
-        SecondsUsed = int(round(((((time/60/60)-HoursUsed)*60)-MinutesUsed)*60))
-        print()
-        print("{} = {} hours, {} minutes and {} seconds"
-                      .format(text, HoursUsed, MinutesUsed, SecondsUsed))
-
-        
-        
         
         
         
