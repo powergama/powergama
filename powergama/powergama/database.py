@@ -617,6 +617,11 @@ class Database(object):
         branches_neg = indices of branches with negative flow direction 
         timeMaxMin = [start, end]
         acdc = 'ac' or 'dc'
+        
+        Note: This function can be used to get net import, but not separate
+        import/export values (requires summing positive and negative values
+        separately)
+        
         '''
         values_pos=[]
         values_neg=[]
@@ -974,11 +979,15 @@ class Database(object):
                     +" GROUP BY indx,timestep")
                 df = pd.read_sql_query(query,con,
                                        params=(timeMaxMin[0],timeMaxMin[-1]))
+            elif len(br_indx)==0:
+                # Empty dataframe
+                df = pd.DataFrame()
             else:
                 query = ("SELECT * FROM {} ".format(table)
                     +"WHERE timestep>=? AND timestep<?  AND indx IN "
-                    +"{}"
-                    +" GROUP BY indx,timestep").format(tuple(br_indx))
+                    +"({})"
+                    +" GROUP BY indx,timestep").format(
+                            ",".join([str(i) for i in br_indx]))
                 df = pd.read_sql_query(query,con,
                                        params=(timeMaxMin[0],timeMaxMin[-1]))
         return df

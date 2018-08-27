@@ -95,7 +95,8 @@ class GridData(object):
             raise Exception("Rounding error")
 
             
-    def readGridData(self,nodes,ac_branches,dc_branches,generators,consumers):
+    def readGridData(self,nodes,ac_branches,dc_branches,generators,consumers,
+                     remove_extra_columns=False):
         '''Read grid data from files into data variables'''
         
         self.node = pd.read_csv(nodes,
@@ -124,7 +125,8 @@ class GridData(object):
         #self.node.set_index('id',inplace=True,append=False)
         #self.node['id']=self.node.index
         self._checkGridData()
-        self._addDefaultColumns(keys=self.keys_powergama)
+        self._addDefaultColumns(keys=self.keys_powergama,
+                                remove_extra_columns=remove_extra_columns)
         self._fillEmptyCells(keys=self.keys_powergama)
         
     def readSipData(self,nodes,branches,generators,consumers):
@@ -184,7 +186,7 @@ class GridData(object):
                     keys['branch'][col])
         
         
-    def _addDefaultColumns(self,keys):
+    def _addDefaultColumns(self,keys,remove_extra_columns=False):
         '''insert optional columns with default values when none
         are provided in input files'''
         for k in keys['generator']:
@@ -201,11 +203,12 @@ class GridData(object):
                 self.dcbranch[k] = keys['dcbranch'][k]
         
         # Discard extra columns (comments etc)
-        self.node = self.node[list(keys['node'].keys())]
-        self.branch = self.branch[list(keys['branch'].keys())]
-        self.dcbranch = self.dcbranch[list(keys['dcbranch'].keys())]
-        self.generator = self.generator[list(keys['generator'].keys())]
-        self.consumer = self.consumer[list(keys['consumer'].keys())]
+        if remove_extra_columns:
+            self.node = self.node[list(keys['node'].keys())]
+            self.branch = self.branch[list(keys['branch'].keys())]
+            self.dcbranch = self.dcbranch[list(keys['dcbranch'].keys())]
+            self.generator = self.generator[list(keys['generator'].keys())]
+            self.consumer = self.consumer[list(keys['consumer'].keys())]
                 
                 
     def _checkGridDataFields(self,keys):
@@ -651,6 +654,25 @@ class GridData(object):
                     generators[areaName] = [pumpIdx]
         return generators
 
+    def getBranchAreas(self):
+        br_witharea = pd.DataFrame()
+        br_witharea['area_from'] = self.branch.merge(right=self.node[['id','area']],
+                            how='left',left_on='node_from',
+                            right_on='id')['area']
+        br_witharea['area_to'] = self.branch.merge(right=self.node[['id','area']],
+                            how='left',left_on='node_to',
+                            right_on='id')['area']
+        return br_witharea
+
+    def getDcBranchAreas(self):
+        br_witharea = self.dcbranch
+        br_witharea['area_from'] = self.dcbranch.merge(right=self.node[['id','area']],
+                            how='left',left_on='node_from',
+                            right_on='id')['area']
+        br_witharea['area_to'] = self.dcbranch.merge(right=self.node[['id','area']],
+                            how='left',left_on='node_to',
+                            right_on='id')['area']
+        return br_witharea
 
     def getInterAreaBranches(self,area_from=None,area_to=None,acdc='ac'):
         '''
@@ -664,51 +686,76 @@ class GridData(object):
         if area_from is None and area_to is None:
             raise Exception("Either from area or to area (or both) has"
                             +"to be specified)")
-                            
-        # indices of from and to nodes of all branches:
+        
         if acdc=='ac':
-            br_from_nodes = self.branchFromNodeIdx()
-            br_to_nodes = self.branchToNodeIdx()
+            br_witharea = self.getBranchAreas()
         elif acdc=='dc':
-            br_from_nodes = self.dcBranchFromNodeIdx()
-            br_to_nodes = self.dcBranchToNodeIdx()
-        else:
-            raise Exception('Branch type must be "ac" or "dc"')
+            br_witharea = self.getDcBranchAreas()
         
+        if area_to is not None:
+            mask_pos = ((br_witharea['area_to']==area_to) 
+                       & (br_witharea['area_from']!=area_to))
+            mask_neg = ((br_witharea['area_from']==area_to) 
+                        & (br_witharea['area_to']!=area_to))
+        if area_from is not None:
+            mask_pos2 = ((br_witharea['area_from']==area_from) 
+                     & (br_witharea['area_to']!=area_from) )
+            mask_neg2 = ((br_witharea['area_to']==area_from) 
+                        & (br_witharea['area_from']!=area_from))
+            if area_to is not None:
+                mask_pos = mask_pos & mask_pos2
+                mask_neg = mask_neg & mask_neg2
+            else:
+                mask_pos = mask_pos2
+                mask_neg = mask_neg2
         
-        br_from_area = [self.node.area[i] for i in br_from_nodes]
-        br_to_area = [self.node.area[i] for i in br_to_nodes]
-        
-        # indices of all inter-area branches (from area != to area)        
-        br_is_interarea = [i for i in range(len(br_from_area)) 
-                                if br_from_area[i] != br_to_area[i]]
-        
-        # branches connected to area_from
-        fromArea_branches_pos = [i for i in br_is_interarea
-                                 if br_from_area[i]==area_from]
-        fromArea_branches_neg = [i for i in br_is_interarea
-                                 if br_to_area[i]==area_from]
-
-        # branches connected to area_to
-        toArea_branches_pos = [i for i in br_is_interarea
-                                 if br_to_area[i]==area_to]
-        toArea_branches_neg = [i for i in br_is_interarea
-                                 if br_from_area[i]==area_to]
-
-        if area_from is None:
-            # Only to node has been specified
-            branches_pos = toArea_branches_pos
-            branches_neg = toArea_branches_neg
-        elif area_to is None:
-            # Only from node has been specified
-            branches_pos = fromArea_branches_pos
-            branches_neg = fromArea_branches_neg
-        else:
-            # Both to and from area has been specified
-            branches_pos = [b for b in fromArea_branches_pos 
-                                    if b in toArea_branches_neg ]
-            branches_neg = [b for b in fromArea_branches_neg 
-                                    if b in toArea_branches_pos ]
+        branches_pos = list(br_witharea.index[mask_pos])
+        branches_neg = list(br_witharea.index[mask_neg])
+            
+#        # indices of from and to nodes of all branches:
+#        if acdc=='ac':
+#            br_from_nodes = self.branchFromNodeIdx()
+#            br_to_nodes = self.branchToNodeIdx()
+#        elif acdc=='dc':
+#            br_from_nodes = self.dcBranchFromNodeIdx()
+#            br_to_nodes = self.dcBranchToNodeIdx()
+#        else:
+#            raise Exception('Branch type must be "ac" or "dc"')
+#        
+#        
+#        br_from_area = [self.node.area[i] for i in br_from_nodes]
+#        br_to_area = [self.node.area[i] for i in br_to_nodes]
+#        
+#        # indices of all inter-area branches (from area != to area)        
+#        br_is_interarea = [i for i in range(len(br_from_area)) 
+#                                if br_from_area[i] != br_to_area[i]]
+#        
+#        # branches connected to area_from
+#        fromArea_branches_pos = [i for i in br_is_interarea
+#                                 if br_from_area[i]==area_from]
+#        fromArea_branches_neg = [i for i in br_is_interarea
+#                                 if br_to_area[i]==area_from]
+#
+#        # branches connected to area_to
+#        toArea_branches_pos = [i for i in br_is_interarea
+#                                 if br_to_area[i]==area_to]
+#        toArea_branches_neg = [i for i in br_is_interarea
+#                                 if br_from_area[i]==area_to]
+#
+#        if area_from is None:
+#            # Only to node has been specified
+#            branches_pos = toArea_branches_pos
+#            branches_neg = toArea_branches_neg
+#        elif area_to is None:
+#            # Only from node has been specified
+#            branches_pos = fromArea_branches_pos
+#            branches_neg = fromArea_branches_neg
+#        else:
+#            # Both to and from area has been specified
+#            branches_pos = [b for b in fromArea_branches_pos 
+#                                    if b in toArea_branches_neg ]
+#            branches_neg = [b for b in fromArea_branches_neg 
+#                                    if b in toArea_branches_pos ]
         return dict(branches_pos=branches_pos,
                     branches_neg=branches_neg)   
 
