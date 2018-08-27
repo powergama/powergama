@@ -490,6 +490,11 @@ class GridData(object):
         return idx
 
 
+    def getIdxBranchesWithLength(self):
+        '''Indices of branches with specified length'''
+        idx = [i for i,v in enumerate(self.branch['length']) if not math.isnan(v)]
+        return idx
+
     def _susceptancePu(self,baseOhm=1):
         '''If impedance is already given in pu, baseOhm should be 1
         If not, well... baseOhm depends on the voltage level, so need to know
