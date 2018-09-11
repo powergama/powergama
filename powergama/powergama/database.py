@@ -840,6 +840,19 @@ class Database(object):
             output = [sum(i) for i in zip(*output_chunk)]
         return output
  
+    def getResultPumpingSum(self,timeMaxMin,variable="output"):
+        '''Sum of pumping  per generator'''
+        con = db.connect(self.filename)
+        with con:        
+            #cur = con.cursor()
+            query = ("SELECT indx,SUM({}) FROM Res_Pumping ".format(variable)
+                +"WHERE timestep>={}".format(timeMaxMin[0])
+                +" AND timestep<{}".format(timeMaxMin[-1])
+                +" GROUP BY indx"
+                +" ORDER BY indx")
+            df = pd.read_sql_query(query,con)
+        return df
+
     def getResultGeneratorPowerSum(self,timeMaxMin):
         '''Sum of generator power output per generator'''
         con = db.connect(self.filename)
