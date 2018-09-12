@@ -99,22 +99,22 @@ class LpProblem(object):
         model.coeff_DA = pyo.Param(model.BRANCH_AC,model.NODE,within=pyo.Reals)
 
         if self._lossmethod==1:
-            model.lossAc12A = pyo.Param(model.BRANCH_AC,within=pyo.Reals,
-                                        default=0,mutable=True)
-            model.lossAc12B = pyo.Param(model.BRANCH_AC,within=pyo.Reals,
-                                        default=0,mutable=True)
-            model.lossAc21A = pyo.Param(model.BRANCH_AC,within=pyo.Reals,
-                                        default=0,mutable=True)
-            model.lossAc21B = pyo.Param(model.BRANCH_AC,within=pyo.Reals,
-                                        default=0,mutable=True)
-            model.lossDc12A = pyo.Param(model.BRANCH_DC,within=pyo.Reals,
-                                        default=0,mutable=True)
-            model.lossDc12B = pyo.Param(model.BRANCH_DC,within=pyo.Reals,
-                                        default=0,mutable=True)
-            model.lossDc21A = pyo.Param(model.BRANCH_DC,within=pyo.Reals,
-                                        default=0,mutable=True)
-            model.lossDc21B = pyo.Param(model.BRANCH_DC,within=pyo.Reals,
-                                        default=0,mutable=True)
+            model.lossAcA = pyo.Param(model.BRANCH_AC,within=pyo.Reals,
+                                        default=0,mutable=False)
+            model.lossAcB = pyo.Param(model.BRANCH_AC,within=pyo.Reals,
+                                        default=0,mutable=False)
+#            model.lossAc21A = pyo.Param(model.BRANCH_AC,within=pyo.Reals,
+#                                        default=0,mutable=False)
+#            model.lossAc21B = pyo.Param(model.BRANCH_AC,within=pyo.Reals,
+#                                        default=0,mutable=False)
+            model.lossDcA = pyo.Param(model.BRANCH_DC,within=pyo.Reals,
+                                        default=0,mutable=False)
+            model.lossDcB = pyo.Param(model.BRANCH_DC,within=pyo.Reals,
+                                        default=0,mutable=False)
+#            model.lossDc21A = pyo.Param(model.BRANCH_DC,within=pyo.Reals,
+#                                        default=0,mutable=False)
+#            model.lossDc21B = pyo.Param(model.BRANCH_DC,within=pyo.Reals,
+#                                        default=0,mutable=False)
         elif self._lossmethod==2:
             model.branchAcPowerLoss = pyo.Param(model.BRANCH_AC,within=pyo.Reals,
                                                 default=0, mutable=True)
@@ -135,14 +135,14 @@ class LpProblem(object):
                                               within = pyo.NonNegativeReals)
             model.varDcBranchFlow21 = pyo.Var(model.BRANCH_DC,
                                               within = pyo.NonNegativeReals)
-            model.varLossAc12 = pyo.Var(model.BRANCH_AC,
-                                              within = pyo.NonNegativeReals)
-            model.varLossAc21 = pyo.Var(model.BRANCH_AC,
-                                              within = pyo.NonNegativeReals)
-            model.varLossDc12 = pyo.Var(model.BRANCH_DC,
-                                              within = pyo.NonNegativeReals)
-            model.varLossDc21 = pyo.Var(model.BRANCH_DC,
-                                              within = pyo.NonNegativeReals)
+#            model.varLossAc12 = pyo.Var(model.BRANCH_AC,
+#                                              within = pyo.NonNegativeReals)
+#            model.varLossAc21 = pyo.Var(model.BRANCH_AC,
+#                                              within = pyo.NonNegativeReals)
+#            model.varLossDc12 = pyo.Var(model.BRANCH_DC,
+#                                              within = pyo.NonNegativeReals)
+#            model.varLossDc21 = pyo.Var(model.BRANCH_DC,
+#                                              within = pyo.NonNegativeReals)
         model.varGeneration = pyo.Var(model.GEN,within = pyo.NonNegativeReals)
         model.varPump = pyo.Var(model.GEN_PUMP, within = pyo.NonNegativeReals)
         model.varCurtailment  = pyo.Var(model.GEN,
@@ -222,32 +222,32 @@ class LpProblem(object):
 #        model.cMaxFlowDc21 = pyo.Constraint(model.BRANCH_DC, rule=maxflowDc_rule21)
 
         # 1b Losses vs flow
-        if self._lossmethod==1:
-            def lossAc_rule12(model,j):
-                expr = (model.varLossAc12[j] == 
-                        model.varAcBranchFlow12[j] * model.lossAc12A[j] 
-                        + model.lossAc12B[j])
-                return expr
-            def lossAc_rule21(model,j):
-                expr = (model.varLossAc21[j] == 
-                        model.varAcBranchFlow21[j] * model.lossAc21A[j] 
-                        + model.lossAc21B[j])
-                return expr
-            model.cLossAc12 = pyo.Constraint(model.BRANCH_AC, rule=lossAc_rule12)
-            model.cLossAc21 = pyo.Constraint(model.BRANCH_AC, rule=lossAc_rule21)
-    
-            def lossDc_rule12(model,j):
-                expr = (model.varLossDc12[j] == 
-                        model.varDcBranchFlow12[j] * model.lossDc12A[j] 
-                        + model.lossDc12B[j])
-                return expr
-            def lossDc_rule21(model,j):
-                expr = (model.varLossDc21[j] == 
-                        model.varDcBranchFlow21[j] * model.lossDc21A[j] 
-                        + model.lossDc21B[j])
-                return expr
-            model.cLossDc12 = pyo.Constraint(model.BRANCH_DC, rule=lossDc_rule12)
-            model.cLossDc21 = pyo.Constraint(model.BRANCH_DC, rule=lossDc_rule21)
+#        if self._lossmethod==1:
+#            def lossAc_rule12(model,j):
+#                expr = (model.varLossAc12[j] == 
+#                        model.varAcBranchFlow12[j] * model.lossAc12A[j] 
+#                        + model.lossAc12B[j])
+#                return expr
+#            def lossAc_rule21(model,j):
+#                expr = (model.varLossAc21[j] == 
+#                        model.varAcBranchFlow21[j] * model.lossAc21A[j] 
+#                        + model.lossAc21B[j])
+#                return expr
+#            model.cLossAc12 = pyo.Constraint(model.BRANCH_AC, rule=lossAc_rule12)
+#            model.cLossAc21 = pyo.Constraint(model.BRANCH_AC, rule=lossAc_rule21)
+#    
+#            def lossDc_rule12(model,j):
+#                expr = (model.varLossDc12[j] == 
+#                        model.varDcBranchFlow12[j] * model.lossDc12A[j] 
+#                        + model.lossDc12B[j])
+#                return expr
+#            def lossDc_rule21(model,j):
+#                expr = (model.varLossDc21[j] == 
+#                        model.varDcBranchFlow21[j] * model.lossDc21A[j] 
+#                        + model.lossDc21B[j])
+#                return expr
+#            model.cLossDc12 = pyo.Constraint(model.BRANCH_DC, rule=lossDc_rule12)
+#            model.cLossDc21 = pyo.Constraint(model.BRANCH_DC, rule=lossDc_rule21)
 
 
         # 2 Generator output limit
@@ -314,24 +314,30 @@ class LpProblem(object):
                 if model.dcbranchNodeTo[b]==n:
                     lhs += model.varDcBranchFlow[b]
                     if self._lossmethod==1:
-                        lhs -= model.varLossDc12[b]
+                        #lhs -= model.varLossDc12[b]
+                        lhs -= (model.varDcBranchFlow12[b]*model.lossDcA[b] 
+                                + model.lossDcB[b])
                     elif self._lossmethod==2:
                         lhs -= model.branchDcPowerLoss[b]/2
                 elif model.dcbranchNodeFrom[b]==n:
                     lhs += -model.varDcBranchFlow[b] 
                     if self._lossmethod==1:
-                        lhs -= model.varLossDc21[b]
+                        #lhs -= model.varLossDc21[b]
+                        lhs -= (model.varDcBranchFlow21[b]*model.lossDcA[b] 
+                                + model.lossDcB[b])
                     elif self._lossmethod==2:
                         lhs -= model.branchDcPowerLoss[b]/2
             if self._lossmethod==1:
                 for b in model.BRANCH_AC:
                     # positive sign for flow into node
                     if model.branchNodeTo[b]==n:
-                        lhs += -model.varLossAc12[b]
-                        #lhs -= model.branchAcPowerLoss[b]/2
+                        #lhs += -model.varLossAc12[b]
+                        lhs += -(model.varAcBranchFlow12[b]*model.lossAcA[b] 
+                                + model.lossAcB[b])
                     elif model.branchNodeFrom[b]==n:
-                        lhs += -model.varLossAc21[b]
-                        #lhs -= model.branchAcPowerLoss[b]/2
+                        #lhs += -model.varLossAc21[b]
+                        lhs += -(model.varAcBranchFlow21[b]*model.lossAcA[b] 
+                                + model.lossAcB[b])
             elif self._lossmethod==2:
                 for b in model.BRANCH_AC:
                     # positive sign for flow into node
@@ -468,6 +474,39 @@ class LpProblem(object):
         di['dcbranchNodeTo'] = grid_data.dcbranch['node_to'].to_dict()
         di['demand'] = grid_data.consumer['demand_avg'].to_dict()
 
+        if self._lossmethod==1:
+            br = grid_data.branch
+            di['lossAcA'] = (
+                br['resistance']*br['capacity'].clip(lower=500)
+                /const.baseMVA).to_dict()
+#            di['lossAc21A'] = (
+#                br['resistance']*br['capacity'].clip(lower=500)
+#                /const.baseMVA).to_dict()
+            di['lossAcB'] = {b: 0 for b in di['BRANCH_AC'][None] }
+#            di['lossAc21B'] = {b: 0 for b in di['BRANCH_AC'][None] }
+
+            br = grid_data.dcbranch
+            di['lossDcA'] = ( 
+                br['resistance']*br['capacity'].clip(lower=500)
+                /const.baseMVA).to_dict()
+#            di['lossDc21A'] = (
+#                br['resistance']*br['capacity'].clip(lower=500)
+#                /const.baseMVA).to_dict()
+            di['lossDcB'] = {b: 0 for b in di['BRANCH_DC'][None] }
+#            di['lossDc21B'] = {b: 0 for b in di['BRANCH_DC'][None] }
+#            for b in self.concretemodel.BRANCH_AC:
+#                r = self._grid.branch.loc[b,'resistance']
+#                cap = min(500,self._grid.branch.loc[b,'capacity'])
+#                self.concretemodel.lossAc21A[b] = r*cap/const.baseMVA
+#                self.concretemodel.lossAc12B[b] = 0
+#                self.concretemodel.lossAc21B[b] = 0
+#            for b in self.concretemodel.BRANCH_DC:
+#                r = self._grid.branch.loc[b,'resistance']
+#                cap = min(500,self._grid.branch.loc[b,'capacity'])
+#                self.concretemodel.lossDc12A[b] = r*cap/const.baseMVA
+#                self.concretemodel.lossDc21A[b] = r*cap/const.baseMVA
+#                self.concretemodel.lossDc12B[b] = 0
+#                self.concretemodel.lossDc21B[b] = 0
 
         # Compute matrices used in power flow equaions
         print("Computing B and DA matrices...")
@@ -562,28 +601,28 @@ class LpProblem(object):
         self._energyspilled = grid.generator['storage_cap'].copy(deep=True)
         self._energyspilled[:]=0
 
-        if self._lossmethod==1:
-            # Initialising loss parameters
-            # lossMVA= resistance_pu * flow_mw^2/baseMVA
-            # linearised:
-            # lossMVA = 2r flow0/baseMVA*flow + B; A = 2r*flow0/baseMVA
-            # linearising around 50% utilisation: flow0 = capacity/2:
-            # A = r*capacity/baseMVA; B=0
-            # Consider cap=500 as max value to avoid too high A parameter values
-            for b in self.concretemodel.BRANCH_AC:
-                r = self._grid.branch.loc[b,'resistance']
-                cap = min(500,self._grid.branch.loc[b,'capacity'])
-                self.concretemodel.lossAc12A[b] = r*cap/const.baseMVA
-                self.concretemodel.lossAc21A[b] = r*cap/const.baseMVA
-                self.concretemodel.lossAc12B[b] = 0
-                self.concretemodel.lossAc21B[b] = 0
-            for b in self.concretemodel.BRANCH_DC:
-                r = self._grid.branch.loc[b,'resistance']
-                cap = min(500,self._grid.branch.loc[b,'capacity'])
-                self.concretemodel.lossDc12A[b] = r*cap/const.baseMVA
-                self.concretemodel.lossDc21A[b] = r*cap/const.baseMVA
-                self.concretemodel.lossDc12B[b] = 0
-                self.concretemodel.lossDc21B[b] = 0
+#        if self._lossmethod==1:
+#            # Initialising loss parameters
+#            # lossMVA= resistance_pu * flow_mw^2/baseMVA
+#            # linearised:
+#            # lossMVA = 2r flow0/baseMVA*flow + B; A = 2r*flow0/baseMVA
+#            # linearising around 50% utilisation: flow0 = capacity/2:
+#            # A = r*capacity/baseMVA; B=0
+#            # Consider cap=500 as max value to avoid too high A parameter values
+#            for b in self.concretemodel.BRANCH_AC:
+#                r = self._grid.branch.loc[b,'resistance']
+#                cap = min(500,self._grid.branch.loc[b,'capacity'])
+#                self.concretemodel.lossAc12A[b] = r*cap/const.baseMVA
+#                self.concretemodel.lossAc21A[b] = r*cap/const.baseMVA
+#                self.concretemodel.lossAc12B[b] = 0
+#                self.concretemodel.lossAc21B[b] = 0
+#            for b in self.concretemodel.BRANCH_DC:
+#                r = self._grid.branch.loc[b,'resistance']
+#                cap = min(500,self._grid.branch.loc[b,'capacity'])
+#                self.concretemodel.lossDc12A[b] = r*cap/const.baseMVA
+#                self.concretemodel.lossDc21A[b] = r*cap/const.baseMVA
+#                self.concretemodel.lossDc12B[b] = 0
+#                self.concretemodel.lossDc21B[b] = 0
 
         return
 
@@ -682,7 +721,9 @@ class LpProblem(object):
         if self._lossmethod==0:
             pass
         elif self._lossmethod==1:            
-            # Use constant loss parameters (set in __init__ )
+            # Use constant loss parameters
+            # If loss parameters should change, they need to be declared
+            # mutable=True
             pass
         elif self._lossmethod==2:
             # Losses from previous timestep added as load
@@ -819,11 +860,25 @@ class LpProblem(object):
             acPowerLoss = [0]*len(self.concretemodel.BRANCH_AC)
             dcPowerLoss = [0]*len(self.concretemodel.BRANCH_DC)
         elif self._lossmethod==1:
-            acPowerLoss = [self.concretemodel.varLossAc12[b].value
-                           +self.concretemodel.varLossAc21[b].value
+#            acPowerLoss = [self.concretemodel.varLossAc12[b].value
+#                           +self.concretemodel.varLossAc21[b].value
+#                            for b in self.concretemodel.BRANCH_AC]
+#            dcPowerLoss = [self.concretemodel.varLossDc12[b].value
+#                           +self.concretemodel.varLossDc21[b].value
+#                            for b in self.concretemodel.BRANCH_DC]
+            acPowerLoss = [pyo.value(self.concretemodel.varAcBranchFlow12[b]
+                            *self.concretemodel.lossAcA[b]
+                                + self.concretemodel.lossAcB[b]
+                           +self.concretemodel.varAcBranchFlow21[b]
+                            *self.concretemodel.lossAcA[b]
+                                + self.concretemodel.lossAcB[b])
                             for b in self.concretemodel.BRANCH_AC]
-            dcPowerLoss = [self.concretemodel.varLossDc12[b].value
-                           +self.concretemodel.varLossDc21[b].value
+            dcPowerLoss = [pyo.value(self.concretemodel.varDcBranchFlow12[b]
+                            *self.concretemodel.lossDcA[b] 
+                                + self.concretemodel.lossDcB[b]
+                           +self.concretemodel.varDcBranchFlow21[b]
+                            *self.concretemodel.lossDcA[b] 
+                                + self.concretemodel.lossDcB[b])
                             for b in self.concretemodel.BRANCH_DC]
         elif self._lossmethod==2:
             acPowerLoss = list(self.concretemodel.branchAcPowerLoss.extract_values().values())
