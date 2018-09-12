@@ -110,7 +110,7 @@ class LpProblem(object):
                                                 default=0, mutable=True)
             model.branchDcPowerLoss = pyo.Param(model.BRANCH_AC,within=pyo.Reals,
                                                 default=0, mutable=True)
-
+            
         # VARIABLES ##########################################################
         model.varAcBranchFlow = pyo.Var(model.BRANCH_AC,within = pyo.Reals)
         model.varDcBranchFlow = pyo.Var(model.BRANCH_AC,within = pyo.Reals)
@@ -148,7 +148,7 @@ class LpProblem(object):
 
         # CONSTRAINTS ########################################################
 
-        # 1 Power flow limit   (AC branches)
+        # 1 Power flow limit
         def maxflowAc_rule(model, j):
             cap = model.branchAcCapacity[j]
             if  not np.isinf(cap):
@@ -166,7 +166,6 @@ class LpProblem(object):
         model.cMaxFlowAc = pyo.Constraint(model.BRANCH_AC, rule=maxflowAc_rule)
         model.cMaxFlowDc = pyo.Constraint(model.BRANCH_DC, rule=maxflowDc_rule)
 
-        # 1b Flow=flow12+flow21, losses vs flow
         if self._lossmethod==1:
             def flowAc_rule(model, j):
                 expr = (model.varAcBranchFlow[j] == 
@@ -179,6 +178,8 @@ class LpProblem(object):
             model.cFlowAc = pyo.Constraint(model.BRANCH_AC, rule=flowAc_rule)
             model.cFlowDc = pyo.Constraint(model.BRANCH_DC, rule=flowDc_rule)
 
+        # 1b Losses vs flow
+        if self._lossmethod==1:
             def lossAc_rule12(model,j):
                 expr = (model.varLossAc12[j] == 
                         model.varAcBranchFlow12[j] * model.lossAcA[j] 
@@ -188,7 +189,7 @@ class LpProblem(object):
                 expr = (model.varLossAc21[j] == 
                         model.varAcBranchFlow21[j] * model.lossAcA[j] 
                         + model.lossAcB[j])
-                return expr    
+                return expr
             def lossDc_rule12(model,j):
                 expr = (model.varLossDc12[j] == 
                         model.varDcBranchFlow12[j] * model.lossDcA[j] 
@@ -200,18 +201,17 @@ class LpProblem(object):
                         + model.lossDcB[j])
                 return expr
             model.cLossAc12 = pyo.Constraint(model.BRANCH_AC, rule=lossAc_rule12)
-            model.cLossAc21 = pyo.Constraint(model.BRANCH_AC, rule=lossAc_rule21)
+            model.cLossAc21 = pyo.Constraint(model.BRANCH_AC, rule=lossAc_rule21)    
             model.cLossDc12 = pyo.Constraint(model.BRANCH_DC, rule=lossDc_rule12)
             model.cLossDc21 = pyo.Constraint(model.BRANCH_DC, rule=lossDc_rule21)
 
 
         # 2 Generator output limit
-        
         # Generator output constraint is not necessary, as lower and upper
         # bounds are set for each timestep in _update_progress. Should not
         # be specified as constraint with with pmax as limit, since e.g.
         # PV may have higher production than generator rating.
-
+        
         #HGS: Doing it anyway, cf Espen Bødal and Martin Kristiansen
         #TODO: Check that there are no problems with this.
         def genMaxLimit_rule(model, i):
@@ -416,17 +416,17 @@ class LpProblem(object):
         di['demand'] = grid_data.consumer['demand_avg'].to_dict()
 
         if self._lossmethod==1:
-            # Use  an upper limit since capacity may have been set infinite
+            # Upper capacity limit, since capacity may be infinit
             clip_mw = 500
             br = grid_data.branch
             di['lossAcA'] = (
-                br['resistance']*br['capacity'].clip(lower=clip_mw)
+                br['resistance']*br['capacity'].clip(upper=clip_mw)
                 /const.baseMVA).to_dict()
             di['lossAcB'] = {b: 0 for b in di['BRANCH_AC'][None] }
 
             br = grid_data.dcbranch
             di['lossDcA'] = ( 
-                br['resistance']*br['capacity'].clip(lower=clip_mw)
+                br['resistance']*br['capacity'].clip(upper=clip_mw)
                 /const.baseMVA).to_dict()
             di['lossDcB'] = {b: 0 for b in di['BRANCH_DC'][None] }
 
@@ -608,6 +608,7 @@ class LpProblem(object):
                     *self._grid.storagevalue_time[this_type_time][timestep])
             self.concretemodel.flexLoadCost[i] = storagevalue_flex
 
+
         return
 
 
@@ -627,6 +628,7 @@ class LpProblem(object):
 #                loss_pu = r * ((theta_to-theta_from)*const.baseAngle/x)**2
 #                # convert from p.u. to physical unit
 #                lossMVA = loss_pu*const.baseMVA
+                #TODO: simpler (check and replace):
                 r = self._grid.branch.loc[b,'resistance']
                 lossMVA = r * self.concretemodel.varAcBranchFlow[b]**2/const.baseMVA
                 # A multiplication factor to account for reactive current losses
@@ -836,10 +838,18 @@ class LpProblem(object):
         if solver=="gurobi":
             opt = pyo.SolverFactory('gurobi',solver_io='python')
             print(":) Using direct python interface to solver")
+        elif solver=="gurobi_persistent":
+            opt = pyo.SolverFactory('gurobi_persistent')
+            print(":) Using persistent (in-memory) python interface to solver")
+            print(" => remember to notify solver of model changes!")
+            print("    https://pyomo.readthedocs.io/en/latest/solvers/persistent_solvers.html")
         else:
-            #Change to solver_io="nl"? (requires CBC with ampl interface) incl
+            solver_io = None
+            #if solver=="cbc":
+            # NL requres CBC with ampl interface built in
+            #    solver_io="nl" 
             opt = pyo.SolverFactory(solver,executable=solver_path,
-                                    solver_io=None) 
+                                    solver_io=solver_io) 
             if opt.available():
                 print (":) Found solver here: {}".format(opt.executable()))
             else:
