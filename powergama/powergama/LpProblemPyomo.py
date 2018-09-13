@@ -858,6 +858,22 @@ class LpProblem(object):
                 raise Exception("Could not find LP solver {}"
                                 .format(solver))
 
+        #TODO: Code for persistent solver
+        # https://pyomo.readthedocs.io/en/latest/solvers/persistent_solvers.html
+        # to use pwersistent solvers, probably have to set instance at the 
+        # start, and then modify it in each iteration rather than giving 
+        # it as an argument to opt.solve:
+        #    opt.set_instance(self.concretemodel)
+        # and then use opt.solve()
+        # To modify e.g. a constraint between solves, remove and add, e.g.:
+        #    opt.remove_constraint(m.c)  
+        #    del m.c  
+        #    m.c = pe.Constraint(expr=m.y <= m.x)  
+        #    opt.add_constraint(m.c) 
+        # Variables can be updated without removing/adding
+        #    m.x.setlb(1.0)  
+        #    opt.update_var(m.x)
+
         #Enable access to dual values
         self.concretemodel.dual = pyo.Suffix(direction=pyo.Suffix.IMPORT)
 
