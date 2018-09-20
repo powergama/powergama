@@ -840,6 +840,20 @@ class Database(object):
             output = [sum(i) for i in zip(*output_chunk)]
         return output
  
+    def getResultFlexloadSum(self,timeMaxMin,variable="demand"):
+        '''Sum of flexible load demand over time per consumer'''
+        con = db.connect(self.filename)
+        with con:        
+            #cur = con.cursor()
+            query = ("SELECT indx,SUM({}) FROM Res_FlexibleLoad ".format(variable)
+                +"WHERE timestep>={}".format(timeMaxMin[0])
+                +" AND timestep<{}".format(timeMaxMin[-1])
+                +" GROUP BY indx"
+                +" ORDER BY indx")
+            df = pd.read_sql_query(query,con)
+            df = df.set_index("indx",drop=True).iloc[:,0]
+        return df
+
     def getResultPumpingSum(self,timeMaxMin,variable="output"):
         '''Sum of pumping  per generator'''
         con = db.connect(self.filename)
@@ -851,6 +865,7 @@ class Database(object):
                 +" GROUP BY indx"
                 +" ORDER BY indx")
             df = pd.read_sql_query(query,con)
+            df = df.set_index("indx",drop=True).iloc[:,0]
         return df
 
     def getResultGeneratorPowerSum(self,timeMaxMin):

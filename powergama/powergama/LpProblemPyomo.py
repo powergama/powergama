@@ -110,6 +110,17 @@ class LpProblem(object):
                                                 default=0, mutable=True)
             model.branchDcPowerLoss = pyo.Param(model.BRANCH_AC,within=pyo.Reals,
                                                 default=0, mutable=True)
+        if self._doBalancing:
+            # Baseline power (deviation from which will be minimised)
+            model.paramGeneration0 = pyo.Param(model.GEN,
+                                               within=pyo.NonNegativeReals,
+                                               default=0,mutable=True)
+            model.paramPump0 = pyo.Param(model.GEN_PUMP,
+                                         within=pyo.NonNegativeReals,
+                                         default=0,mutable=True)
+            model.paramFlexload0 = pyo.Param(model.LOAD_FLEX,
+                                         within=pyo.NonNegativeReals,
+                                         default=0,mutable=True)
             
         # VARIABLES ##########################################################
         model.varAcBranchFlow = pyo.Var(model.BRANCH_AC,within = pyo.Reals)
@@ -140,6 +151,18 @@ class LpProblem(object):
         model.varLoadShed = pyo.Var(model.LOAD, within = pyo.NonNegativeReals)
         model.varVoltageAngle = pyo.Var(model.NODE, within = pyo.Reals,
                                         initialize=0.0)
+        if self._doBalancing:
+            model.varGenPos = pyo.Var(model.GEN,within = pyo.NonNegativeReals)
+            model.varGenNeg = pyo.Var(model.GEN,within = pyo.NonNegativeReals)            
+            model.varPumpPos = pyo.Var(model.GEN_PUMP,
+                                       within = pyo.NonNegativeReals)
+            model.varPumpNeg = pyo.Var(model.GEN_PUMP,
+                                       within = pyo.NonNegativeReals)            
+            model.varFlexloadPos = pyo.Var(model.LOAD_FLEX,
+                                           within = pyo.NonNegativeReals)
+            model.varFlexloadNeg = pyo.Var(model.LOAD_FLEX,
+                                           within = pyo.NonNegativeReals)            
+
 # I wonder if these bound on voltage angle creates infeasibility
 # - is it really needed
 # TODO: Verify voltage angle bounds required
@@ -332,6 +355,29 @@ class LpProblem(object):
         model.cReferenceNode = pyo.Constraint(model.NODE,
                                               rule=referenceNode_rule)
 
+        if self._doBalancing:
+            # P-P0 = genPos - genNeg
+            # With this constraint, min|P-P0| in the obj function can be 
+            # replaced by min(genPos+genNeg)
+            def genPosNeg_rule(model,g):
+                expr = (model.varGeneration[g]-model.paramGeneration0[g] ==
+                        model.varGenPos[g] - model.varGenNeg[g])
+                return expr
+            def pumpPosNeg_rule(model,g):
+                expr = (model.varPump[g]-model.paramPump0[g] ==
+                        model.varPumpPos[g] - model.varPumpNeg[g])
+                return expr
+            def flexloadPosNeg_rule(model,g):
+                expr = (model.varFlexLoad[g]-model.paramFlexload0[g] ==
+                        model.varFlexloadPos[g] - model.varFlexloadNeg[g])
+                return expr
+            
+            model.cgenPosNeg = pyo.Constraint(model.GEN,rule=genPosNeg_rule)
+            model.cpumpPosNeg = pyo.Constraint(model.GEN_PUMP,
+                                               rule=pumpPosNeg_rule)
+            model.cflexloadPosNeg = pyo.Constraint(model.LOAD_FLEX,
+                                                   rule=flexloadPosNeg_rule)
+
         # OBJECTIVE ##########################################################
 
         def cost_rule(model):
@@ -351,7 +397,25 @@ class LpProblem(object):
 
             return cost
 
-        model.OBJ = pyo.Objective(rule=cost_rule, sense=pyo.minimize)
+        def cost_ruleBalancing(model):
+            """Cost = generator deviation from setpoint"""
+
+            # Operational costs phase 1 (if stage2DeltaTime>0)
+            cost = sum(model.varGenPos[i] + model.varGenNeg[i]
+                            for i in model.GEN)
+            cost += sum(model.varPumpPos[i] + model.varPumpNeg[i]
+                            for i in model.GEN_PUMP)
+            cost += sum(model.varFlexloadPos[i] + model.varFlexloadNeg[i]
+                            for i in model.LOAD_FLEX)
+            cost += sum(model.varLoadShed[i]*model.loadShedCost
+                            for i in model.LOAD )
+
+            return cost
+        
+        if self._doBalancing:
+            model.OBJ = pyo.Objective(rule=cost_ruleBalancing, sense=pyo.minimize)
+        else:            
+            model.OBJ = pyo.Objective(rule=cost_rule, sense=pyo.minimize)
 
 
         return model
@@ -467,7 +531,7 @@ class LpProblem(object):
         return {'powergama':di}
 
 
-    def __init__(self,grid,lossmethod=0):
+    def __init__(self,grid,lossmethod=0,doBalancing=False,resBaseline=None):
         '''LP problem formulation
 
         Parameters
@@ -476,8 +540,15 @@ class LpProblem(object):
             grid data object
         lossmethod : int
             loss method; 0=no losses, 1=linearised losses, 2=added as load
+        doBalancing : bool
+            True if optimisation should minimise deviation from setpoints
+            instead of generation costs
+        res_baseline : powergama.Results object (used if doBalancing=True)
+            Baseline results
         '''
         self._lossmethod = lossmethod
+        self._doBalancing = doBalancing
+        self._resBaseline = resBaseline
 
         # Pyomo
         # 1 create abstract pyomo model
@@ -607,6 +678,23 @@ class LpProblem(object):
                     *self._grid.storagevalue_filling[this_type_filling][filling_col]
                     *self._grid.storagevalue_time[this_type_time][timestep])
             self.concretemodel.flexLoadCost[i] = storagevalue_flex
+
+        if self._doBalancing:
+            db_timestep= self._grid.timerange[0]+timestep
+            genP0 = self._resBaseline.db.getResultGeneratorPowerSum(
+                    [db_timestep,db_timestep+1])
+            pumpP0 = self._resBaseline.db.getResultPumpingSum(
+                    [db_timestep,db_timestep+1])
+            flexloadP0 = self._resBaseline.db.getResultFlexloadSum(
+                    [db_timestep,db_timestep+1])
+            # ordered by index, which is increasing, so order should be OK:
+            #self.concretemodel.paramGeneration0 = genP0
+            for g in self.concretemodel.GEN:
+                self.concretemodel.paramGeneration0[g] = genP0[g]
+            for g in self.concretemodel.GEN_PUMP:
+                self.concretemodel.paramPump0[g] = pumpP0.loc[g]
+            for g in self.concretemodel.LOAD_FLEX:
+                self.concretemodel.paramFlexload0[g] = flexloadP0.loc[g]
 
 
         return
