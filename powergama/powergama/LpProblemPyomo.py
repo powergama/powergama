@@ -161,7 +161,9 @@ class LpProblem(object):
             model.varFlexloadPos = pyo.Var(model.LOAD_FLEX,
                                            within = pyo.NonNegativeReals)
             model.varFlexloadNeg = pyo.Var(model.LOAD_FLEX,
-                                           within = pyo.NonNegativeReals)            
+                                           within = pyo.NonNegativeReals) 
+            if self._balanceMax:
+                model.varB = pyo.Var(model.GEN,within = pyo.Binary)
 
 # I wonder if these bound on voltage angle creates infeasibility
 # - is it really needed
@@ -359,6 +361,14 @@ class LpProblem(object):
             # P-P0 = genPos - genNeg
             # With this constraint, min|P-P0| in the obj function can be 
             # replaced by min(genPos+genNeg)
+            #
+            # if maximise deviation (to find max flexibility) we need e.g. to 
+            # add integer variable B and bigM parameter and constraint
+            # genPos <= M*b
+            # genNeg <= M(1-b)
+            # -> b=0: genPos=0, genNeg<=M
+            #    b=1: genNeg=0, genPos<=M, M must be large
+            # P-P0 >= pos+neg, -(P-P0) + M >= pos+neg
             def genPosNeg_rule(model,g):
                 expr = (model.varGeneration[g]-model.paramGeneration0[g] ==
                         model.varGenPos[g] - model.varGenNeg[g])
@@ -377,13 +387,24 @@ class LpProblem(object):
                                                rule=pumpPosNeg_rule)
             model.cflexloadPosNeg = pyo.Constraint(model.LOAD_FLEX,
                                                    rule=flexloadPosNeg_rule)
+            
+            if self._balanceMax:
+                self.bigM = 100000
+                # Maximising flexibility action
+                def genPosM_rule(model,g):
+                    return (model.varGenPos[g] <= self.bigM*model.varB[g])
+                def genNegM_rule(model,g):
+                    return (model.varGenNeg[g] <= self.bigM*(1-model.varB[g]))
+                model.cGenPosM = pyo.Constraint(model.GEN,rule=genPosM_rule)
+                model.cGenNegM = pyo.Constraint(model.GEN,rule=genNegM_rule)
+                
 
         # OBJECTIVE ##########################################################
 
         def cost_rule(model):
             """Operational costs: cost of gen, load shed and curtailment"""
 
-            # Operational costs phase 1 (if stage2DeltaTime>0)
+            # Cost of generation
             cost = sum(model.varGeneration[i]*model.genCost[i]
                             for i in model.GEN)
             cost -= sum(model.varPump[i]*model.pumpCost[i]
@@ -397,10 +418,10 @@ class LpProblem(object):
 
             return cost
 
-        def cost_ruleBalancing(model):
+        def cost_ruleMinBalancing(model):
             """Cost = generator deviation from setpoint"""
 
-            # Operational costs phase 1 (if stage2DeltaTime>0)
+            # Min deviation from baseline
             cost = sum(model.varGenPos[i] + model.varGenNeg[i]
                             for i in model.GEN)
             cost += sum(model.varPumpPos[i] + model.varPumpNeg[i]
@@ -409,11 +430,30 @@ class LpProblem(object):
                             for i in model.LOAD_FLEX)
             cost += sum(model.varLoadShed[i]*model.loadShedCost
                             for i in model.LOAD )
+            return cost
 
+        def cost_ruleMaxBalancing(model):
+            """Cost = generator deviation from setpoint"""
+
+            # max gen deviation, min pump and flexload deviation
+            cost = sum(model.varGenPos[i] + model.varGenNeg[i]
+                            for i in model.GEN)
+            cost -= sum(model.varPumpPos[i] + model.varPumpNeg[i]
+                            for i in model.GEN_PUMP)
+            cost -= sum(model.varFlexloadPos[i] + model.varFlexloadNeg[i]
+                            for i in model.LOAD_FLEX)
+            cost -= sum(model.varLoadShed[i]*model.loadShedCost
+                            for i in model.LOAD )
             return cost
         
         if self._doBalancing:
-            model.OBJ = pyo.Objective(rule=cost_ruleBalancing, sense=pyo.minimize)
+            if self._balanceMax:
+                model.OBJ = pyo.Objective(rule=cost_ruleMaxBalancing, 
+                                          sense=pyo.maximize)
+            else:
+                model.OBJ = pyo.Objective(rule=cost_ruleMinBalancing, 
+                                          sense=pyo.minimize)
+
         else:            
             model.OBJ = pyo.Objective(rule=cost_rule, sense=pyo.minimize)
 
@@ -531,7 +571,8 @@ class LpProblem(object):
         return {'powergama':di}
 
 
-    def __init__(self,grid,lossmethod=0,doBalancing=False,resBaseline=None):
+    def __init__(self,grid,lossmethod=0,doBalancing=False,resBaseline=None,
+                 balanceMax=False):
         '''LP problem formulation
 
         Parameters
@@ -545,10 +586,13 @@ class LpProblem(object):
             instead of generation costs
         res_baseline : powergama.Results object (used if doBalancing=True)
             Baseline results
+        balanceMax = boolean
+            True if balancing actions should be maximised (to quantify flex)
         '''
         self._lossmethod = lossmethod
         self._doBalancing = doBalancing
         self._resBaseline = resBaseline
+        self._balanceMax = balanceMax
 
         # Pyomo
         # 1 create abstract pyomo model
@@ -689,12 +733,13 @@ class LpProblem(object):
                     [db_timestep,db_timestep+1])
             # ordered by index, which is increasing, so order should be OK:
             #self.concretemodel.paramGeneration0 = genP0
+            # max(...) to avoid tiny neg numbers
             for g in self.concretemodel.GEN:
-                self.concretemodel.paramGeneration0[g] = genP0[g]
+                self.concretemodel.paramGeneration0[g] = max(0,genP0[g])
             for g in self.concretemodel.GEN_PUMP:
-                self.concretemodel.paramPump0[g] = pumpP0.loc[g]
+                self.concretemodel.paramPump0[g] = max(0,pumpP0.loc[g])
             for g in self.concretemodel.LOAD_FLEX:
-                self.concretemodel.paramFlexload0[g] = flexloadP0.loc[g]
+                self.concretemodel.paramFlexload0[g] = max(0,flexloadP0.loc[g])
 
 
         return
@@ -800,23 +845,28 @@ class LpProblem(object):
             Ploadshed[node] += self.concretemodel.varLoadShed[j].value
 
         # 4 Collect dual values
-        # 4a. branch capacity sensitivity (whether pos or neg flow)
-        senseB = []
-        for j in self._idx_branchesWithConstraints:
-        #for j in self.concretemodel.BRANCH_AC:
-            c = self.concretemodel.cMaxFlowAc[j]
-            senseB.append(-abs(self.concretemodel.dual[c]/const.baseMVA ))
-        senseDcB = []
-        for j in self.concretemodel.BRANCH_DC:
-            c = self.concretemodel.cMaxFlowDc[j]
-            senseDcB.append(-abs(self.concretemodel.dual[c]/const.baseMVA ))
-
-        # 4b. node demand sensitivity (energy balance)
-        # TODO: Without abs(...) the value jumps between pos and neg. Why?
-        senseN = []
-        for j in self.concretemodel.NODE:
-            c = self.concretemodel.cPowerbalance[j]
-            senseN.append(abs(self.concretemodel.dual[c]/const.baseMVA ))
+        if self._balanceMax:
+            senseB = [0]*len(self._idx_branchesWithConstraints)
+            senseDcB = [0]*len(self.concretemodel.BRANCH_DC)
+            senseN = [0]*len(self.concretemodel.NODE)
+        else:
+            # 4a. branch capacity sensitivity (whether pos or neg flow)
+            senseB = []
+            for j in self._idx_branchesWithConstraints:
+            #for j in self.concretemodel.BRANCH_AC:
+                c = self.concretemodel.cMaxFlowAc[j]
+                senseB.append(-abs(self.concretemodel.dual[c]/const.baseMVA ))
+            senseDcB = []
+            for j in self.concretemodel.BRANCH_DC:
+                c = self.concretemodel.cMaxFlowDc[j]
+                senseDcB.append(-abs(self.concretemodel.dual[c]/const.baseMVA ))
+    
+            # 4b. node demand sensitivity (energy balance)
+            # TODO: Without abs(...) the value jumps between pos and neg. Why?
+            senseN = []
+            for j in self.concretemodel.NODE:
+                c = self.concretemodel.cPowerbalance[j]
+                senseN.append(abs(self.concretemodel.dual[c]/const.baseMVA ))
 
         # consider spilled energy only for generators with storage<infinity
         #energyspilled = zeros(energyStorable.shape)
@@ -963,7 +1013,8 @@ class LpProblem(object):
         #    opt.update_var(m.x)
 
         #Enable access to dual values
-        self.concretemodel.dual = pyo.Suffix(direction=pyo.Suffix.IMPORT)
+        if not self._balanceMax:
+            self.concretemodel.dual = pyo.Suffix(direction=pyo.Suffix.IMPORT)
 
         if self._lossmethod==2:
             print("Computing losses in first timestep")
