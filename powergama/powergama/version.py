@@ -3,5 +3,5 @@
 PowerGAMA version information
 '''
 
-__version__ = '1.1.1'
-__version_date__ = '2017-09-18'
+__version__ = '1.1.2'
+__version_date__ = '2019-07-29'

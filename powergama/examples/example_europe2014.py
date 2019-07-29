@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 from __future__ import division
 import powergama
-import powergama.GIS
+#import powergama.GIS
 import powergama.scenarios
+import powergama.plots
 import time
 import matplotlib.pyplot as plt
 
@@ -38,15 +39,19 @@ else:
     res = powergama.Results(data,resultpath+sqlfile,replace=False)
 
 # SOME PLOTS:
-powergama.GIS.makekml(resultpath+"2014Europe.kml",data,res=res,
-                      nodetype="nodalprice",branchtype="flow",
-                      title="2014 Europe")
+m=powergama.plots.plotMap(data,res,
+                          nodetype="nodalprice",branchtype="utilisation")
+m.save(resultpath+"2014Europe_results_map.html")
 
 #res.plotMapGrid(nodetype="nodalprice",branchtype="",
 #                show_node_labels=False, dotsize=10, draw_par_mer=False
 #                show_Title=False)
 #plt.gcf().set_size_inches(7.5,4)
 #plt.savefig(resultpath+"2030_map2.pdf", bbox_inches = 'tight')
+
+#powergama.GIS.makekml(resultpath+"2014Europe.kml",data,res=res,
+#                      nodetype="nodalprice",branchtype="flow",
+#                      title="2014 Europe")
 
 #res.plotGenerationPerArea('MA',fill=True)
 #res.plotEnergyMix(relative=True,showTitle=False)
