@@ -6,7 +6,6 @@
 GIS Module
 ==================
 .. automodule:: powergama.GIS
-   :special-members: __init__ 
    :members:
    :undoc-members:
 

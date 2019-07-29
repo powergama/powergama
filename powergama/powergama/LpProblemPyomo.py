@@ -46,7 +46,86 @@ class LpProblem(object):
     Class containing problem definition as a LP problem, and function calls
     to solve the problem
 
+    Parameters
+    ==========
+    grid : GridData
+        grid data object
+    lossmethod : int
+        loss method; 0=no losses, 1=linearised losses, 2=added as load
+    doBalancing : bool
+        True if optimisation should minimise deviation from setpoints
+        instead of generation costs
+    res_baseline : powergama.Results object (used if doBalancing=True)
+        Baseline results
+    balanceMax = boolean
+        True if balancing actions should be maximised (to quantify flex)
     '''
+
+    def __init__(self,grid,lossmethod=0,doBalancing=False,resBaseline=None,
+                 balanceMax=False):
+        '''LP problem formulation
+
+        Parameters
+        ==========
+        grid : GridData
+            grid data object
+        lossmethod : int
+            loss method; 0=no losses, 1=linearised losses, 2=added as load
+        doBalancing : bool
+            True if optimisation should minimise deviation from setpoints
+            instead of generation costs
+        res_baseline : powergama.Results object (used if doBalancing=True)
+            Baseline results
+        balanceMax = boolean
+            True if balancing actions should be maximised (to quantify flex)
+        '''
+        self._lossmethod = lossmethod
+        self._doBalancing = doBalancing
+        self._resBaseline = resBaseline
+        self._balanceMax = balanceMax
+
+        # Pyomo
+        # 1 create abstract pyomo model
+        self.abstractmodel = self._createAbstractModel()
+
+        # 2 create concrete instance using grid data
+        modeldata_dict = self._createModelData(grid)
+        print('Creating LP problem instance...')
+        self.concretemodel = self.abstractmodel.create_instance(
+                                data=modeldata_dict,
+                                name="PowerGAMA Model",
+                                namespace='powergama')
+
+        print('Initialising LP problem...')
+
+        # Creating local variables to keep track of storage
+        self._grid = grid
+        self.timeDelta = grid.timeDelta
+        self._idx_generatorsWithPumping = grid.getIdxGeneratorsWithPumping()
+        self._idx_generatorsWithStorage = grid.getIdxGeneratorsWithStorage()
+
+        self._idx_consumersWithFlexLoad = (
+            grid.getIdxConsumersWithFlexibleLoad() )
+        self._idx_branchesWithConstraints = (
+            grid.getIdxBranchesWithFlowConstraints() )
+        self._fancy_progressbar = False
+
+        # Initial values of marginal costs, storage and storage values
+        self._storage = (
+            grid.generator['storage_ini']*grid.generator['storage_cap'] 
+            ).fillna(0)
+
+        self._storage_flexload = (
+                grid.consumer['flex_storagelevel_init']
+                * grid.consumer['flex_storage']
+                * grid.consumer['flex_fraction']
+                * grid.consumer['demand_avg']
+                ).fillna(0)
+
+        self._energyspilled = grid.generator['storage_cap'].copy(deep=True)
+        self._energyspilled[:]=0
+
+        return
 
     def _createAbstractModel(self):
         model = pyo.AbstractModel()
@@ -571,71 +650,6 @@ class LpProblem(object):
         return {'powergama':di}
 
 
-    def __init__(self,grid,lossmethod=0,doBalancing=False,resBaseline=None,
-                 balanceMax=False):
-        '''LP problem formulation
-
-        Parameters
-        ==========
-        grid : GridData
-            grid data object
-        lossmethod : int
-            loss method; 0=no losses, 1=linearised losses, 2=added as load
-        doBalancing : bool
-            True if optimisation should minimise deviation from setpoints
-            instead of generation costs
-        res_baseline : powergama.Results object (used if doBalancing=True)
-            Baseline results
-        balanceMax = boolean
-            True if balancing actions should be maximised (to quantify flex)
-        '''
-        self._lossmethod = lossmethod
-        self._doBalancing = doBalancing
-        self._resBaseline = resBaseline
-        self._balanceMax = balanceMax
-
-        # Pyomo
-        # 1 create abstract pyomo model
-        self.abstractmodel = self._createAbstractModel()
-
-        # 2 create concrete instance using grid data
-        modeldata_dict = self._createModelData(grid)
-        print('Creating LP problem instance...')
-        self.concretemodel = self.abstractmodel.create_instance(
-                                data=modeldata_dict,
-                                name="PowerGAMA Model",
-                                namespace='powergama')
-
-        print('Initialising LP problem...')
-
-        # Creating local variables to keep track of storage
-        self._grid = grid
-        self.timeDelta = grid.timeDelta
-        self._idx_generatorsWithPumping = grid.getIdxGeneratorsWithPumping()
-        self._idx_generatorsWithStorage = grid.getIdxGeneratorsWithStorage()
-
-        self._idx_consumersWithFlexLoad = (
-            grid.getIdxConsumersWithFlexibleLoad() )
-        self._idx_branchesWithConstraints = (
-            grid.getIdxBranchesWithFlowConstraints() )
-        self._fancy_progressbar = False
-
-        # Initial values of marginal costs, storage and storage values
-        self._storage = (
-            grid.generator['storage_ini']*grid.generator['storage_cap'] 
-            ).fillna(0)
-
-        self._storage_flexload = (
-                grid.consumer['flex_storagelevel_init']
-                * grid.consumer['flex_storage']
-                * grid.consumer['flex_fraction']
-                * grid.consumer['demand_avg']
-                ).fillna(0)
-
-        self._energyspilled = grid.generator['storage_cap'].copy(deep=True)
-        self._energyspilled[:]=0
-
-        return
 
 
     def _updateLpProblem(self,timestep):

@@ -6,7 +6,6 @@
 Scenarios Module
 ==================
 .. automodule:: powergama.scenarios
-   :special-members: __init__ 
    :members:
    :undoc-members:
 
