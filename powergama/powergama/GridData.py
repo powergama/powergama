@@ -511,11 +511,11 @@ class GridData(object):
         Parameters
         ==========
         baseZ : float (impedance should already be in pu.)
-        base value for impedance        
+                base value for impedance        
         
-        Returns sparse matrices (csr - compressed sparse row matrix)
+        Returns 
         =======
-        (Bprime, DA) : compressed sparse row matrix
+        (Bprime, DA) : compressed sparse row matrix 
               
         """
         

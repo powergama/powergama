@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-Created on Tue Aug 16 13:21:21 2016
+Module for power grid investment analyses
 
-@author: Martin Kristiansen, Harald Svendsen
 """
 
 

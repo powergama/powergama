@@ -4,7 +4,7 @@ Visualization of results using Google Earth
 
 
 Attributes
-----------
+
 category_colours : list
     list of colour codes (aabbggrr) used for nodes and branches. The second
     last value is for NaN, and the last value is default colour. So with
@@ -14,7 +14,7 @@ category_colours : list
     blue, green, red
 
 Example
--------
+
 powergama.GIS.makekml("output.kml",grid_data=data,res=res,
                       nodetype="nodalprice",branchtype="flow")
 """
@@ -25,24 +25,25 @@ import math
 import numpy
 import matplotlib as mpl
 
-# Default category colours
+
 category_colours=["ffff6666","ffffff66","ff66ff66","ff66ffff",
             "f6666fff","ffaaaaaa","ff000000"]
+'''Default category colours'''
 
 dcbranch_colour = "ffffffff" #white
 generator_colour = "ff0000ff" #red
 consumer_colour = "ffff00ff" #purple
 flowarrow_colour = "ff0000ff" #red
 
-#default max cap for colouring
 PRICE_MAX = 200
+'''default max cap for colouring'''
 
-# Default line width
 linewidth = 1.5
+'''Default line width'''
 
 point_icon_href = "http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png"
 arrow_icon_href = "http://maps.google.com/mapfiles/kml/shapes/donut.png"
-
+'''url of arrow icon'''
 
 
 def makekml(kmlfile, grid_data,nodetype=None, branchtype=None,

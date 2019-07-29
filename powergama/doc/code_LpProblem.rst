@@ -3,9 +3,10 @@
    You can adapt this file completely to your liking, but it should at least
    contain the root `toctree` directive.
 
+
 LpProblem Module
 ==================
-.. automodule:: powergama.LpProblem
+.. automodule:: powergama.LpProblemPyomo
    :members:
    :undoc-members:
    

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 '''
-PowerGAMA version information
+PowerGAMA module containing plotting functions
 '''
 
 import folium

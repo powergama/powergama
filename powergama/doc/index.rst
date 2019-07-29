@@ -7,7 +7,7 @@ Welcome to PowerGAMA's documentation!
 =====================================
 
 Contents:
-
+--------
 .. toctree::
    :maxdepth: 2
    
@@ -16,7 +16,7 @@ Contents:
    
 
 Code documentation:
-
+------------------
 .. toctree::
    :maxdepth: 2
 
@@ -24,6 +24,8 @@ Code documentation:
    code_GridData
    code_LpProblem
    code_Results
+   code_database
+   code_plots
    code_constants
    code_scenarios
    code_GIS
@@ -31,7 +33,7 @@ Code documentation:
 
 
 Indices and tables
-==================
+------------------
 
 * :ref:`genindex`
 * :ref:`modindex`

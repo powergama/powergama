@@ -3,10 +3,10 @@
    You can adapt this file completely to your liking, but it should at least
    contain the root `toctree` directive.
 
+
 GridData Module
 ==================
 .. automodule:: powergama.GridData
-   :special-members: __init__ 
    :members:
    :undoc-members:
 
