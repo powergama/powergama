@@ -1,5 +1,6 @@
 include *.txt
-recursive-include examples *.py
-recursive-include examples/data *.csv
-recursive-include examples/data_europe2014 *.*
 include userguide/UserGuide.pdf
+recursive-include examples *
+recursive-exclude examples *.sqlite *.sqlite3
+prune examples/.ipynb_checkpoints
+prune examples/powergim_doggerbank/.ipynb_checkpoints
