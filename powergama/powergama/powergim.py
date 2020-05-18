@@ -17,7 +17,7 @@ from . import constants as const
 
 class SipModel():
     '''
-    Power Grid Investment Module - stochastic investment problem
+    Power Grid Investment Module - Stochastic Investment Problem
     '''
     
     _NUMERICAL_THRESHOLD_ZERO = 1e-6
@@ -1138,15 +1138,16 @@ class SipModel():
         
         # Re-use method used in optimisation
         #NOTE: adding "()" after the expression gives the value
-        cost1 = self.costNode(model,n,stage=1)
-        cost1npv = self.npvInvestment(model,stage=1,investment=cost1,
-                                      includeOM=include_om,
-                                      subtractSalvage=True)
-        cost2 = self.costNode(model,n,stage=2)
-        cost2npv = self.npvInvestment(model,stage=2,investment=cost2,
-                                      includeOM=include_om,
-                                      subtractSalvage=True)
-        cost_value = pyo.value(cost1npv+cost2npv)
+        cost={}
+        costnpv={}
+        cost_value = 0
+        for stage in model.STAGE:
+            cost[stage] = self.costNode(model,n,stage=stage)
+            costnpv[stage] = self.npvInvestment(model,stage=stage,
+                               investment=cost[stage],
+                               includeOM=include_om,
+                               subtractSalvage=True)
+            cost_value = cost_value + pyo.value(costnpv[stage])
         return cost_value
 
         
@@ -1571,7 +1572,8 @@ class SipModel():
 
         print("TODO: powergim.saveDeterministicResults LOAD:"
                 "only showing phase 2 (after 2nd stage investments)")
-        stage=2
+        #stage=2
+        stage=max(model.STAGE)
         def _n(n,p):
             return n+str(p)
             

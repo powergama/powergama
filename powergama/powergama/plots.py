@@ -283,8 +283,8 @@ def plotMap(pg_data,pg_res=None,filename=None,
 
     print("Generators...")
     #feature_group_Generator = folium.FeatureGroup(name='Generators').add_to(m)
-    cm_stepG = cmSet1.scale(0,len(gentypes)-1).to_step(
-            len(gentypes))
+    ngtypes = max(2,len(gentypes))
+    cm_stepG = cmSet1.scale(0,ngtypes-1).to_step(ngtypes)
 
     groups = generator.groupby("node")
     feature_group_Generators = folium.FeatureGroup(name="Generators").add_to(m)
