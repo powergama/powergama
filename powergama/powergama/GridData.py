@@ -263,7 +263,7 @@ class GridData(object):
 
     def _readProfileFromFile(self,filename,timerange):          
         profiles = pd.read_csv(filename,sep=self.CSV_SEPARATOR,engine='python')
-        profiles = profiles.ix[timerange]
+        profiles = profiles.loc[timerange]
         profiles.index = range(len(timerange))
         return profiles
 
@@ -794,13 +794,6 @@ class GridData(object):
             lon1=lons1[b]
             lat2=lats2[b]
             lon2=lons2[b]
-#        for i,br in self.branch.iterrows():
-#            #n_from= br['node_from']
-#            #n_to=br['node_to']
-#            lat1 = math.radians(self.node.ix[n_from[i]]['lat'])
-#            lon1 = math.radians(self.node.ix[n_from[i]]['lon'])
-#            lat2 = math.radians(self.node.ix[n_to[i]]['lat'])
-#            lon2 = math.radians(self.node.ix[n_to[i]]['lon'])
         
             dlon = lon2 - lon1
             dlat = lat2 - lat1

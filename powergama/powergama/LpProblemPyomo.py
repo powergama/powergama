@@ -152,14 +152,14 @@ class LpProblem(object):
         def maxflowAc_rule(model, j):
             cap = model.branchAcCapacity[j]
             if  not np.isinf(cap):
-                expr = (-cap <= model.varAcBranchFlow[j] <= cap )
+                expr = pyo.inequality(-cap, model.varAcBranchFlow[j], cap )
             else:
                 expr = pyo.Constraint.Skip
             return expr
         def maxflowDc_rule(model, j):
             cap = model.branchDcCapacity[j]
             if  not np.isinf(cap):
-                expr = (-cap <= model.varDcBranchFlow[j] <= cap )
+                expr = pyo.inequality(-cap, model.varDcBranchFlow[j], cap )
             else:
                 expr = pyo.Constraint.Skip
             return expr
@@ -454,7 +454,9 @@ class LpProblem(object):
         G.add_edges_from(zip(grid_data.branch['node_from'],
                              grid_data.branch['node_to']))
 
-        G_subs = nx.connected_component_subgraphs(G)
+        G_subs = (G.subgraph(c) for c in nx.connected_components(G))
+        #deprecated:
+        #G_subs = nx.connected_component_subgraphs(G)
         refnodes = []
         for gr in G_subs:
             refnode = list(gr.nodes)[0]

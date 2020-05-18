@@ -6,8 +6,9 @@ according to specified input.
 
 import pandas as pd
 import powergama.constants as const
+import numpy as np
 
-_EMPTY = pd.np.nan
+_EMPTY = np.nan
 
 def saveScenario(base_grid_data, scenario_file,verbose=True):
     '''
