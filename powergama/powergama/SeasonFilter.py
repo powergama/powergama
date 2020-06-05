@@ -148,7 +148,7 @@ def SeasonFilter(HourlyTimeSeries,FilterPeriodInMonths=2,PlotFilter=False):
 
 
 
-def SeasonPlot(HourlyTimeSeries,Type,caseID,resultpath):
+def SeasonPlot(HourlyTimeSeries,fname=None,ylabel='',title=None):
 
 
 
@@ -168,18 +168,18 @@ def SeasonPlot(HourlyTimeSeries,Type,caseID,resultpath):
     flatline = pd.DataFrame([1 for i in range(HoursPerYear)])
 
 
-    fig4 = plt.figure()
+    fig4 = plt.figure(figsize=(8*2 , 4.5*2))
     ax4 = fig4.add_subplot(111)
-    flatline.plot(ax=ax4, figsize=(8 , 4.5), linewidth=2, color=['grey'])
+    flatline.plot(ax=ax4, linewidth=2, color=['grey'])
     
     HourlyTimeSeries.plot(ax=ax4, linewidth=2, color=['r','y','b','c','black'],style=['-','-','-','-','--'])
     
-    ax4.legend(list_legend)
+    ax4.legend(list_legend,loc="lower left")
     
-    plt.title('Seasonal {} for Case {}'.format(Type,caseID))
+    if title is not None:
+        plt.title(title)
     plt.xlabel("Month")
-    plt.ylabel('{}'.format(Type))
-    #plt.grid()
+    plt.ylabel(ylabel)
     
     plt.xlim(0,HoursPerYear)
     
@@ -190,7 +190,8 @@ def SeasonPlot(HourlyTimeSeries,Type,caseID,resultpath):
     plt.gca().xaxis.set_minor_locator(minor_locator)
     plt.grid(which='minor')
     
-    plt.savefig(resultpath + "Plot_Filtered_{}_{}.png".format(Type,caseID), bbox_inches = 'tight')
+    if fname is not None:
+        plt.savefig(fname,bbox_inches = 'tight',dpi=300)
 
 
 
