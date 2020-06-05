@@ -330,10 +330,11 @@ def plotMap(pg_data,pg_res=None,filename=None,
 
     legend_generator_html = """
          <div style="position: fixed; 
-             bottom: 50px; left: 50px; width: 150px; height: 300px; 
+             bottom: 20px; left: 20px; 
              border:2px solid grey; z-index:9999; font-size:13px;
              background-color: lightgray">
          &nbsp; <b>Generators</b>"""
+#             bottom: 50px; left: 50px; width: 150px; height: 300px; 
     for typeind,gentype in enumerate(gentypes):
         col = cm_stepG(typeind)
         legend_generator_html = (

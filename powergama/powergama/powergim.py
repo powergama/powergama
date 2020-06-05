@@ -1315,7 +1315,10 @@ class SipModel():
         if shareof=='dem':
            return Rgen/dem
         elif shareof=='gen':
-           return Rgen/(gen+Rgen)
+            if gen+Rgen>0:
+                return Rgen/(gen+Rgen)
+            else:
+                return np.nan
         else:
            print('Choose shareof dem or gen')
 
@@ -1329,7 +1332,11 @@ class SipModel():
                 if model.nodeArea[model.genNode[g]]==area:
                     mc.append(model.genCostAvg[g]*model.genCostProfile[g,t]
                                 +model.genTypeEmissionRate[model.genType[g]]*model.CO2price.value)
-        price = max(mc)
+        if len(mc)==0:
+            # no generators in area, so no price...
+            price=np.nan
+        else:
+            price = max(mc)
         return price
 
         
