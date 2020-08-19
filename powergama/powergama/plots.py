@@ -14,14 +14,14 @@ import itertools
 import pandas as pd
 
 
-    
+
 def plotMap(pg_data,pg_res=None,filename=None,
             nodetype=None,branchtype=None,
             filter_node=[0,100],filter_branch=None, timeMaxMin=None,
             **kwargs):
     '''
     Plot PowerGAMA data/results on map
-    
+
     Parameters
     ==========
     pg_data : powergama.GridData
@@ -40,7 +40,7 @@ def plotMap(pg_data,pg_res=None,filename=None,
         max/min value used for colouring branches (e.g. utilisation)
     kwargs : arguments passed on to folium.Map(...)
     '''
-  
+
     if branca.__version__<='0.2.0':
         cmSet1 = branca.colormap.linear.Set1
     else:
@@ -61,7 +61,7 @@ def plotMap(pg_data,pg_res=None,filename=None,
     node = pg_data.node.copy()
     generator = pg_data.generator.copy()
     consumer = pg_data.consumer.copy()
-    
+
     # Careful! Merge may change the order
     branch = branch.merge(node[['id','lat','lon']],how='left',
                             left_on='node_from',right_on='id')
@@ -84,7 +84,7 @@ def plotMap(pg_data,pg_res=None,filename=None,
     node = node.set_index("index_orig")
     #node.sort_index(inplace=True)
     node['area_ind'] = 0.5+node['area_ind']%10
-    
+
     if pg_res is not None:
         nodalprices = pg_res.getAverageNodalPrices(timeMaxMin)
         node['nodalprice'] = nodalprices
@@ -92,23 +92,24 @@ def plotMap(pg_data,pg_res=None,filename=None,
         branch_utilisation = pg_res.getAverageUtilisation(timeMaxMin)
         br_ind = pg_data.getIdxBranchesWithFlowConstraints()
         branch['flow'] = pg_res.getAverageBranchFlows(timeMaxMin)[2]
-        #branch['utilisation'] = 0 
+        #branch['utilisation'] = 0
         branch['utilisation'] = branch_utilisation
         branch['sensitivity'] = 0
         branch.loc[branch.index.isin(br_ind),'sensitivity'] = branch_sensitivity
         #DC branch utilisation:
-        dcbranch_utilisation = pg_res.getAverageUtilisation(timeMaxMin,branchtype="dc")
-        dcbranch_sensitivity = pg_res.getAverageBranchSensitivity(timeMaxMin,branchtype="dc")
-        dcbr_ind = pg_data.getIdxDcBranchesWithFlowConstraints()
-        dcbranch['flow'] = pg_res.getAverageBranchFlows(timeMaxMin,branchtype="dc")[2]
-        dcbranch['utilisation'] = 0
-        dcbranch.loc[dcbranch.index.isin(dcbr_ind),'utilisation'] = dcbranch_utilisation
-        dcbranch['sensitivity'] = 0
-        dcbranch.loc[dcbranch.index.isin(dcbr_ind),'sensitivity'] = dcbranch_sensitivity
-    
+        if dcbranch.shape[0] > 0:
+            dcbranch_utilisation = pg_res.getAverageUtilisation(timeMaxMin,branchtype="dc")
+            dcbranch_sensitivity = pg_res.getAverageBranchSensitivity(timeMaxMin,branchtype="dc")
+            dcbr_ind = pg_data.getIdxDcBranchesWithFlowConstraints()
+            dcbranch['flow'] = pg_res.getAverageBranchFlows(timeMaxMin,branchtype="dc")[2]
+            dcbranch['utilisation'] = 0
+            dcbranch.loc[dcbranch.index.isin(dcbr_ind),'utilisation'] = dcbranch_utilisation
+            dcbranch['sensitivity'] = 0
+            dcbranch.loc[dcbranch.index.isin(dcbr_ind),'sensitivity'] = dcbranch_sensitivity
+
     m = folium.Map(location=[node['lat'].median(), node['lon'].median()],
                              zoom_start=4,**kwargs)
-    
+
     callbackNode = """function (row,colour) {
                if (colour=='') {
                    colour=row[3]
@@ -122,20 +123,20 @@ def plotMap(pg_data,pg_res=None,filename=None,
     callbackBranch = """function (row,colour) {
                 if (colour=='') {
                     colour=row[3]
-                } 
+                }
                 var polyline = L.polyline([row[0],row[1]],
                                           {"color":colour} );
                 polyline.bindPopup(row[2]);
                 return polyline;
             }"""
-    
+
     print("Nodes...")
     if nodetype=="nodalprice":
         value_col = 'nodalprice'
         if filter_node is None:
             filter_node = [node[value_col].min(),node[value_col].max()]
         cm_node = branca.colormap.LinearColormap(['green', 'yellow', 'red'],
-                                                    vmin=filter_node[0], 
+                                                    vmin=filter_node[0],
                                                     vmax=filter_node[1])
         cm_node.caption = 'Nodal price'
         m.add_child(cm_node)
@@ -143,7 +144,7 @@ def plotMap(pg_data,pg_res=None,filename=None,
         value_col="area_ind"
         val_max=node[value_col].max()
         cm_node = cmSet1.scale(0,val_max).to_step(10)
-        #cm_node.caption = 'Area'   
+        #cm_node.caption = 'Area'
         #m.add_child(cm_node)
     elif nodetype=="type":
         type_val,types = node['type'].factorize()
@@ -153,7 +154,7 @@ def plotMap(pg_data,pg_res=None,filename=None,
         cm_node = cmSet1.scale(0,val_max).to_step(10)
     else:
         value_col=None
-        
+
     locationsN=[]
     for i,n in node.iterrows():
         if not (n[['lat','lon']].isnull().any()):
@@ -167,7 +168,7 @@ def plotMap(pg_data,pg_res=None,filename=None,
                 data.append(colHex)
                 colour=''
             else:
-                colour='blue'              
+                colour='blue'
             locationsN.append(data)
         else:
             print("Missing lat/lon for node index={}".format(i))
@@ -182,7 +183,7 @@ def plotMap(pg_data,pg_res=None,filename=None,
         if filter_branch is None:
             filter_branch = [0,1]
         cm_branch = branca.colormap.LinearColormap(['green', 'yellow', 'red'],
-                                               vmin=filter_branch[0], 
+                                               vmin=filter_branch[0],
                                                vmax=filter_branch[1])
         cm_branch.caption = 'Branch utilisation'
         m.add_child(cm_branch)
@@ -191,7 +192,7 @@ def plotMap(pg_data,pg_res=None,filename=None,
         if filter_branch is None:
             filter_branch = [branch[value_col].min(),branch[value_col].max()]
         cm_branch = branca.colormap.LinearColormap(['red', 'yellow', 'green'],
-                                               vmin=filter_branch[0], 
+                                               vmin=filter_branch[0],
                                                vmax=filter_branch[1])
         cm_branch.caption = 'Branch capacity sensitivity'
         m.add_child(cm_branch)
@@ -200,7 +201,7 @@ def plotMap(pg_data,pg_res=None,filename=None,
         if filter_branch is None:
             filter_branch = [branch[value_col].min(),branch[value_col].max()]
         cm_branch = branca.colormap.LinearColormap(['red', 'yellow', 'green'],
-                                               vmin=filter_branch[0], 
+                                               vmin=filter_branch[0],
                                                vmax=filter_branch[1])
         cm_branch.caption = 'Branch flow (abs value)'
         m.add_child(cm_branch)
@@ -234,7 +235,7 @@ def plotMap(pg_data,pg_res=None,filename=None,
     FeatureCollection(locationsB,callback=callbackBranch,
                       addto=feature_group_Branches,
                       colour=colour).add_to(feature_group_Branches)
-    
+
     print("DC branches...")
 #    if branchtype=="utilisation":
 #        value_col = 'utilisation'
@@ -295,7 +296,7 @@ def plotMap(pg_data,pg_res=None,filename=None,
         className: 'marker-cluster marker-cluster-large',
         iconSize: new L.Point(20, 20)
         });
-    }"""    
+    }"""
 #    for ind,gentype in enumerate(gentypes):
 #        #locationsN=[]
 #        for i,n in generator[generator['type']==gentype].iterrows():
@@ -319,7 +320,7 @@ def plotMap(pg_data,pg_res=None,filename=None,
                 locationsN.append(data)
             else:
                 print("Missing lat/lon for node index={}".format(i))
-        
+
         #feature_group_GenX = folium.FeatureGroup(name=gentype).add_to(m)
         #FeatureCollection(data=locationsN,callback=callbackNode,
         #                  featuregroup=feature_group_GenX,
@@ -329,12 +330,12 @@ def plotMap(pg_data,pg_res=None,filename=None,
                           colour="").add_to(marker_cluster)
 
     legend_generator_html = """
-         <div style="position: fixed; 
-             bottom: 20px; left: 20px; 
+         <div style="position: fixed;
+             bottom: 20px; left: 20px;
              border:2px solid grey; z-index:9999; font-size:13px;
              background-color: lightgray">
          &nbsp; <b>Generators</b>"""
-#             bottom: 50px; left: 50px; width: 150px; height: 300px; 
+#             bottom: 50px; left: 50px; width: 150px; height: 300px;
     for typeind,gentype in enumerate(gentypes):
         col = cm_stepG(typeind)
         legend_generator_html = (
@@ -344,22 +345,22 @@ def plotMap(pg_data,pg_res=None,filename=None,
     legend_generator_html = '{}</div>'.format(legend_generator_html)
     m.get_root().html.add_child(folium.Element(legend_generator_html))
 
-    
+
     folium.LayerControl().add_to(m)
 
 
-    
+
     if filename:
         print("Saving map to file {}".format(filename))
         m.save(filename)
-    
+
     return m
 
 
 class FeatureCollection(folium.map.FeatureGroup):
     """
     Add features to a map using in-browser rendering.
-    
+
     Parameters
     ----------
     data : list
@@ -367,9 +368,9 @@ class FeatureCollection(folium.map.FeatureGroup):
         the form [[lat, lng]].
     callback : string, default None
         A string representation of a valid Javascript function
-        that will be passed a lat, lon coordinate pair. 
+        that will be passed a lat, lon coordinate pair.
     featuregroup : folium.FeatureGroup
-        Feature group 
+        Feature group
     colour : string
         colour
     name : string, default None
@@ -380,7 +381,7 @@ class FeatureCollection(folium.map.FeatureGroup):
         Whether the Layer will be included in LayerControls.
     """
     _counts = itertools.count(0)
-    
+
     def __init__(self, data, callback, addto, colour,
                  name=None, overlay=True, control=True):
         super(FeatureCollection, self).__init__(name=name, overlay=overlay,
