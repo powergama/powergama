@@ -4,28 +4,50 @@ Module for power grid investment analyses
 
 """
 
-
-import pyomo.environ as pyo
 import pandas as pd
 import numpy as np
-import sklearn.cluster
-import sklearn.preprocessing
+import pyomo.environ as pyo
 import pyomo.pysp.scenariotree.tree_structure_model as tsm
 import networkx
+import matplotlib.pyplot as plt
+import matplotlib.cm as cm
+import xml
+import copy
 from . import constants as const
+
+
+def annuityfactor(rate,years):
+    '''Net present value factor for fixed payments per year at fixed rate'''
+    if rate==0:
+        annuity = years
+    else:
+        annuity = (1-1/((1+rate)**years))/rate
+    return annuity
+
+
+def _myround(x, base=1,method='round'):
+    '''Round to nearest multiple of base'''
+    if method=='round':
+        return int(base * round(float(x)/base))
+    elif method=='floor':
+        return int(base * math.floor(float(x)/base))
+    elif method=='ceil':
+        return int(base * math.ceil(float(x)/base))
+    else:
+        raise
 
 
 class SipModel():
     '''
     Power Grid Investment Module - Stochastic Investment Problem
     '''
-    
+
     _NUMERICAL_THRESHOLD_ZERO = 1e-6
     _HOURS_PER_YEAR = 8760
-    
+
     def __init__(self, M_const = 1000):
         """Create Abstract Pyomo model for PowerGIM
-        
+
         Parameters
         ----------
         M_const : int
@@ -34,7 +56,7 @@ class SipModel():
         self.abstractmodel = self._createAbstractModel()
         self.M_const = M_const
 
-        
+
     def costNode(self,model,n,stage):
         '''Expression for cost of node, investment cost no discounting'''
         n_cost = 0
@@ -49,7 +71,7 @@ class SipModel():
     def costBranch(self,model,b,stage):
         '''Expression for cost of branch, investment cost no discounting'''
         b_cost = 0
-        
+
         var_num=model.branchNewCables
         var_cap=model.branchNewCapacity
         typ = model.branchType[b]
@@ -61,7 +83,7 @@ class SipModel():
         b_cost += (model.branchtypeCost[typ,'Bdp']
                     *model.branchDistance[b]
                     *var_cap[b,stage])
-        
+
         #endpoints offshore (N=1) or onshore (N=0) ?
         N1 = model.branchOffshoreFrom[b]
         N2 = model.branchOffshoreTo[b]
@@ -69,15 +91,15 @@ class SipModel():
             b_cost += N*(model.branchtypeCost[typ,'CS']
                         *var_num[b,stage]
                     +model.branchtypeCost[typ,'CSp']
-                    *var_cap[b,stage])            
+                    *var_cap[b,stage])
             b_cost += (1-N)*(model.branchtypeCost[typ,'CL']
                         *var_num[b,stage]
                     +model.branchtypeCost[typ,'CLp']
                     *var_cap[b,stage])
-        
+
         return model.branchCostScale[b]*b_cost
 
-            
+
     def costGen(self,model,g,stage):
         '''Expression for cost of generator, investment cost no discounting'''
         g_cost = 0
@@ -91,9 +113,9 @@ class SipModel():
         """NPV of investment cost including lifetime O&M and salvage value
 
         Parameters
-        ----------        
+        ----------
         model : object
-            Pyomo model 
+            Pyomo model
         stage : int
             Investment or operation stage (1 or 2)
         investment :
@@ -128,7 +150,7 @@ class SipModel():
         for b in model.BRANCH:
             investment += self.costBranch(model,b,stage)
         for n in model.NODE:
-            investment += self.costNode(model,n,stage)            
+            investment += self.costNode(model,n,stage)
         for g in model.GEN:
             investment += self.costGen(model,g,stage)
         # add O&M costs and compute NPV:
@@ -141,7 +163,7 @@ class SipModel():
         opcost = 0
         #discount_t0 = (1/((1+model.financeInterestrate)
         #    **(model.stage2TimeDelta*int(stage-1))))
-        
+
         # operation cost per year:
         opcost = sum(model.generation[i,t,stage]*model.samplefactor[t]*(
                     model.genCostAvg[i]*model.genCostProfile[i,t]
@@ -160,12 +182,12 @@ class SipModel():
         else:
             #from year 0
             opcost = opcost*annuityfactor(model.financeInterestrate,
-                                          model.stage2TimeDelta)            
+                                          model.stage2TimeDelta)
 
-        #Harald: this is already discounted back to year 0 from the present 
+        #Harald: this is already discounted back to year 0 from the present
         # value calculation above
         #opcost = opcost*discount_t0
-        
+
         return opcost
 
     def costOperationSingleGen(self,model, g, stage):
@@ -173,7 +195,7 @@ class SipModel():
         opcost = 0
         #discount_t0 = (1/((1+model.financeInterestrate)
         #    **(model.stage2TimeDelta*int(stage-1))))
-        
+
         # operation cost per year:
         opcost = sum(model.generation[g,t,stage]*model.samplefactor[t]*(
                     model.genCostAvg[g]*model.genCostProfile[g,t]
@@ -188,17 +210,17 @@ class SipModel():
                                 int(stage-1)*model.stage2TimeDelta))
         else:
             opcost = opcost*annuityfactor(model.financeInterestrate,
-                                          model.stage2TimeDelta)            
-        #opcost = opcost*discount_t0        
+                                          model.stage2TimeDelta)
+        #opcost = opcost*discount_t0
         return opcost
-        
-    
-    def _createAbstractModel(self):    
+
+
+    def _createAbstractModel(self):
         model = pyo.AbstractModel()
         model.name = 'PowerGIM abstract model'
-        
+
         # SETS ###############################################################
-        
+
         model.NODE = pyo.Set()
         model.GEN = pyo.Set()
         model.BRANCH = pyo.Set()
@@ -206,7 +228,7 @@ class SipModel():
         model.AREA = pyo.Set()
         model.TIME = pyo.Set()
         model.STAGE = pyo.Set()
-        
+
         #A set for each stage i.e. a list with two sets
         model.NODE_EXPAND1 = pyo.Set()
         model.NODE_EXPAND2 = pyo.Set()
@@ -214,16 +236,16 @@ class SipModel():
         model.BRANCH_EXPAND2 = pyo.Set()
         model.GEN_EXPAND1 = pyo.Set()
         model.GEN_EXPAND2 = pyo.Set()
-        
+
         model.BRANCHTYPE = pyo.Set()
-        model.BRANCHCOSTITEM = pyo.Set(initialize=['B','Bd', 'Bdp', 
-                                                   'CLp','CL','CSp','CS'])        
+        model.BRANCHCOSTITEM = pyo.Set(initialize=['B','Bd', 'Bdp',
+                                                   'CLp','CL','CSp','CS'])
         model.NODETYPE = pyo.Set()
         model.NODECOSTITEM = pyo.Set(initialize=['L','S'])
         model.LINEAR = pyo.Set(initialize=['fix','slope'])
-        
+
         model.GENTYPE = pyo.Set()
-        
+
 
         # PARAMETERS #########################################################
         model.samplefactor = pyo.Param(model.TIME, within=pyo.NonNegativeReals)
@@ -234,12 +256,12 @@ class SipModel():
         model.VOLL = pyo.Param(within=pyo.NonNegativeReals)
         model.stage2TimeDelta = pyo.Param(within=pyo.NonNegativeReals)
         model.maxNewBranchNum = pyo.Param(within=pyo.NonNegativeReals)
-        
-        #investment costs and limits:        
+
+        #investment costs and limits:
         model.branchtypeMaxCapacity = pyo.Param(model.BRANCHTYPE,
                                                 within=pyo.Reals)
         model.branchMaxNewCapacity = pyo.Param(model.BRANCH,within=pyo.Reals)
-        model.branchtypeCost = pyo.Param(model.BRANCHTYPE, 
+        model.branchtypeCost = pyo.Param(model.BRANCHTYPE,
                                          model.BRANCHCOSTITEM,
                                          within=pyo.Reals)
         model.branchLossfactor = pyo.Param(model.BRANCHTYPE,model.LINEAR,
@@ -251,32 +273,32 @@ class SipModel():
         model.branchCostScale = pyo.Param(model.BRANCH,within=pyo.Reals)
         model.genCostScale = pyo.Param(model.GEN, within=pyo.Reals)
         model.genNewCapMax = pyo.Param(model.GEN, within=pyo.Reals)
-        
+
         #branches:
         model.branchReactance = pyo.Param(model.BRANCH,
                                           within=pyo.NonNegativeReals)
-        model.branchExistingCapacity = pyo.Param(model.BRANCH, 
+        model.branchExistingCapacity = pyo.Param(model.BRANCH,
                                                  within=pyo.NonNegativeReals)
-        model.branchExistingCapacity2 = pyo.Param(model.BRANCH, 
+        model.branchExistingCapacity2 = pyo.Param(model.BRANCH,
                                                  within=pyo.NonNegativeReals)
         model.branchExpand = pyo.Param(model.BRANCH,
-                                       within=pyo.Binary)  
+                                       within=pyo.Binary)
         model.branchExpand2 = pyo.Param(model.BRANCH,
                                        within=pyo.Binary)
-        model.branchDistance = pyo.Param(model.BRANCH, 
-                                         within=pyo.NonNegativeReals)                                             
+        model.branchDistance = pyo.Param(model.BRANCH,
+                                         within=pyo.NonNegativeReals)
         model.branchType = pyo.Param(model.BRANCH,within=model.BRANCHTYPE)
         model.branchOffshoreFrom = pyo.Param(model.BRANCH,within=pyo.Binary)
         model.branchOffshoreTo = pyo.Param(model.BRANCH,within=pyo.Binary)
-    
+
         #nodes:
-        model.nodeExistingNumber = pyo.Param(model.NODE, 
+        model.nodeExistingNumber = pyo.Param(model.NODE,
                                              within=pyo.NonNegativeIntegers)
         model.nodeOffshore = pyo.Param(model.NODE, within=pyo.Binary)
         model.nodeType = pyo.Param(model.NODE, within=model.NODETYPE)
         model.refNodes = pyo.Param(model.NODE, within=pyo.Boolean)
-        
-        
+
+
         #generators
         model.genCostAvg = pyo.Param(model.GEN, within=pyo.Reals)
         model.genCostProfile = pyo.Param(model.GEN,model.TIME,
@@ -287,12 +309,12 @@ class SipModel():
                                           within=pyo.Reals)
         model.genPAvg = pyo.Param(model.GEN,within=pyo.Reals)
         model.genType = pyo.Param(model.GEN, within=model.GENTYPE)
-        model.genExpand = pyo.Param(model.GEN, 
+        model.genExpand = pyo.Param(model.GEN,
                                     within=pyo.Binary)
-        model.genExpand2 = pyo.Param(model.GEN, 
+        model.genExpand2 = pyo.Param(model.GEN,
                                     within=pyo.Binary)
         model.genTypeEmissionRate = pyo.Param(model.GENTYPE, within=pyo.Reals)
-        
+
         #helpers:
         model.genNode = pyo.Param(model.GEN,within=model.NODE)
         model.demNode = pyo.Param(model.LOAD,within=model.NODE)
@@ -301,7 +323,7 @@ class SipModel():
         model.nodeArea = pyo.Param(model.NODE,within=model.AREA)
         model.coeff_B = pyo.Param(model.NODE,model.NODE,within=pyo.Reals)
         model.coeff_DA = pyo.Param(model.BRANCH,model.NODE,within=pyo.Reals)
-        
+
         #consumers
         # the split int an average value, and a profile is to make it easier
         # to generate scenarios (can keep profile, but adjust demandAvg)
@@ -310,34 +332,34 @@ class SipModel():
                                         within=pyo.Reals)
         model.emissionCap = pyo.Param(model.LOAD, within=pyo.NonNegativeReals)
         model.maxShed = pyo.Param(model.LOAD, model.TIME, within=pyo.NonNegativeReals)
-        
+
         # VARIABLES ##########################################################
-    
+
         # investment: new branch capacity
         def branchNewCapacity_bounds(model,j,h):
             if h>1:
                 return (0,model.branchMaxNewCapacity[j]*model.branchExpand2[j])
             else:
                 return (0,model.branchMaxNewCapacity[j]*model.branchExpand[j])
-        model.branchNewCapacity = pyo.Var(model.BRANCH, model.STAGE, 
+        model.branchNewCapacity = pyo.Var(model.BRANCH, model.STAGE,
                                           within = pyo.NonNegativeReals,
-                                          bounds = branchNewCapacity_bounds)                                  
+                                          bounds = branchNewCapacity_bounds)
 
         # investment: new branch cables
         def branchNewCables_bounds(model,j,h):
             if h>1:
                 return (0,model.maxNewBranchNum*model.branchExpand2[j])
             else:
-                return (0,model.maxNewBranchNum*model.branchExpand[j])                                  
-        model.branchNewCables = pyo.Var(model.BRANCH, model.STAGE, 
+                return (0,model.maxNewBranchNum*model.branchExpand[j])
+        model.branchNewCables = pyo.Var(model.BRANCH, model.STAGE,
                                         within = pyo.NonNegativeIntegers,
                                         bounds = branchNewCables_bounds)
-                                        
+
 
         # investment: new nodes
         model.newNodes = pyo.Var(model.NODE, model.STAGE, within = pyo.Binary)
 
-        
+
         # investment: generation capacity
         def genNewCapacity_bounds(model,g,h):
             if h>1:
@@ -348,7 +370,7 @@ class SipModel():
                                        within = pyo.NonNegativeReals,
                                        bounds = genNewCapacity_bounds)
 
-        
+
         # branch power flow (also given by constraints??)
         def branchFlow_bounds(model,j,t,h):
             if h == 1:
@@ -360,7 +382,7 @@ class SipModel():
                         branchNewCapacity_bounds(model,j,h-1)[1]+
                         branchNewCapacity_bounds(model,j,h)[1])
             return (0,ub)
-        model.branchFlow12 = pyo.Var(model.BRANCH, model.TIME,model.STAGE, 
+        model.branchFlow12 = pyo.Var(model.BRANCH, model.TIME,model.STAGE,
                                      within = pyo.NonNegativeReals,
                                      bounds = branchFlow_bounds)
         model.branchFlow21 = pyo.Var(model.BRANCH, model.TIME, model.STAGE,
@@ -369,9 +391,9 @@ class SipModel():
 
         # voltage angle
         model.voltageAngle = pyo.Var(model.NODE,model.TIME,model.STAGE, within=pyo.Reals)
-        
+
         # generator output (bounds set by constraint)
-        model.generation = pyo.Var(model.GEN, model.TIME,model.STAGE, 
+        model.generation = pyo.Var(model.GEN, model.TIME,model.STAGE,
                                    within = pyo.NonNegativeReals)
         # load shedding
         def loadShed_bounds(model, c, t, h):
@@ -383,13 +405,13 @@ class SipModel():
             return (0,ub)
         model.loadShed = pyo.Var(model.LOAD, model.TIME, model.STAGE,
                                  domain = pyo.NonNegativeReals,
-                                 bounds = loadShed_bounds) 
-        
-        
-        
+                                 bounds = loadShed_bounds)
+
+
+
         # CONSTRAINTS ########################################################
 
-        # Power flow limitations (in both directions)                
+        # Power flow limitations (in both directions)
         def maxflow12_rule(model,j,t,h):
             cap = model.branchExistingCapacity[j]
             if h >1:
@@ -398,7 +420,7 @@ class SipModel():
                 cap += model.branchNewCapacity[j,x+1]
             expr = (model.branchFlow12[j,t,h] <= cap)
             return expr
-            
+
         def maxflow21_rule(model,j,t,h):
             cap = model.branchExistingCapacity[j]
             if h >1:
@@ -407,23 +429,23 @@ class SipModel():
                 cap += model.branchNewCapacity[j,x+1]
             expr = (model.branchFlow21[j,t,h] <= cap)
             return expr
-        
-        model.cMaxFlow12 = pyo.Constraint(model.BRANCH, model.TIME,model.STAGE, 
+
+        model.cMaxFlow12 = pyo.Constraint(model.BRANCH, model.TIME,model.STAGE,
                                          rule=maxflow12_rule)
         model.cMaxFlow21 = pyo.Constraint(model.BRANCH, model.TIME,model.STAGE,
                                          rule=maxflow21_rule)
-                                         
+
         # No new branch capacity without new cables
         def maxNewCap_rule(model,j,h):
             typ = model.branchType[j]
-            expr = (model.branchNewCapacity[j,h] 
+            expr = (model.branchNewCapacity[j,h]
                     <= model.branchtypeMaxCapacity[typ]
                         *model.branchNewCables[j,h])
             return expr
         model.cmaxNewCapacity = pyo.Constraint(model.BRANCH, model.STAGE,
                                                rule=maxNewCap_rule)
 
-                                            
+
         # A node required at each branch endpoint
         def newNodes_rule(model,n,h):
             expr = 0
@@ -439,7 +461,7 @@ class SipModel():
             return expr
         model.cNewNodes = pyo.Constraint(model.NODE,model.STAGE,
                                           rule=newNodes_rule)
-          
+
         # Generator output limitations
         # TODO: add option to set minimum output = timeseries for renewable,
         # i.e. disallov curtaliment (could be global parameter)
@@ -448,10 +470,13 @@ class SipModel():
             if h>1:
                 cap += model.genCapacity2[g]
             for x in range(h):
-                cap += model.genNewCapacity[g,x+1]
+                if (g in model.GEN_EXPAND1) or (g in model.GEN_EXPAND2):
+                    cap += model.genNewCapacity[g,x+1]
             allowCurtailment = True
             #TODO: make this limit a parameter (global or per generator?)
-            if model.genCostAvg[g]*model.genCostProfile[g,t]<1:
+#            if model.genCostAvg[g]*model.genCostProfile[g,t]<1:
+            if model.genCostAvg[g] < 1:
+                # don't allow curtailment of cheap generators (renewables)
                 allowCurtailment = False
             if allowCurtailment:
                 expr = model.generation[g,t,h] <= (
@@ -460,13 +485,13 @@ class SipModel():
                 # don't allow curtailment of generator output
                 expr = model.generation[g,t,h] == (
                     model.genCapacityProfile[g,t] * cap)
-                
+
             return expr
         model.cMaxPgen = pyo.Constraint(model.GEN,model.TIME,model.STAGE,
                                         rule=maxPgen_rule)
 
-        
-        # Generator maximum average output (energy sum) 
+
+        # Generator maximum average output (energy sum)
         # (e.g. for hydro with storage)
         def maxEnergy_rule(model,g,h):
             cap = model.genCapacity[g]
@@ -475,7 +500,7 @@ class SipModel():
             for x in range(h):
                 cap += model.genNewCapacity[g,x+1]
             if model.genPAvg[g]>0:
-                expr = (sum(model.generation[g,t,h] for t in model.TIME) 
+                expr = (sum(model.generation[g,t,h] for t in model.TIME)
                             <= (model.genPAvg[g]*cap*len(model.TIME)))
             else:
                 expr = pyo.Constraint.Skip
@@ -492,13 +517,13 @@ class SipModel():
                 for n in model.NODE:
                     if model.nodeArea[n]==a:
                         expr += sum(model.generation[g,t,h]*model.genTypeEmissionRate[model.genType[g]]*model.samplefactor[t]
-                                    for t in model.TIME for g in model.GEN 
+                                    for t in model.TIME for g in model.GEN
                                     if model.genNode[g]==n)
-                expr = (expr <= sum(model.emissionCap[c] 
+                expr = (expr <= sum(model.emissionCap[c]
                     for c in model.LOAD if model.nodeArea[model.demNode[c]]==a))
             else:
                 expr = pyo.Constraint.Skip
-            return expr 
+            return expr
         model.cEmissionCap = pyo.Constraint(model.AREA,model.STAGE,
                                              rule=emissionCap_rule)
 
@@ -523,13 +548,13 @@ class SipModel():
                     expr += model.branchFlow12[j,t,h] * (1-(
                                 model.branchLossfactor[typ,'fix']
                                 +model.branchLossfactor[typ,'slope']*dist))
-                    expr += -model.branchFlow21[j,t,h] 
+                    expr += -model.branchFlow21[j,t,h]
 
-            # generated power 
+            # generated power
             for g in model.GEN:
                 if model.genNode[g]==n:
                     expr += model.generation[g,t,h]
-                    
+
             # load shedding
             for c in model.LOAD:
                 if model.demNode[c]==n:
@@ -539,26 +564,26 @@ class SipModel():
             for c in model.LOAD:
                 if model.demNode[c]==n:
                     expr += -model.demandAvg[c]*model.demandProfile[c,t]
-            
+
             if not any([model.branchReactance[b] for b in model.BRANCH])>0:
                 expr = (expr == 0)
             else:
                 expr = expr/const.baseMVA
-                
+
                 rhs = 0
                 n2s = [k[1]  for k in model.coeff_B.keys() if k[0]==n]
                 for n2 in n2s:
-                    rhs -= model.coeff_B[n,n2]*model.voltageAngle[n2,t,h]                
+                    rhs -= model.coeff_B[n,n2]*model.voltageAngle[n2,t,h]
                 expr = (expr == rhs)
-            
+
             if ((type(expr) is bool) and (expr==True)):
                 # Trivial constraint
                 expr = pyo.Constraint.Skip
             return expr
         model.cPowerbalance = pyo.Constraint(model.NODE,model.TIME,model.STAGE,
                                              rule=powerbalance_rule)
-        
-        # Power balance (power flow vs voltage angle)                               
+
+        # Power balance (power flow vs voltage angle)
         def flowangle_rule(model,b,t,h):
             if not any([model.branchReactance[b] for b in model.BRANCH])>0:
                 return pyo.Constraint.Skip
@@ -569,15 +594,15 @@ class SipModel():
                 #TODO speed up- remove for loop
                 n2s = [k[1]  for k in model.coeff_DA.keys() if k[0]==b]
                 for n2 in n2s:
-                    rhs += model.coeff_DA[b,n2]*model.voltageAngle[n2,t,h]                
+                    rhs += model.coeff_DA[b,n2]*model.voltageAngle[n2,t,h]
                 #for n2 in model.NODE:
                 #    if (b,n2) in model.coeff_DA.keys():
                 #        rhs += model.coeff_DA[b,n2]*model.varVoltageAngle[n2]
                 expr = (lhs==rhs)
                 return expr
         model.cFlowAngle = pyo.Constraint(model.BRANCH, model.TIME, model.STAGE, rule=flowangle_rule)
-        
-        # Reference voltag angle     
+
+        # Reference voltag angle
         def referenceNode_rule(model,n,t,h):
             if not any([model.branchReactance[b] for b in model.BRANCH])>0:
                 return pyo.Constraint.Skip
@@ -588,62 +613,62 @@ class SipModel():
                     expr = pyo.Constraint.Skip
                 return expr
         model.cReferenceNode = pyo.Constraint(model.NODE,model.TIME,model.STAGE,
-                                              rule=referenceNode_rule)  
-        
+                                              rule=referenceNode_rule)
+
 
         # OBJECTIVE ##############################################################
-        model.investmentCost = pyo.Var(model.STAGE, within=pyo.Reals) 
+        model.investmentCost = pyo.Var(model.STAGE, within=pyo.Reals)
         model.opCost = pyo.Var(model.STAGE, within=pyo.Reals)
-            
+
         def investmentCost_rule(model,stage):
             """Investment cost, including lifetime O&M costs (NPV)"""
             expr = self.costInvestments(model,stage)
             return model.investmentCost[stage] == expr
         model.cInvestmentCost = pyo.Constraint(model.STAGE,rule=investmentCost_rule)
-        
-        
+
+
         def opCost_rule(model, stage):
             """Operational costs: cost of gen, load shed (NPV)"""
             opcost = self.costOperation(model,stage)
-            return model.opCost[stage] == opcost           
+            return model.opCost[stage] == opcost
         model.cOperationalCosts = pyo.Constraint(model.STAGE, rule=opCost_rule)
-            
-                                                                
+
+
         def total_Cost_Objective_rule(model):
             investment = pyo.summation(model.investmentCost)
             operation = pyo.summation(model.opCost)
             return investment + operation
         model.OBJ = pyo.Objective(rule=total_Cost_Objective_rule,
                                   sense=pyo.minimize)
-        
-    
+
+
         return model
 
-        
+
 
     def _offshoreBranch(self,grid_data):
         '''find out whether branch endpoints are offshore or onshore
-        
+
         Returns 1 for offshore and 0 for onsore from/to endpoints
         '''
         d={'from':[],'to':[]}
-        
+
         d['from'] = [grid_data.node[grid_data.node['id']==n]['offshore']
                     .tolist()[0] for n in grid_data.branch['node_from']]
         d['to'] = [grid_data.node[grid_data.node['id']==n]['offshore']
                     .tolist()[0] for n in grid_data.branch['node_to']]
         return d
 
-        
+
     def createConcreteModel(self,dict_data):
         """Create Concrete Pyomo model for PowerGIM
-        
+
         Parameters
         ----------
         dict_data : dictionary
             dictionary containing the model data. This can be created with
             the createModelData(...) method
-        
+
         Returns
         -------
             Concrete pyomo model
@@ -669,18 +694,18 @@ class SipModel():
             upper limit on parallel branches to consider (e.g. 10)
         maxNewBranchCap : float (MW)
             upper limit on new capacity to consider (e.g. 10000)
-        
+
         Returns
         --------
         dictionary with pyomo data (in pyomo format)
         '''
-        
+
         branch_distances = grid_data.branchDistances()
-        
-        #to see how the data format is:        
+
+        #to see how the data format is:
         #data = pyo.DataPortal(model=self.abstractmodel)
         #data.load(filename=datafile)
-        
+
         di = {}
         #Sets:
         di['NODE'] = {None: grid_data.node['id'].tolist() }
@@ -690,7 +715,7 @@ class SipModel():
         di['AREA'] = {None: grid_data.getAllAreas() }
         di['TIME'] = {None: grid_data.timerange}
         #di['STAGE'] = {None: grid_data.branch.expand[grid_data.branch['expand']>0].unique().tolist()}
-        
+
         br_expand1 = grid_data.branch[
                         grid_data.branch['expand']==1].index.tolist()
         br_expand2 = grid_data.branch[
@@ -711,12 +736,12 @@ class SipModel():
         node_expand2=[]
         for n in grid_data.node['id'][grid_data.node['existing']==0]:
             if (n in grid_data.generator['node'][grid_data.generator['expand']==1].tolist()
-                or n in grid_data.branch['node_to'][grid_data.branch['expand']==1].tolist() 
+                or n in grid_data.branch['node_to'][grid_data.branch['expand']==1].tolist()
                 or n in grid_data.branch['node_from'][grid_data.branch['expand']==1].tolist()):
                 #stage one generator  or branch expansion connected to node
                 node_expand1.append(n)
             if (n in grid_data.generator['node'][grid_data.generator['expand']==2].tolist()
-                or n in grid_data.branch['node_to'][grid_data.branch['expand']==2].tolist() 
+                or n in grid_data.branch['node_to'][grid_data.branch['expand']==2].tolist()
                 or n in grid_data.branch['node_from'][grid_data.branch['expand']==2].tolist()):
                 #stage two generator or branch expansion connected to node
                 node_expand2.append(n)
@@ -724,14 +749,14 @@ class SipModel():
 #                        grid_data.node['expand1']==1].index.tolist()
 #        node_expand2 = grid_data.node[
 #                        grid_data.node['expand2']==2].index.tolist()
-        
+
         di['BRANCH_EXPAND1'] = {None: br_expand1}
         di['BRANCH_EXPAND2'] = {None: br_expand2}
         di['GEN_EXPAND1'] = {None:gen_expand1}
         di['GEN_EXPAND2'] = {None:gen_expand2}
         di['NODE_EXPAND1'] = {None:node_expand1}
         di['NODE_EXPAND2'] = {None:node_expand2}
-        
+
         #Parameters:
         di['maxNewBranchNum'] = {None: maxNewBranchNum}
         di['samplefactor'] = {}
@@ -753,7 +778,7 @@ class SipModel():
             di['nodeExistingNumber'][n] = row['existing']
             di['nodeCostScale'][n] = row['cost_scaling']
             di['nodeArea'][n] = row['area']
-            
+
         di['branchExistingCapacity'] = {}
         di['branchExistingCapacity2'] = {}
         di['branchExpand'] = {}
@@ -780,7 +805,7 @@ class SipModel():
             if row['distance'] >= 0:
                 di['branchDistance'][k] = row['distance']
             else:
-                di['branchDistance'][k] = branch_distances[k]                    
+                di['branchDistance'][k] = branch_distances[k]
             di['branchType'][k] = row['type']
             di['branchCostScale'][k] = row['cost_scaling']
             di['branchOffshoreFrom'][k] = offsh['from'][k]
@@ -788,7 +813,7 @@ class SipModel():
             di['branchNodeFrom'][k] = row['node_from']
             di['branchNodeTo'][k] = row['node_to']
             di['branchReactance'][k] = row['reactance']
-            
+
         di['genCapacity']={}
         di['genCapacity2']={}
         di['genCapacityProfile']={}
@@ -818,7 +843,7 @@ class SipModel():
                 di['genCostProfile'][(k,t)] = grid_data.profiles[ref][i]
                 di['genCapacityProfile'][(k,t)] = (grid_data.profiles[ref2][i]
                             * row['inflow_fac'])
-           
+
         di['demandAvg'] = {}
         di['demandProfile'] ={}
         di['demNode'] = {}
@@ -832,13 +857,12 @@ class SipModel():
             for i,t in enumerate(grid_data.timerange):
                 di['demandProfile'][(k,t)] = grid_data.profiles[ref][i]
                 di['maxShed'][(k,t)] = grid_data.profiles[ref][i]*row['demand_avg']
-        
+
 
         # Read input data from XML file
-        import xml
         tree=xml.etree.ElementTree.parse(datafile)
         root = tree.getroot()
-        
+
         di['NODETYPE'] = {None:[]}
         di['nodetypeCost'] = {}
         for i in root.findall('./nodetype/item'):
@@ -864,44 +888,44 @@ class SipModel():
             di['branchtypeMaxCapacity'][name] = float(i.attrib['maxCap'])
             di['branchLossfactor'][(name,'fix')] = float(i.attrib['lossFix'])
             di['branchLossfactor'][(name,'slope')] = float(i.attrib['lossSlope'])
-                                                        
+
         di['GENTYPE'] = {None:[]}
         di['genTypeCost'] = {}
         di['genTypeEmissionRate'] = {}
         for i in root.findall('./gentype/item'):
             name = i.attrib['name']
             di['GENTYPE'][None].append(name)
-            di['genTypeCost'][name] = float(i.attrib['CX']) 
-            di['genTypeEmissionRate'][name] = float(i.attrib['CO2'])                                               
-        
+            di['genTypeCost'][name] = float(i.attrib['CX'])
+            di['genTypeEmissionRate'][name] = float(i.attrib['CO2'])
+
         for i in root.findall('./parameters'):
-            di['financeInterestrate'] = {None: 
+            di['financeInterestrate'] = {None:
                 float(i.attrib['financeInterestrate'])}
-            di['financeYears'] = {None: 
+            di['financeYears'] = {None:
                 float(i.attrib['financeYears'])}
-            di['omRate'] = {None: 
+            di['omRate'] = {None:
                 float(i.attrib['omRate'])}
-            di['CO2price'] = {None: 
+            di['CO2price'] = {None:
                 float(i.attrib['CO2price'])}
-            di['VOLL'] = {None: 
+            di['VOLL'] = {None:
                 float(i.attrib['VOLL'])}
-            di['stage2TimeDelta'] = {None: 
+            di['stage2TimeDelta'] = {None:
                 float(i.attrib['stage2TimeDelta'])}
-            di['STAGE'] = {None: 
+            di['STAGE'] = {None:
                 list(range(1,int(i.attrib['stages'])+1))}
-        
-         # Compute matrices used in power flow equaions 
+
+         # Compute matrices used in power flow equaions
 #        import scipy.sparse
 #        import networkx as nx
-        print("Computing B and DA matrices...")        
+        print("Computing B and DA matrices...")
 #        Bbus, DA = grid_data.computePowerFlowMatrices(const.baseZ)
 
         n_i = di['NODE'][None]
         b_i = di['BRANCH'][None]
         di['coeff_B'] = dict()
         di['coeff_DA'] = dict()
-        
-        print("Creating B and DA coefficients...")        
+
+        print("Creating B and DA coefficients...")
 #        cx = scipy.sparse.coo_matrix(Bbus)
 #        for i,j,v in zip(cx.row, cx.col, cx.data):
 #            di['coeff_B'][(n_i[i],n_i[j])] = v
@@ -925,44 +949,44 @@ class SipModel():
 #                    .format(gr.order(),refnode))
         # use first node as voltage angle reference
         di['refNodes'] = {n:True for n in refnodes}
-        
-        
+
+
 
         return {'powergim':di}
 
-        
+
     def writeStochasticProblem(self,path,dict_data):
         '''create input files for solving stochastic problem
-        
+
         Parameters
         ----------
         path : string
             Where to put generated files
         dict_data : dictionary
-            Pyomo data model in dictionary format. Output from 
+            Pyomo data model in dictionary format. Output from
             createModelData method
-            
+
         Returns
         -------
         string that can be written to .dat file (reference model data)
         '''
-        
+
         NL="\n"
         TAB="\t"
-        dat_str = "#PowerGIM data file"+NL   
+        dat_str = "#PowerGIM data file"+NL
         str_set=""
         str_param=""
         str_sprm=""
-        
+
         for key,val in dict_data['powergim'].items():
             v = getattr(self.abstractmodel,key)
-            
+
             if type(v)==pyo.base.sets.SimpleSet:
                 str_set += "set " + key + " := "
                 for x in val[None]:
                     str_set += str(x) + " "
                 str_set += ";" + NL
-                
+
             elif type(v)==pyo.base.param.IndexedParam:
                 print("PARAM: ",v)
                 str_param += "param " + key + ":= " + NL
@@ -977,29 +1001,29 @@ class SipModel():
                         str_param += str(k2) + TAB
                     str_param += str(v2) + NL
                 str_param += TAB+";"+NL
-                
+
             elif type(v)==pyo.base.param.SimpleParam:
                 # single value data
                 str_sprm += "param " + key + " := " + str(val[None]) + ";" + NL
-                
+
             else:
                 print("Unknown data  ",key,v,type(v))
                 raise Exception("Unknown data")
-            
-        dat_str += NL + str_set + NL + str_sprm + NL + str_param    
-        
+
+        dat_str += NL + str_set + NL + str_sprm + NL + str_param
+
         #scenario structure data file:
         #root node scenario data:
         with open("{}/RootNode.dat".format(path), "w") as text_file:
             text_file.write(dat_str)
         print("Root node data written to {}/RootNode.dat".format(path))
-        
+
         return dat_str
-        
-        
+
+
     def createScenarioTreeModel(self,num_scenarios,probabilities=None):
         '''Generate model instance with data. Alternative to .dat files
-        
+
         Parameters
         ----------
         num_scenarios : int
@@ -1007,15 +1031,15 @@ class SipModel():
         probabilities : list of float
             probabilities of each scenario (must sum to 1). Number of elements
             determine number of scenarios
-        
+
         Returns
         -------
         PySP 2-stage scenario tree model
-        
+
         This method may be called by "pysp_scenario_tree_model_callback()" in
         the model input file instead of using input .dat files
         '''
-        
+
         if probabilities is None:
             # equal probability:
             probabilities = [1/num_scenarios]*num_scenarios
@@ -1023,7 +1047,7 @@ class SipModel():
         #    st_model = tsm.CreateConcreteTwoStageScenarioTreeModel(
         #                        num_scenarios)
 
-        G = networkx.DiGraph() 
+        G = networkx.DiGraph()
         G.add_node("root")
         for i in range(len(probabilities)):
             G.add_edge("root","Scenario{}".format(i+1),
@@ -1033,17 +1057,17 @@ class SipModel():
         st_model = tsm.ScenarioTreeModelFromNetworkX(G,
                          edge_probability_attribute="probability",
                          stage_names=stage_names)
-    
+
         first_stage = st_model.Stages.first()
         second_stage = st_model.Stages.last()
-    
+
         # First Stage
         st_model.StageCost[first_stage] = 'firstStageCost'
         st_model.StageVariables[first_stage].add('branchNewCables')
         st_model.StageVariables[first_stage].add('branchNewCapacity')
         st_model.StageVariables[first_stage].add('newNodes')
         st_model.StageVariables[first_stage].add('genNewCapacity')
-    
+
         # Second Stage
         st_model.StageCost[second_stage] = 'secondStageCost'
         st_model.StageVariables[second_stage].add('generation')
@@ -1053,12 +1077,12 @@ class SipModel():
         st_model.StageVariables[second_stage].add('branchNewCables')
         st_model.StageVariables[second_stage].add('branchNewCapacity')
         st_model.StageVariables[second_stage].add('newNodes')
-            
+
         st_model.ScenarioBasedData=False
-                
+
         return st_model
-        
-        
+
+
     def computeBranchCongestionRent(self, model, b, stage=1):
         '''
         Compute annual congestion rent for a given branch
@@ -1069,20 +1093,20 @@ class SipModel():
 
         area1 = model.nodeArea[N1]
         area2 = model.nodeArea[N2]
-        
+
         flow = []
         deltaP = []
-        
+
         for t in model.TIME:
-            deltaP.append(abs(self.computeAreaPrice(model, area1, t,stage) 
+            deltaP.append(abs(self.computeAreaPrice(model, area1, t,stage)
                          - self.computeAreaPrice(model, area2, t,stage))*model.samplefactor[t])
             flow.append(model.branchFlow21[b,t,stage].value + model.branchFlow12[b,t,stage].value)
-        
+
         return sum(deltaP[i]*flow[i] for i in range(len(deltaP)))
 
     def computeCostBranch(self,model,b,stage=2,include_om=False):
         '''Investment cost of single branch NPV
-        
+
         corresponds to  firstStageCost in abstract model'''
         cost1 = self.costBranch(model,b,stage=stage)
         cost1npv = self.npvInvestment(model,stage=stage,investment=cost1,
@@ -1090,12 +1114,12 @@ class SipModel():
                                       subtractSalvage=True)
         cost_value = pyo.value(cost1npv)
         return cost_value
-        
+
 #        ar = 1
 #        br_num=0
 #        br_cap=0
 #        b_cost = 0
-#        
+#
 #        salvagefactor = (int(stage-1)*model.stage2TimeDelta/model.financeYears)*(
 #                1/((1+model.financeInterestrate)
 #                **(model.financeYears-model.stage2TimeDelta*int(stage-1))))
@@ -1121,7 +1145,7 @@ class SipModel():
 #        N2 = model.branchOffshoreTo[b]
 #        for N in [N1,N2]:
 #            b_cost += N*(model.branchtypeCost[typ,'CS']*br_num
-#                        +model.branchtypeCost[typ,'CSp']*br_cap)            
+#                        +model.branchtypeCost[typ,'CSp']*br_cap)
 #            b_cost += (1-N)*(model.branchtypeCost[typ,'CL']*br_num
 #                        +model.branchtypeCost[typ,'CLp']*br_cap)
 #        cost = model.branchCostScale[b]*b_cost
@@ -1133,9 +1157,9 @@ class SipModel():
 
     def computeCostNode(self,model,n,include_om=False):
         '''Investment cost of single node
-        
+
         corresponds to cost in abstract model'''
-        
+
         # Re-use method used in optimisation
         #NOTE: adding "()" after the expression gives the value
         cost={}
@@ -1150,11 +1174,11 @@ class SipModel():
             cost_value = cost_value + pyo.value(costnpv[stage])
         return cost_value
 
-        
-#        # node may be expanded in stage 1 or stage 2, but will never be 
+
+#        # node may be expanded in stage 1 or stage 2, but will never be
 #        # expanded in both
 #        # TODO: cope with stages
-#        
+#
 #        ar = 1
 #        n_num = 0
 #        stage=2
@@ -1193,7 +1217,7 @@ class SipModel():
                                       subtractSalvage=True)
         cost_value = pyo.value(cost1npv)
         return cost_value
-        
+
 #        ar = 1
 #        g_cap = 0
 #        salvagefactor = (int(stage-1)*model.stage2TimeDelta/model.financeYears)*(
@@ -1215,17 +1239,17 @@ class SipModel():
 #        cost -= cost*salvagefactor
 #        cost = cost*discount_t0
 #        return cost
-                
-                
+
+
     def computeGenerationCost(self,model,g,stage):
         '''compute NPV cost of generation (+ CO2 emissions)
-        
-        This corresponds to secondStageCost in abstract model        
+
+        This corresponds to secondStageCost in abstract model
         '''
         cost1 = self.costOperationSingleGen(model,g,stage=stage)
         cost_value = pyo.value(cost1)
         return cost_value
-        
+
 #        return cost_value
 #        ar = 1
 #        if stage == 1:
@@ -1239,7 +1263,7 @@ class SipModel():
 #                -annuityfactor(model.financeInterestrate,model.stage2TimeDelta)
 #                )
 #        expr = sum(gen[g,t,stage].value*model.samplefactor[t]*
-#                    model.genCostAvg[g]*model.genCostProfile[g,t] 
+#                    model.genCostAvg[g]*model.genCostProfile[g,t]
 #                     for t in model.TIME)
 #        expr2 = sum(gen[g,t,stage].value*model.samplefactor[t]*
 #                            model.genTypeEmissionRate[model.genType[g]]
@@ -1248,14 +1272,14 @@ class SipModel():
 #        # lifetime cost
 #        expr = (expr+expr2)*ar
 #        return expr
-     
-                
+
+
     def computeDemand(self,model,c,t):
         '''compute demand at specified load ant time'''
         return model.demandAvg[c]*model.demandProfile[c,t]
-    
-    
-    
+
+
+
     def computeCurtailment(self, model, g, t, stage=2):
         '''compute curtailment [MWh] per generator per hour'''
         cur = 0
@@ -1265,15 +1289,15 @@ class SipModel():
                 gen_max = model.genCapacity[g] + model.genNewCapacity[g,stage].value
                 cur = gen_max*model.genCapacityProfile[g,t] - model.generation[g,t,stage].value
             if stage == 2:
-                gen_max = (model.genCapacity[g] + model.genCapacity2[g] 
+                gen_max = (model.genCapacity[g] + model.genCapacity2[g]
                             +model.genNewCapacity[g,stage-1].value
                             +model.genNewCapacity[g,stage].value)
                 cur = gen_max*model.genCapacityProfile[g,t] - model.generation[g,t,stage].value
         return cur
-        
-        
 
-        
+
+
+
     def computeAreaEmissions(self,model,c, stage=2, cost=False):
         '''compute total emissions from a load/country'''
         # TODO: ensure that all nodes are mapped to a country/load
@@ -1285,7 +1309,7 @@ class SipModel():
         elif stage==2:
             ar = (annuityfactor(model.financeInterestrate,model.financeYears)
                 -annuityfactor(model.financeInterestrate,model.stage2TimeDelta))
-                
+
         for g in model.GEN:
             if model.genNode[g]==n:
                 expr += sum(gen[g,t,stage].value*model.samplefactor[t]*
@@ -1294,8 +1318,8 @@ class SipModel():
         if cost:
             expr = expr * model.CO2price.value * ar
         return expr
-        
-                                
+
+
     def computeAreaRES(self, model,j, shareof, stage=2):
         '''compute renewable share of demand or total generation capacity'''
         node = model.demNode[j]
@@ -1322,12 +1346,12 @@ class SipModel():
         else:
            print('Choose shareof dem or gen')
 
-    
+
     def computeAreaPrice(self, model, area, t, stage=2):
         '''cumpute the approximate area price based on max marginal cost'''
         mc = []
         for g in model.GEN:
-            gen = model.generation[g,t,stage].value                
+            gen = model.generation[g,t,stage].value
             if gen > 0:
                 if model.nodeArea[model.genNode[g]]==area:
                     mc.append(model.genCostAvg[g]*model.genCostProfile[g,t]
@@ -1339,21 +1363,21 @@ class SipModel():
             price = max(mc)
         return price
 
-        
+
     def computeAreaWelfare(self, model, c, t, stage=2):
         '''compute social welfare for a given area and time step
-        
-        Returns: Welfare, ProducerSurplus, ConsumerSurplus, 
+
+        Returns: Welfare, ProducerSurplus, ConsumerSurplus,
                  CongestionRent, IMport, eXport
         '''
         node = model.demNode[c]
         area = model.nodeArea[node]
-        PS = 0; CS = 0; CR = 0; GC = 0; gen = 0; 
+        PS = 0; CS = 0; CR = 0; GC = 0; gen = 0;
         dem = model.demandAvg[c]*model.demandProfile[c,t]
         price = self.computeAreaPrice(model, area, t, stage)
         #branch_capex = self.computeAreaCostBranch(model,c,include_om=True) #npv
         #gen_capex = self.computeAreaCostGen(model,c) #annualized
-        
+
         #TODO: check phase1 vs phase2
         gen_p = model.generation
         flow12 = model.branchFlow12
@@ -1415,52 +1439,52 @@ class SipModel():
         W = PS + CS + CR
         return {'W':W, 'PS':PS, 'CS':CS, 'CC':CC, 'GC':GC, 'CR':CR, 'IM':IM, 'X':X}
 
-            
+
     def computeAreaCostBranch(self,model,c,stage,include_om=False):
         '''Investment cost for branches connected to an given area'''
         node = model.demNode[c]
         area = model.nodeArea[node]
         cost = 0
-        
+
         for b in model.BRANCH:
             if model.nodeArea[model.branchNodeTo[b]]==area:
                 cost += self.computeCostBranch(model,b,stage,include_om)
             elif model.nodeArea[model.branchNodeFrom[b]]==area:
                 cost += self.computeCostBranch(model,b,stage,include_om)
-        
+
         # assume 50/50 cost sharing
         return cost/2
-        
-        
+
+
     def computeAreaCostGen(self,model,c):
         '''compute capital costs for new generator capacity'''
         node = model.demNode[c]
         area = model.nodeArea[node]
         gen_capex = 0
-        
+
         for g in model.GEN:
             if model.nodeArea[model.genNode[g]]==area:
                 typ = model.genType[g]
                 gen_capex += model.genTypeCost[typ]*model.genNewCapacity[g].value*model.genCostScale[g]
-                
-        return gen_capex  
-        
+
+        return gen_capex
+
     def saveDeterministicResults(self,model,excel_file):
         '''export results to excel file
-        
+
         Parameters
         ==========
         model : Pyomo model
             concrete instance of optimisation model
         excel_file : string
             name of Excel file to create
-        
+
         '''
         df_branches = pd.DataFrame()
         df_nodes = pd.DataFrame()
         df_gen = pd.DataFrame()
         df_load = pd.DataFrame()
-        # Specifying columns is not necessary, but useful to get the wanted 
+        # Specifying columns is not necessary, but useful to get the wanted
         # ordering
         df_branches = pd.DataFrame(columns=['from','to','fArea','tArea','type',
                                            'existingCapacity','expand','newCables','newCapacity',
@@ -1477,7 +1501,7 @@ class SipModel():
                                         'emissions','emissionCap', 'emission_cost',
                                         'price_avg','RES%dem','RES%gen', 'IM', 'EX',
                                         'CS', 'PS', 'CR', 'CAPEX', 'Welfare'])
-        
+
         for j in model.BRANCH:
             df_branches.loc[j,'num'] = j
             df_branches.loc[j,'from'] = model.branchNodeFrom[j]
@@ -1497,11 +1521,11 @@ class SipModel():
                         model.branchFlow12[(j,t,s)].value for t in model.TIME])
                     df_branches.loc[j,'flow21avg_1'] = np.mean([
                         model.branchFlow21[(j,t,s)].value for t in model.TIME])
-                    cap1 = model.branchExistingCapacity[j] + model.branchNewCapacity[j,s].value  
+                    cap1 = model.branchExistingCapacity[j] + model.branchNewCapacity[j,s].value
                     df_branches.loc[j,'flow12%_1'] = (
                             df_branches.loc[j,'flow12avg_1']/cap1)
                     df_branches.loc[j,'flow21%_1'] = (
-                            df_branches.loc[j,'flow21avg_1']/cap1)   
+                            df_branches.loc[j,'flow21avg_1']/cap1)
                 elif s==2:
                     df_branches.loc[j,'newCables2'] = model.branchNewCables[j,s].value
                     df_branches.loc[j,'newCapacity2'] = model.branchNewCapacity[j,s].value
@@ -1514,14 +1538,14 @@ class SipModel():
                     df_branches.loc[j,'flow12%_2'] = (
                             df_branches.loc[j,'flow12avg_2']/cap2)
                     df_branches.loc[j,'flow21%_2'] = (
-                            df_branches.loc[j,'flow21avg_2']/cap2)                
+                            df_branches.loc[j,'flow21avg_2']/cap2)
             #branch costs
             df_branches.loc[j,'cost'] = sum(self.computeCostBranch(model,j,stage) for stage in model.STAGE)
             df_branches.loc[j,'cost_withOM'] = sum(self.computeCostBranch(
                         model,j,stage,include_om=True) for stage in model.STAGE)
             df_branches.loc[j,'congestion_rent'] = self.computeBranchCongestionRent(
                         model,j,stage=len(model.STAGE))*annuityfactor(model.financeInterestrate,model.financeYears)
-        
+
         for j in model.NODE:
             df_nodes.loc[j,'num'] = j
             df_nodes.loc[j,'area'] = model.nodeArea[j]
@@ -1533,8 +1557,8 @@ class SipModel():
             df_nodes.loc[j,'cost'] = self.computeCostNode(model,j)
             df_nodes.loc[j,'cost_withOM'] = self.computeCostNode(model,j,
                 include_om=True)
-            
-        
+
+
         for j in model.GEN:
             df_gen.loc[j,'num'] = j
             df_gen.loc[j,'area'] = model.nodeArea[model.genNode[j]]
@@ -1572,7 +1596,7 @@ class SipModel():
                         self.computeCurtailment(model,j,t,stage=2) for t in model.TIME])
                     df_gen.loc[j,'newCapacity2'] = model.genNewCapacity[j,s].value
                     df_gen.loc[j,'cost_NPV2'] = self.computeGenerationCost(model,j,stage=2)
-                
+
             df_gen.loc[j,'cost_investment'] = sum(self.computeCostGenerator(model,j,stage) for stage in model.STAGE)
             df_gen.loc[j,'cost_investment_withOM'] = sum(self.computeCostGenerator(model,j,stage,
                 include_om=True) for stage in model.STAGE)
@@ -1583,7 +1607,7 @@ class SipModel():
         stage=max(model.STAGE)
         def _n(n,p):
             return n+str(p)
-            
+
         for j in model.LOAD:
             df_load.loc[j,'num'] = j
             df_load.loc[j,'node'] = model.demNode[j]
@@ -1601,7 +1625,7 @@ class SipModel():
                 df_load.loc[j,'emissionCap'] = model.emissionCap[j]
             df_load.loc[j,_n('emissions',stage)] = self.computeAreaEmissions(model,j,
                                                 stage=stage)
-            df_load.loc[j,_n('emission_cost',stage)] = self.computeAreaEmissions(model,j, 
+            df_load.loc[j,_n('emission_cost',stage)] = self.computeAreaEmissions(model,j,
                                                 stage=stage,cost=True)
             df_load.loc[j,_n('RES%dem',stage)] = self.computeAreaRES(model,j,stage=stage,
                                                             shareof='dem')
@@ -1621,39 +1645,39 @@ class SipModel():
                                             for t in model.TIME)
             df_load.loc[j,_n('CAPEX1',stage)] = self.computeAreaCostBranch(model,j,stage,
                                             include_om=False)
-        
+
         df_cost = pd.DataFrame(columns=['value','unit'])
         df_cost.loc['InvestmentCosts','value'] = sum(
             model.investmentCost[s].value for s in model.STAGE)/1e9
         df_cost.loc['OperationalCosts','value'] = sum(
             model.opCost[s].value for s in model.STAGE)/1e9
         df_cost.loc['newTransmission','value'] = sum(
-            self.computeCostBranch(model,b,stage,include_om=True) 
+            self.computeCostBranch(model,b,stage,include_om=True)
             for b in model.BRANCH for stage in model.STAGE)/1e9
         df_cost.loc['newGeneration','value'] = sum(
-            self.computeCostGenerator(model,g,stage,include_om=True) 
+            self.computeCostGenerator(model,g,stage,include_om=True)
             for g in model.GEN for stage in model.STAGE)/1e9
         df_cost.loc['newNodes','value'] = sum(
-            self.computeCostNode(model,n,include_om=True) 
+            self.computeCostNode(model,n,include_om=True)
             for n in model.NODE)/1e9
         df_cost.loc['InvestmentCosts','unit'] = '10^9 EUR'
         df_cost.loc['OperationalCosts','unit'] = '10^9 EUR'
         df_cost.loc['newTransmission','unit'] = '10^9 EUR'
         df_cost.loc['newGeneration','unit'] = '10^9 EUR'
         df_cost.loc['newNodes','unit'] = '10^9 EUR'
-            
+
         #model.solutions.load_from(results)
-        #print('First stage costs: ', 
+        #print('First stage costs: ',
         #      pyo.value(model.firstStageCost)/10**9, 'bnEUR')
-        #print('Second stage costs: ', 
+        #print('Second stage costs: ',
         #      pyo.value(model.secondStageCost)/10**9, 'bnEUR')
 
-        writer = pd.ExcelWriter(excel_file) 
-        df_cost.to_excel(excel_writer=writer,sheet_name="cost") 
-        df_branches.to_excel(excel_writer=writer,sheet_name="branches")     
-        df_nodes.to_excel(excel_writer=writer,sheet_name="nodes") 
-        df_gen.to_excel(excel_writer=writer,sheet_name="generation") 
-        df_load.to_excel(excel_writer=writer,sheet_name="demand") 
+        writer = pd.ExcelWriter(excel_file)
+        df_cost.to_excel(excel_writer=writer,sheet_name="cost")
+        df_branches.to_excel(excel_writer=writer,sheet_name="branches")
+        df_nodes.to_excel(excel_writer=writer,sheet_name="nodes")
+        df_gen.to_excel(excel_writer=writer,sheet_name="generation")
+        df_load.to_excel(excel_writer=writer,sheet_name="demand")
         writer.save()
 
 
@@ -1661,7 +1685,7 @@ class SipModel():
                                  model=None,file_ph=None,
                                  stage=1,scenario=None, newData=False):
         '''Extract resulting optimal grid layout from simulation results
-        
+
         Parameters
         ==========
         grid_data : powergama.GridData
@@ -1677,70 +1701,74 @@ class SipModel():
         scenario : int
             which stage 2 scenario to get data for (only relevant when stage=2)
         newData : Boolean
-            Choose whether to use only new data (True) or add new data to 
+            Choose whether to use only new data (True) or add new data to
             existing data (False)
-            
-        Use either model or file_ph parameter        
-        
+
+        Use either model or file_ph parameter
+
         Returns
         =======
         GridData object reflecting optimal solution
         '''
-        import copy
 
         grid_res = copy.deepcopy(grid_data)
-        res_brC = pd.DataFrame(data=grid_res.branch['capacity']) 
+        res_brC = pd.DataFrame(data=grid_res.branch['capacity'])
         res_N = pd.DataFrame(data=grid_res.node['existing'])
         res_G = pd.DataFrame(data=grid_res.generator['pmax'])
         if newData:
             res_brC[res_brC>0] = 0
 #            res_N[res_N>0] = 0
             res_G[res_G>0] = 0
-            
+
         if model is not None:
-            if stage == 1:
+            if stage >= 1:
+                stage1=1
                 for j in model.BRANCH:
-                    res_brC['capacity'][j] += model.branchNewCapacity[j,stage].value
+                    res_brC.loc[j,'capacity'] += model.branchNewCapacity[j,stage1].value
                 for j in model.NODE:
-                    res_N['existing'][j] += int(model.newNodes[j,stage].value)
+                    res_N.loc[j,'existing'] += int(model.newNodes[j,stage1].value)
                 for j in model.GEN:
-                    res_G['pmax'][j] += model.genNewCapacity[j,stage].value
+                    newgen=model.genNewCapacity[j,stage1].value
+                    if newgen is not None:
+                        res_G.loc[j,'pmax'] += model.genNewCapacity[j,stage1].value
             if stage >= 2:
                 #add to investments in stage 1
                 res_brC['capacity'] += grid_res.branch['capacity2']
                 res_G['pmax'] += grid_res.generator['pmax2']
                 for j in model.BRANCH:
-                    res_brC['capacity'][j] += model.branchNewCapacity[j,stage].value
+                    res_brC.loc[j,'capacity'] += model.branchNewCapacity[j,stage].value
                 for j in model.NODE:
-                    res_N['existing'][j] += int(model.newNodes[j,stage].value)
+                    res_N.loc[j,'existing'] += int(model.newNodes[j,stage].value)
                 for j in model.GEN:
-                    res_G['pmax'][j] += model.genNewCapacity[j,stage].value
+                    newgen=model.genNewCapacity[j,stage].value
+                    if newgen is not None:
+                        res_G.loc[j,'pmax'] += model.genNewCapacity[j,stage].value
         elif file_ph is not None:
             df_ph = pd.read_csv(file_ph,header=None,skipinitialspace=True,
                                 names=['stage','node',
                                        'var','var_indx','value'])
             if stage==1:
                 df_branchNewCapacity = df_ph[
-                    (df_ph['var']=='branchNewCapacity') & 
+                    (df_ph['var']=='branchNewCapacity') &
                     (df_ph['stage']==stage)]
                 df_newNodes = df_ph[
-                    (df_ph['var']=='newNodes') & 
+                    (df_ph['var']=='newNodes') &
                     (df_ph['stage']==stage)]
                 df_newGen = df_ph[
-                    (df_ph['var']=='genNewCapacity') & 
+                    (df_ph['var']=='genNewCapacity') &
                     (df_ph['stage']==stage)]
                 for k,row in df_branchNewCapacity.iterrows():
                     res_brC['capacity'][int(row['var_indx'])] += float(row['value'])
                 for k,row in df_newNodes.iterrows():
                     res_N['existing'][row['var_indx']] += int(row['value'])
                 for k,row in df_newGen.iterrows():
-                    res_G['pmax'][int(row['var_indx'])] += float(row['value'])                
+                    res_G['pmax'][int(row['var_indx'])] += float(row['value'])
             if stage>=2:
                 if scenario is None:
                     raise Exception('Missing input "scenario"')
                 res_brC['capacity'] += grid_res.branch['capacity2']
                 res_G['pmax'] += grid_res.generator['pmax2']
-                    
+
                 df_branchNewCapacity = df_ph[
                     (df_ph['var']=='branchNewCapacity') &
                     (df_ph['stage']==stage) &
@@ -1757,29 +1785,29 @@ class SipModel():
                 for k,row in df_newNodes.iterrows():
                     res_N['existing'][row['var_indx']] += int(row['value'])
                 for k,row in df_newGen.iterrows():
-                    res_G['pmax'][int(row['var_indx'])] += float(row['value'])                
+                    res_G['pmax'][int(row['var_indx'])] += float(row['value'])
         else:
             raise Exception('Missing input parameter')
-            
+
         grid_res.branch['capacity'] = res_brC['capacity']
         grid_res.node['existing'] = res_N['existing']
         grid_res.generator['pmax'] = res_G['pmax']
-        grid_res.branch = grid_res.branch[grid_res.branch['capacity'] 
+        grid_res.branch = grid_res.branch[grid_res.branch['capacity']
             > self._NUMERICAL_THRESHOLD_ZERO]
-        grid_res.node = grid_res.node[grid_res.node['existing'] 
+        grid_res.node = grid_res.node[grid_res.node['existing']
             > self._NUMERICAL_THRESHOLD_ZERO]
         return grid_res
-    
+
     def loadResults(self, filename,sheet):
         '''load results from excel into pandas dataframe'''
         df_res = pd.read_excel(filename,sheetname=sheet)
         return df_res
-        
+
     def plotEnergyMix(self, model, areas=None,timeMaxMin=None,relative=False,
                       showTitle=True,variable="energy",gentypes=None, stage=1):
         '''
         Plot energy, generation capacity or spilled energy as stacked bars
-        
+
         Parameters
         ----------
         areas : list of sting
@@ -1792,10 +1820,8 @@ class SipModel():
             Which variable to plot (default is energy production)
         gentypes : list
             List of generator types to include. None gives all.
-        ''' 
-        import matplotlib.pyplot as plt
-        import matplotlib.cm as cm
-        
+        '''
+
         s = stage
         if areas is None:
             areas = list(model.AREA)
@@ -1832,7 +1858,7 @@ class SipModel():
                 for i in model.GEN:
                     if ar == model.nodeArea[model.genNode[i]]:
                         prodsum[ar] += gen_output[i]
-                             
+
         plt.figure()
         ax = plt.subplot(111)
         width = 0.8
@@ -1878,11 +1904,11 @@ class SipModel():
             plt.title(title)
         plt.show()
         return
-        
+
     def plotAreaPrice(self, model, boxplot=False, areas=None,timeMaxMin=None,showTitle=False,stage=1):
         '''Show area price(s)
         TODO: incoporate samplefactor
-        
+
         Parameters
         ----------
         areas (list)
@@ -1890,16 +1916,14 @@ class SipModel():
         timeMaxMin (list) (default = None)
             [min, max] - lower and upper time interval
         '''
-        import matplotlib.pyplot as plt
-        import matplotlib.cm as cm
-        
+
         s = stage
         if areas is None:
             areas = list(model.AREA)
         if timeMaxMin is None:
             timeMaxMin = list(model.TIME)
-        timerange = range(timeMaxMin[0],timeMaxMin[-1]) 
-        
+        timerange = range(timeMaxMin[0],timeMaxMin[-1])
+
         numCurves = len(areas)+1
         #colours = cm.viridis(np.linspace(0, 1, numCurves))
         colours = cm.hsv(np.linspace(0, 1, numCurves))
@@ -1935,12 +1959,12 @@ class SipModel():
         plt.ylabel('Price [EUR/MWh]')
         plt.show()
         return
-        
+
     def plotWelfare(self, model, areas=None,timeMaxMin=None,relative=False,
                       showTitle=False,variable="energy",gentypes=None, stage=2):
         '''
         Plot welfare
-        
+
         Parameters
         ----------
         areas : list of sting
@@ -1953,10 +1977,8 @@ class SipModel():
             Which variable to plot (default is energy production)
         gentypes : list
             List of generator types to include. None gives all.
-        ''' 
-        import matplotlib.pyplot as plt
-        import matplotlib.cm as cm
-        
+        '''
+
         s = stage
         if areas is None:
             areas=[]
@@ -1988,7 +2010,7 @@ class SipModel():
                 for typ in types:
                     total[c] += sum([self.computeAreaWelfare(model,c,t,s)[typ]
                                     *model.samplefactor[t] for t in model.TIME])
-                             
+
         plt.figure()
         ax = plt.subplot(111)
         width = 0.8
@@ -2025,13 +2047,13 @@ class SipModel():
         if showTitle:
             plt.title(title)
         plt.show()
-        
+
         return
-    
+
     def plotInvestments(self,filename, variable, unit='capacity'):
         '''
         Plot investment bar plots
-        
+
         filename: string
             excel-file generated by 'saveDeterministicResults'
         variable: string
@@ -2039,8 +2061,6 @@ class SipModel():
         unit: string
             capacity, monetary
         '''
-        import matplotlib.pyplot as plt
-        import matplotlib.cm as cm
         figsize=(8,6)
         width = 0.8
         if variable=='dcbranch':
@@ -2056,7 +2076,7 @@ class SipModel():
                 ax1.set_xticklabels(ax1.xaxis.get_majorticklabels(), rotation=0)
                 ax1.set_ylabel('New capacity [MW]', fontsize=12)
                 ax2 = df_res[['cost_withOM','congestion_rent']][df_res['newCapacity']>0].divide(10**9).plot(
-                            kind='bar', title='costs and benefits', figsize=figsize, 
+                            kind='bar', title='costs and benefits', figsize=figsize,
                             legend=True, fontsize=11,color=colours, width=width)
                 ax2.set_xlabel('Interconnector', fontsize=12)
                 ax2.set_xticklabels(ax2.xaxis.get_majorticklabels(), rotation=0)
@@ -2076,14 +2096,13 @@ class SipModel():
             df_res['newCapacity'].plot.bar(stacked=True)
         else:
             print('A variable has to be chosen: dcbranch, acbranch, node, generator')
-        
+
         return
-        
+
     def plotBranchData(self, model,stage=2):
         '''
         Plot branch data
         '''
-        import matplotlib.pyplot as plt
         s = stage
         df_branch = pd.DataFrame()
         i=0
@@ -2101,496 +2120,7 @@ class SipModel():
                 df_branch.loc[i,'utilization'] = (model.branchFlow12[b,t,s].value+model.branchFlow21[b,t,s].value)/(
                     model.branchExistingCapacity[b]+model.branchExistingCapacity2[b]
                     +sum(model.branchNewCapacity[b,h+1].value for h in range(s)))
-        
+
         df_branch.groupby('branch')['flow12']
-        
+
         return
-
-        
-        
-        
-
-        
-        
-        
-def annuityfactor(rate,years):
-    '''Net present value factor for fixed payments per year at fixed rate'''
-    if rate==0:
-        annuity = years
-    else:
-        annuity = (1-1/((1+rate)**years))/rate
-    return annuity
-        
-            
-
-def _TMPsample_kmeans(X, samplesize):
-    """K-means sampling
-
-    Parameters
-    ==========
-    X : matrix
-        data matrix to sample from
-    samplesize : int
-        size of sample
-        
-    This method relies on sklearn.cluster.KMeans
-
-    """
-    """
-    TODO: Have to weight the importance, i.e. multiply timeseries with
-    installed capacities in order to get proper clustering. 
-    """
-    from sklearn.cluster import KMeans
-    #from sklearn.metrics.pairwise import pairwise_distances_argmin
-    #from sklearn.datasets.samples_generator import make_blobs
-    
-    n_clusters=samplesize
-    k_means = KMeans(init='k-means++', n_clusters=n_clusters, n_init=10)
-    k_means.fit(X)
-    # which cluster nr it belongs to:
-    k_means_labels = k_means.labels_    
-    k_means_cluster_centers = k_means.cluster_centers_
-    k_means_labels_unique, X_indecies = np.unique(k_means_labels, 
-                                                  return_index=True)
-    #k_means_predict = k_means.predict(X)
-        
-    return k_means_cluster_centers
-
-    
-def _TMPsample_mmatching(X, samplesize):
-    """
-    The idea is to make e.g. 10000 randomsample-sets of size=samplesize 
-    from the originial datasat X. 
-    
-    Choose the sampleset with the lowest objective:
-    MINIMIZE [(meanSample - meanX)^2 + (stdvSample - stdvX)^2...]
-    
-    in terms of stitistical measures
-    """
-    
-    return
-
-
-def _TMPsample_meanshift(X, samplesize):
-    """M matching sampling
-
-    Parameters
-    ==========
-    X : matrix
-        data matrix to sample from
-    samplesize : int
-        size of sample
-        
-    This method relies on sklearn.cluster.MeanShift
-
-    It is a centroid-based algorithm, which works by updating candidates 
-    for centroids to be the mean of the points within a given region. 
-    These candidates are then filtered in a post-processing stage to 
-    eliminate near-duplicates to form the final set of centroids.
-    """
-    #from sklearn.cluster import MeanShift, estimate_bandwidth
-    #from sklearn.datasets.samples_generator import make_blobs
-
-    # The following bandwidth can be automatically detected using
-    bandwidth = sklearn.cluster.estimate_bandwidth(X, quantile=0.2, 
-                                                   n_samples=samplesize)
-    
-    ms = sklearn.cluster.MeanShift(bandwidth=bandwidth, bin_seeding=True)
-    ms.fit(X)
-    #labels = ms.labels_
-    cluster_centers = ms.cluster_centers_
-    
-    #labels_unique = np.unique(labels)
-    #n_clusters_ = len(labels_unique)
-    
-    #print("number of estimated clusters : %d" % n_clusters_)
-    
-    return cluster_centers
-
-
-def _TMPsample_latinhypercube(X, samplesize):
-    """Latin hypercube sampling
-
-    Parameters
-    ==========
-    X : matrix
-        data matrix to sample from
-    samplesize : int
-        size of sample
-        
-    This method relies on pyDOE.lhs(n, [samples, criterion, iterations])
-
-    """
-    """
-    lhs(n, [samples, criterion, iterations])
-    
-    n:an integer that designates the number of factors (required)
-    samples: an integer that designates the number of sample points to generate 
-        for each factor (default: n) 
-    criterion: a string that tells lhs how to sample the points (default: None,  
-        which simply randomizes the points within the intervals):
-        “center” or “c”: center the points within the sampling intervals
-        “maximin” or “m”: maximize the minimum distance between points, but place 
-                          the point in a randomized location within its interval
-        “centermaximin” or “cm”: same as “maximin”, but centered within the intervals
-        “correlation” or “corr”: minimize the maximum correlation coefficient
-    """
-    from pyDOE import lhs
-    from scipy.stats.distributions import norm
-    X_rows = X.shape[0]; X_cols = X.shape[1]
-    X_mean = X.mean(); X_std = X.std()
-    X_sample = lhs( X_cols , samples=samplesize , criterion='center' )
-    kernel=False
-    if kernel:
-        # Fit data w kernel density
-        from sklearn.neighbors.kde import KernelDensity
-        kde = KernelDensity(kernel='gaussian', bandwidth=0.2).fit(X)
-        kde.score_samples(X)
-        # random sampling (TODO: fit to latin hypercube sample):
-        kde_sample = kde.sample(samplesize)     
-    else:
-        # Fit data w normal distribution
-        for i in range(X_cols):
-            X_sample[:,i] = norm(loc=X_mean[i] , scale=X_std[i]).ppf(X_sample[:,i])
-    
-    return X_sample
-  
-def sampleProfileData(data, samplesize, sampling_method):
-        """ Sample data from full-year time series
-        
-        Parameters
-        ==========
-        data : GridData object
-            Sample from data.profiles
-        samplesize : int
-            size of sample
-        sampling_method : str
-            'kmeans', 'uniform', 
-            EXPERIMENTAL: 'kmeans_scale', 'lhs',  ('mmatching', 'meanshift')
-            
-        
-        Returns
-        =======
-            reduced data matrix according to sample size and method
-        
-        
-        
-        """
-        
-        """
-        Harald:
-        TODO: Tidy up - remove irrelevant code.
-        -Note: Profiles may also include generator cost profile, not only
-        generation and consumption
-        -Should we cluster the profiles, or all consumers and generators? This
-        is different sine many generators/consumers may use the same profile.
-        Using all generators/consumers is more difficult, but probably more 
-        correct
-        -How to determine weight between different types of variations, i.e.
-        generation/consumption (MW) vs marginal costs (€)? Using normalised
-        profiles with no weighing is one such choice.
-        """
-        
-        X = data.profiles.copy()
-        
-        if sampling_method == 'kmeans':
-            """
-            Harald preferred method:            
-            Scale all profiles to have similar variability, 
-            then cluster, and finally scale back
-            """
-            # Consider only those profiles which are used in the model:
-            profiles_in_use = data.generator['inflow_ref'].append(
-                data.generator['fuelcost_ref']).append(
-                data.consumer['demand_ref']).unique().tolist()
-            X = X[profiles_in_use]
-
-            #scaler = sklearn.preprocessing.MinMaxScaler()
-            scaler = sklearn.preprocessing.RobustScaler()
-            x_scaled = scaler.fit_transform(X)
-            X = pd.DataFrame(data=x_scaled, columns=X.columns, 
-                          index=X.index)
-            km_norm2=sklearn.cluster.KMeans(n_clusters=samplesize,
-                                            init='k-means++')
-            km_norm2.fit(X)
-            km_orig=scaler.inverse_transform(km_norm2.cluster_centers_)
-            X_sample = pd.DataFrame(data=km_orig,columns=X.columns)
-            return X_sample
-
-        elif sampling_method == 'kmeans_scale':
-            print("Using k-means with scaled profiles -> IN PROGRESS")
-            #TODO: How to scale prices?
-            # Multiply time series for load and VRES with their respective 
-            # maximum capacities in order to get the correct clusters/samples
-
-            for k in data.profiles.columns.values.tolist():
-                ref = k
-                pmax = sum(data.generator.pmax[g] for g in range(len(data.generator)) if data.generator.inflow_ref[g] == ref)
-                if pmax > 0:
-                    X[ref] = data.profiles[ref] * pmax
-#            for k,row in self.generator.iterrows():
-#                pmax = row['pmax']
-#                ref = row['inflow_ref']
-#                if X[ref].mean()<1:
-#                    X[ref] = self.profiles[ref] * pmax
-            X['const'] = 1
-            
-            for k,row in data.consumer.iterrows():
-                pmax = row['demand_avg']
-                ref = row['demand_ref']
-                X[ref] = data.profiles[ref] * pmax
-                
-                X_sample = _TMPsample_kmeans(X, samplesize)
-                X_sample = pd.DataFrame(data=X_sample,
-                        columns=X.columns)
-
-            # convert back to relative values
-            for k in data.profiles.columns.values.tolist():
-                ref = k
-                pmax = sum(data.generator.pmax[g] for g in range(len(data.generator)) if data.generator.inflow_ref[g] == ref)
-                if pmax > 0:
-                    X_sample[ref] = X_sample[ref] / pmax
-#            for k,row in self.generator.iterrows():
-#                pmax = row['pmax']
-#                ref = row['inflow_ref']
-#                if pmax == 0:
-#                    centroids[ref] = 0
-#                else:
-#                    if X[ref].mean()>1:
-#                        centroids[ref] = centroids[ref] / pmax
-            for k,row in data.consumer.iterrows():
-                pmax = row['demand_avg']
-                ref = row['demand_ref']
-                if pmax == 0:
-                    X_sample[ref] = 0
-                else:
-                    X_sample[ref] = X_sample[ref] / pmax
-            X_sample['const'] = 1
-            return X_sample
-
-        elif sampling_method == 'mmatching':
-            print("Using moment matching... -> NOT IMPLEMENTED")
-        elif sampling_method == 'meanshift':
-            print("Using Mean-Shift... -> EXPERIMENTAL")
-            X_sample = _TMPsample_meanshift(X, samplesize)
-            return X_sample
-        elif sampling_method == 'lhs':
-            print("Using Latin-Hypercube... -> EXPERIMENTAL")
-            X_sample = _TMPsample_latinhypercube(X, samplesize)
-            X_sample = pd.DataFrame(data=X_sample,
-                        columns=X.columns)
-            X_sample['const'] = 1
-            X_sample[(X_sample < 0)] = 0
-            return X_sample
-        elif sampling_method == 'uniform':
-            print("Using uniform sampling (consider changing sampling method!)...")
-            #Use numpy random in order to have control of ranom seed from
-            # top level script (np.random.seed(..))
-            timerange=pd.np.random.choice(data.profiles.shape[0],
-                                        size=samplesize,replace=False)
-
-            #timerange = random.sample(range(8760),samplesize)
-            X_sample = data.profiles.loc[timerange, :]
-            X_sample.index = list(range(len(X_sample.index)))
-            return X_sample
-        else:
-            raise Exception("Unknown sampling method")                     
-        return
-        
-        
-        
-        
-class CostBenefit(object):
-    '''
-    Experimental class for cost-benefit calculations. 
-    
-    Currently including allocation schemes based on "cooperative game theory"
-    '''
-
-    
-    def __init__(self):
-        """Collect value-functions for each player in the expansion-game
-        
-        Parameters
-        ----------
-        
-        
-        Creat CostBenefit object:
-        """
-        self.players = None
-        self.coalitions = None
-        self.valueFunction = None
-        self.payoff = None
-
-    def power_set(self,List):
-        """
-        function to return the powerset of a list, i.e. all possible subsets ranging
-        from length of one, to the length of the larger list
-        """
-        from itertools import combinations
-        
-        subs = [list(j) for i in range(len(List)) for j in combinations(List, i+1)]
-        return subs  
-                
-    def nCr(self,n,r):
-        '''
-        calculate the binomial coefficient, i.e. how many different possible 
-        subsets can be made from the larger set n
-        '''
-        import math
-        f = math.factorial
-        return f(n) / f(r) / f(n-r)
-        
-    
-    def gameSetup(self, grid_data):    
-        self.players = grid_data.node.area.unique().tolist()
-        self.coalitions = self.power_set(self.players)
-        
-        
-    def getBinaryCombinations(self,num):
-        '''
-        Returns a sequence of different combinations 1/0 for a number of
-        decision variables. E.g. three cable investments;
-        (0,0,0), (1,0,0), (0,1,0), and so on. 
-        '''
-        import itertools
-        combinations = list(itertools.product([0,1], repeat=num))
-        return combinations
-
-        
-    def gameShapleyValue(self,player_list, values):
-        '''compute the Shapley Value from cooperative game theory
-       
-       Parameters:
-        ===========
-        player_list: list of all players in the game
-        values: characteristic function for each subset of N players, i.e. 
-                possible coaltions/cooperations among players.
-                
-        Returns the Shapley value, i.e. a fair cost/benefit allocation based
-        on the average marginal contribution from each player. 
-        
-        '''
-                    
-        if type(values) is not dict:
-            raise TypeError("characteristic function must be a dictionary")
-        for key in values:
-            if len(str(key)) == 1 and type(key) is not tuple:
-                values[(key,)] = values.pop(key)
-            elif type(key) is not tuple:
-                raise TypeError("key must be a tuple")
-        for key in values:
-            sortedkey = tuple(sorted(list(key)))
-            values[sortedkey] = values.pop(key)
-    
-        player_list = max(values.keys(), key=lambda key: len(key))
-        for coalition in self.power_set(player_list):
-            if tuple(sorted(list(coalition))) not in sorted(values.keys()):
-                raise ValueError("characteristic function must be the power set")
-        
-        payoff_vector = {}
-        n = len(player_list)
-        for player in player_list:
-            weighted_contribution = 0
-            for coalition in self.power_set(player_list):
-                if coalition:  # If non-empty
-                    k = len(coalition)
-                    weight = 1/(self.nCr(n,k)*k)
-                    t = tuple(p for p in coalition if p != player)
-                    weighted_contribution += weight * (values[tuple(coalition)]
-                                                       - values[t])
-            payoff_vector[player] = weighted_contribution
-    
-        return payoff_vector
-            
-    def gameIsMonotone(self, values):        
-        '''
-        Returns true if the game/valueFunction is monotonic.
-        A game G = (N, v) is monotonic if it satisfies the value function
-        of a subset is less or equal then the value function from its
-        union set:
-        v(C_2) \geq v(C_1) for all C_1 \subseteq C_2
-        '''
-        import itertools
-        return not any([set(p1) <= set(p2) and values[p1] > values[p2]
-            for p1, p2 in itertools.permutations(values.keys(), 2)])
-    
-        
-    def gameIsSuperadditive(self, values):
-        '''
-        Returns true if the game/valueFunction is superadditive.
-        A characteristic function game G = (N, v) is superadditive
-        if it the sum of two coalitions/subsets gives a larger value than the 
-        individual sum:
-        v(C_1 \cup C_2) \geq v(C_1) +  v(C_2) for
-        all C_1, C_2 \subseteq 2^{\Omega} such that C_1 \cap C_2
-        = \emptyset.
-        '''
-        import itertools
-        sets = values.keys()
-        for p1, p2 in itertools.combinations(sets, 2):
-            if not (set(p1) & set(p2)):
-                union = tuple(sorted(set(p1) | set(p2)))
-                if values[union] < values[p1] + values[p2]:
-                    return False
-        return True            
-    
-    def gamePayoffIsEfficient(self, player_list, values, payoff_vector):
-        '''
-        Return `true if the payoff vector is efficient. A payoff vector v is 
-        efficient if the sum of payments equal the total value provided by a 
-        set of players. 
-        \sum_{i=1}^N \lambda_i = v(\Omega);
-        '''
-        pl = tuple(sorted(list(player_list)))
-        return sum(payoff_vector.values()) == values[pl]
-    
-    def gamePayoffHasNullplayer(self, player_list, values, payoff_vector):
-        '''
-        Return true if the payoff vector possesses the nullplayer property.
-        A payoff vector v has the nullplayer property if there exists
-        an i such that v(C \cup i) = v(C) for all C \in 2^{\Omega}
-        then, \lambda_i = 0. In other words: if a player does not
-        contribute to any coalition then that player should receive no payoff.
-        '''
-        for player in player_list:
-            results = []
-            for coalit in values:
-                if player in coalit:
-                    t = tuple(sorted(set(coalit) - {player}))
-                    results.append(values[coalit] == values[t])
-            if all(results) and payoff_vector[player] != 0:
-                return False
-        return True
-    
-    def gamePayoffIsSymmetric(self, values, payoff_vector):
-        '''
-        Returns true if the resulting payoff vector possesses the symmetry property.
-        A payoff vector possesses the symmetry property if players with equal
-        marginal contribution receives the same payoff:
-        v(C \cup i) = v(C \cup j) for all
-        C \in 2^{\Omega} \setminus \{i,j\}, then x_i = x_j.
-        '''
-        import itertools
-        sets = values.keys()
-        element = [i for i in sets if len(i) == 1]
-        for c1, c2 in itertools.combinations(element, 2):
-            results = []
-            for m in sets:
-                junion = tuple(sorted(set(c1) | set(m)))
-                kunion = tuple(sorted(set(c2) | set(m)))
-                results.append(values[junion] == values[kunion])
-            if all(results) and payoff_vector[c1[0]] != payoff_vector[c2[0]]:
-                return False
-        return True
-        
-def _myround(x, base=1,method='round'):
-    '''Round to nearest multiple of base'''
-    if method=='round':
-        return int(base * round(float(x)/base))
-    elif method=='floor':
-        return int(base * math.floor(float(x)/base))
-    elif method=='ceil':
-        return int(base * math.ceil(float(x)/base))
-    else:
-        raise
