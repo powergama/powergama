@@ -37,22 +37,25 @@ def sinc(n=11,T=1):
 ###############################################################################
 
 
-prnt.Print('Filtering Module Loaded',1)
+prnt.Print('Season Filtering Module Loaded',1)
 
 
 
 
 
 
-def SeasonFilter(HourlyTimeSeries,FilterPeriodInMonths=2,PlotFilter=False):
+def SeasonFilter(HourlyTimeSeries,FilterPeriodInMonths=4,PlotFilter=False, Quick=False):
     
     time_filter_start = time.time()
-    prnt.Print('Filtering',2)
-
+    prnt.Print('Season Filtering',2)
 
     HoursPerYear = HourlyTimeSeries.shape[0]
     HoursPerMonth = HoursPerYear/12
-    FilterLengthInYears = 8*FilterPeriodInMonths
+    FilterLengthInYears = 4*FilterPeriodInMonths
+    
+    if Quick:
+        FilterLengthInYears = FilterLengthInYears/4
+    
     FilterLengthInHours = FilterLengthInYears*HoursPerYear
 
     
@@ -64,7 +67,7 @@ def SeasonFilter(HourlyTimeSeries,FilterPeriodInMonths=2,PlotFilter=False):
     
     
     
-    filter_T = HoursPerMonth*FilterPeriodInMonths
+    filter_T = HoursPerMonth*FilterPeriodInMonths/2
     filter_n = FilterLengthInHours-1
     filter_offset = (filter_n/2)-0.5
     
@@ -72,8 +75,12 @@ def SeasonFilter(HourlyTimeSeries,FilterPeriodInMonths=2,PlotFilter=False):
     IdealFilter = pd.Series(sinc(n=filter_n, T=filter_T))
     IdealFilter.index = IdealFilter.index.values - filter_offset
     
+    sigma = (FilterLengthInHours)/10
     
-    window = pd.Series(gauss(n=filter_n, sigma=((FilterLengthInHours)/10)))
+    if Quick:
+        sigma = sigma*1.5
+    
+    window = pd.Series(gauss(n=filter_n, sigma=sigma))
     window.index = window.index.values - filter_offset
     
     window_normalised = pd.Series(window.values / window.loc[0])
@@ -138,7 +145,7 @@ def SeasonFilter(HourlyTimeSeries,FilterPeriodInMonths=2,PlotFilter=False):
     del temp2
     
     time_filter_end = time.time()
-    prnt.PrintTime("Filtering duration = ",time_filter_end-time_filter_start,3)
+    prnt.PrintTime("Season Filtering duration = ",time_filter_end-time_filter_start,3)
 
 
     
@@ -157,7 +164,7 @@ def SeasonPlot(HourlyTimeSeries,fname=None,ylabel='',title=None):
     plt.rcParams.update({'font.size': 22})
 
 
-    list_monate_kurz = ['Jan.','Feb.','Mars','April','Mai','Juni','Juli','Aug.','Sep.','Okt.','Nov.','Dec.']
+    list_monate_kurz = ['Jan.','Feb.','Mar.','Apr.','Mai','Jun.','Jul.','Aug.','Sep.','Okt.','Nov.','Dec.']
 
     HoursPerYear = HourlyTimeSeries.shape[0]
     HoursPerMonth = HoursPerYear/12
@@ -168,7 +175,7 @@ def SeasonPlot(HourlyTimeSeries,fname=None,ylabel='',title=None):
     flatline = pd.DataFrame([1 for i in range(HoursPerYear)])
 
 
-    fig4 = plt.figure(figsize=(8*2 , 4.5*2))
+    fig4 = plt.figure(figsize=(16 , 9))
     ax4 = fig4.add_subplot(111)
     flatline.plot(ax=ax4, linewidth=2, color=['grey'])
     
