@@ -130,7 +130,7 @@ def plotMap(pg_data,pg_res=None,filename=None,
                 return polyline;
             }"""
 
-    print("Nodes...")
+    #print("Nodes...")
     if nodetype=="nodalprice":
         value_col = 'nodalprice'
         if filter_node is None:
@@ -177,7 +177,7 @@ def plotMap(pg_data,pg_res=None,filename=None,
                       addto=feature_group_Nodes,
                       colour=colour).add_to(feature_group_Nodes)
 
-    print("AC branches...")
+    #print("AC branches...")
     if branchtype=="utilisation":
         value_col = 'utilisation'
         if filter_branch is None:
@@ -236,7 +236,7 @@ def plotMap(pg_data,pg_res=None,filename=None,
                       addto=feature_group_Branches,
                       colour=colour).add_to(feature_group_Branches)
 
-    print("DC branches...")
+    #print("DC branches...")
 #    if branchtype=="utilisation":
 #        value_col = 'utilisation'
 #        #cm_branch = branca.colormap.LinearColormap(['green', 'yellow', 'red'],
@@ -268,7 +268,7 @@ def plotMap(pg_data,pg_res=None,filename=None,
                       addto=feature_group_DcBranches,
                       colour=colour).add_to(feature_group_DcBranches)
 
-    print("Consumers...")
+    #print("Consumers...")
     locationsN=[]
     for i,n in consumer.iterrows():
         if not (n[['lat','lon']].isnull().any()):
@@ -282,7 +282,7 @@ def plotMap(pg_data,pg_res=None,filename=None,
                       addto=feature_group_Consumer,
                       colour="blue").add_to(feature_group_Consumer)
 
-    print("Generators...")
+    #print("Generators...")
     #feature_group_Generator = folium.FeatureGroup(name='Generators').add_to(m)
     ngtypes = max(2,len(gentypes))
     cm_stepG = cmSet1.scale(0,ngtypes-1).to_step(ngtypes)

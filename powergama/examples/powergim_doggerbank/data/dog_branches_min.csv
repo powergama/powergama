@@ -1,0 +1,32 @@
+node_from,node_to,capacity,expand,expand2,distance,cost_scaling,type,comment
+5,1,3600,0,0,0,1,ac,zero distance to get zero losses
+4,1,6000,0,0,0,1,ac,zero distance to get zero losses
+6,2,1500,0,0,0,1,ac,zero distance to get zero losses
+7,3,1500,0,0,0,1,ac,zero distance to get zero losses
+7,4,0,1,0,,1,dcdirect,NO-UK direct
+67,66,0,1,0,,1,ac,auto
+63,67,0,1,0,,1,ac,auto
+40,65,0,1,0,,1,ac,auto
+50,63,0,0,1,,1,ac,auto
+65,60,0,0,1,,1,ac,auto
+104,150,0,1,0,,1,dcmesh,auto
+166,165,0,1,0,,1,dcmesh,auto
+167,166,0,1,0,,1,dcmesh,auto
+163,167,0,1,0,,1,dcmesh,auto
+140,165,0,1,0,,1,dcmesh,auto
+165,104,0,1,0,,1,dcmesh,auto
+166,105,0,1,0,,1,dcmesh,auto
+167,105,0,1,0,,1,dcmesh,auto
+104,4,0,1,0,,1,conv,auto
+105,5,0,1,0,,1,conv,auto
+140,40,0,1,0,,1,conv,auto
+163,63,0,1,0,,1,conv,auto
+165,65,0,1,0,,1,conv,auto
+166,66,0,1,0,,1,conv,auto
+167,67,0,1,0,,1,conv,auto
+107,7,0,0,1,,1,conv,auto
+107,160,0,0,1,,1,dcmesh,auto
+165,160,0,0,1,,1,dcmesh,auto
+106,140,0,0,1,,1,dcmesh,auto
+106,6,0,0,1,,1,conv,auto
+104,150,0,0,1,,1,dcmesh,considered both stage 1 and stage 2
