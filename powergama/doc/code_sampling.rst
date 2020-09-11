@@ -3,10 +3,14 @@
    You can adapt this file completely to your liking, but it should at least
    contain the root `toctree` directive.
 
-GIS Module
+Sampling Module
 ==================
-.. automodule:: powergama.GIS
+.. automodule:: powergama.sampling
    :members:
    :undoc-members:
 
-
+Costbenefit Module
+==================
+.. automodule:: powergama.costbenefit
+  :members:
+  :undoc-members:
