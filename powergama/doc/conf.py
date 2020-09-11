@@ -22,6 +22,7 @@ import os
 sys.path.insert(0, os.path.abspath('../powergama/'))
 sys.path.insert(0, os.path.abspath('powergama/'))
 sys.path.insert(0, os.path.abspath('powergama/powergama/'))
+sys.path.insert(0, os.path.abspath('../'))
 
 
 # -- General configuration ------------------------------------------------
