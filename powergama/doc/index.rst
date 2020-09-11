@@ -3,39 +3,12 @@
    You can adapt this file completely to your liking, but it should at least
    contain the root `toctree` directive.
 
-Welcome to PowerGAMA's documentation!
-=====================================
+PowerGAMA
+=========
 
-Contents:
---------
-.. toctree::
-   :maxdepth: 2
-   
-   project
-   tutorial
-   
-
-Code documentation:
-------------------
 .. toctree::
    :maxdepth: 2
 
-   project
-   code_GridData
-   code_LpProblem
-   code_Results
-   code_database
-   code_plots
-   code_constants
-   code_scenarios
-   code_GIS
-   code_powergim
-
-
-Indices and tables
-------------------
-
-* :ref:`genindex`
 * :ref:`modindex`
+* :ref:`genindex`
 * :ref:`search`
-
