@@ -12,12 +12,13 @@ import jinja2
 import folium.utilities
 import itertools
 import pandas as pd
-
+import math
 
 
 def plotMap(pg_data,pg_res=None,filename=None,
             nodetype=None,branchtype=None,
             filter_node=[0,100],filter_branch=None, timeMaxMin=None,
+            spread_nodes_r=None,
             **kwargs):
     '''
     Plot PowerGAMA data/results on map
@@ -38,6 +39,11 @@ def plotMap(pg_data,pg_res=None,filename=None,
         max/min value used for colouring nodes (e.g. nodalprice)
     filter_branch : list
         max/min value used for colouring branches (e.g. utilisation)
+    timeMaxMin : [min,max]
+        time interval used when showing simulation results
+    spread_nodes_r : float (degrees)
+        radius (degrees) of circle on which overlapping nodes are
+        spread (use eg 0.04)
     kwargs : arguments passed on to folium.Map(...)
     '''
 
@@ -61,6 +67,22 @@ def plotMap(pg_data,pg_res=None,filename=None,
     node = pg_data.node.copy()
     generator = pg_data.generator.copy()
     consumer = pg_data.consumer.copy()
+
+    if spread_nodes_r is not None:
+        # spread out nodes lying on top of each other
+        coords = node[['lat','lon']]
+        dupl_coords = pd.DataFrame()
+        dupl_coords['cumcount'] = coords.groupby(['lat','lon']).cumcount()
+        dupl_coords['count'] = coords.groupby(['lat','lon'])['lon'].transform('count')
+        for i in node.index:
+            n_sum = dupl_coords.loc[i,'count']
+            if n_sum >1:
+                # there are more nodes with the same coordinates
+                n = dupl_coords.loc[i,'cumcount']
+                theta = 2*math.pi/n_sum
+                node.loc[i,'lat'] += spread_nodes_r*math.cos(n*theta)
+                node.loc[i,'lon'] += spread_nodes_r*math.sin(n*theta)
+        #node[['lat','lon']] = coords
 
     # Careful! Merge may change the order
     branch = branch.merge(node[['id','lat','lon']],how='left',
@@ -107,8 +129,7 @@ def plotMap(pg_data,pg_res=None,filename=None,
             dcbranch['sensitivity'] = 0
             dcbranch.loc[dcbranch.index.isin(dcbr_ind),'sensitivity'] = dcbranch_sensitivity
 
-    m = folium.Map(location=[node['lat'].median(), node['lon'].median()],
-                             zoom_start=4,**kwargs)
+    m = folium.Map(location=[node['lat'].median(), node['lon'].median()],**kwargs)
 
     callbackNode = """function (row,colour) {
                if (colour=='') {
@@ -219,6 +240,8 @@ def plotMap(pg_data,pg_res=None,filename=None,
             data = [[n['lat_x'],n['lon_x']],[n['lat_y'],n['lon_y']],
                     "AC Branch={} ({}-{}), capacity={:g}".format(
                             i,n['node_from'],n['node_to'],n['capacity'])]
+            if branchtype=="type":
+                data[2] = "{}; type={}".format(data[2],n['type'])
             if pg_res is not None:
                 data[2] = "{}; flow={:g}; utilisation={:g}".format(
                         data[2],n['flow'],n['utilisation'])
