@@ -18,6 +18,9 @@ import math
 from . import constants as const
 
 
+__version__ = 0.1
+__version_date__ = '2020-09-11'
+
 def annuityfactor(rate,years):
     '''Net present value factor for fixed payments per year at fixed rate'''
     if rate==0:
@@ -137,6 +140,8 @@ class SipModel():
                 -annuityfactor(model.financeInterestrate,
                                int(stage-1)*model.stage2TimeDelta))
 
+        # discount costs that come in stage 2 (the future)
+        # present value vs future value: pv = fv/(1+r)^n
         discount_t0 = (1/((1+model.financeInterestrate)
                         **(model.stage2TimeDelta*int(stage-1))))
 
