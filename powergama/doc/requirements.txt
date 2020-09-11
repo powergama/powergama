@@ -7,4 +7,3 @@ pyomo
 datetime
 folium
 matplotlib
-itertools
