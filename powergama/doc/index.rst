@@ -8,7 +8,25 @@ PowerGAMA
 
 .. toctree::
    :maxdepth: 2
+   
+   code_GridData
+   code_LpProblem
+   code_Results
+   code_plots
+   code_scenarios
+   code_database
+   code_constants
 
+PowerGIM
+=========
+.. toctree::
+   :maxdepth: 2
+   
+   code_powergim
+   code_sampling
+  
+Indices
+=======
 * :ref:`modindex`
 * :ref:`genindex`
 * :ref:`search`
