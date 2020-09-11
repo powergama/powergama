@@ -2,7 +2,6 @@ numpydoc
 numpy
 pandas
 scipy
-math
 networkx
 pyomo
 datetime
