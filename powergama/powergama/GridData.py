@@ -15,12 +15,12 @@ import networkx as nx
 ##=============================================================================
 
 
-    
+
 class GridData(object):
     '''
     Class for grid data storage and import
-    '''        
-    
+    '''
+
     # Headers and default values in input files:
     # default=None: column _must_ be present in input file
     keys_powergama = {
@@ -41,8 +41,8 @@ class GridData(object):
                       'flex_storval_time':'', 'flex_storagelevel_init':0.5}
         }
 
-    # Required fields for investment analysis input data  
-    # Default value = -1 means that it should be computed by the program  
+    # Required fields for investment analysis input data
+    # Default value = -1 means that it should be computed by the program
     keys_sipdata = {
         'node': {'id':None,'area':None, 'lat':None, 'lon':None,
                  'offshore':None,'type':None,
@@ -58,15 +58,15 @@ class GridData(object):
                       'expand':None,'expand2':None,'p_maxNew':-1, 'cost_scaling':1,
                       'fuelcost':None,'fuelcost_ref':None,'pavg':0,
                       'inflow_fac':None,'inflow_ref':None},
-        'consumer': {'node':None, 'demand_avg':None,'emission_cap':-1, 
+        'consumer': {'node':None, 'demand_avg':None,'emission_cap':-1,
                      'demand_ref':None}
         }
-        
+
 
     def __init__(self):
         '''
-        Create GridData object with data and methods for import and 
-        processing of PowerGAMA grid data            
+        Create GridData object with data and methods for import and
+        processing of PowerGAMA grid data
         '''
         self.node = None
         self.branch = None
@@ -80,7 +80,7 @@ class GridData(object):
         self.storagevalue_time = None
         self.timeDelta = None
         self.timerange = None
-        
+
         self.CSV_SEPARATOR = None #automatically detect
 
     def _myround(x, base=1,method='round'):
@@ -94,11 +94,11 @@ class GridData(object):
         else:
             raise Exception("Rounding error")
 
-            
+
     def readGridData(self,nodes,ac_branches,dc_branches,generators,consumers,
                      remove_extra_columns=False):
         '''Read grid data from files into data variables'''
-        
+
         self.node = pd.read_csv(nodes,
                                 dtype={'id':str, 'area':str})
         self.branch = pd.read_csv(ac_branches,
@@ -117,24 +117,24 @@ class GridData(object):
                                     dtype={'node':str})
 
         self._checkGridDataFields(self.keys_powergama)
-                
 
-        #TODO: fix difference in node index between powergama and powergim        
+
+        #TODO: fix difference in node index between powergama and powergim
         # numerical index is needed in method computePowerFlowMatrices
-        # (and maybe elsewhere). This does _not_ work with powergama:         
+        # (and maybe elsewhere). This does _not_ work with powergama:
         #self.node.set_index('id',inplace=True,append=False)
         #self.node['id']=self.node.index
         self._checkGridData()
         self._addDefaultColumns(keys=self.keys_powergama,
                                 remove_extra_columns=remove_extra_columns)
         self._fillEmptyCells(keys=self.keys_powergama)
-        
+
     def readSipData(self,nodes,branches,generators,consumers):
         '''Read grid data for investment analysis from files (PowerGIM)
 
-        This is used with the grid investment module (PowerGIM)   
-        
-        time-series data may be used for 
+        This is used with the grid investment module (PowerGIM)
+
+        time-series data may be used for
         consumer demand
         generator inflow (e.g. solar and wind)
         generator fuelcost (e.g. one generator with fuelcost = power price)
@@ -157,8 +157,8 @@ class GridData(object):
         self.consumer = pd.read_csv(consumers,
                                     #usecols=self.keys_sipdata['consumer'],
                                     dtype={'node':str})
-        
-    
+
+
         self._checkGridDataFields(self.keys_sipdata)
         self._addDefaultColumns(keys=self.keys_sipdata)
         self._fillEmptyCells(keys=self.keys_sipdata)
@@ -184,8 +184,8 @@ class GridData(object):
             if val != None:
                 self.branch[col] = self.branch[col].fillna(
                     keys['branch'][col])
-        
-        
+
+
     def _addDefaultColumns(self,keys,remove_extra_columns=False):
         '''insert optional columns with default values when none
         are provided in input files'''
@@ -201,7 +201,7 @@ class GridData(object):
         for k in keys['dcbranch']:
             if k not in self.dcbranch.keys():
                 self.dcbranch[k] = keys['dcbranch'][k]
-        
+
         # Discard extra columns (comments etc)
         if remove_extra_columns:
             self.node = self.node[list(keys['node'].keys())]
@@ -209,10 +209,10 @@ class GridData(object):
             self.dcbranch = self.dcbranch[list(keys['dcbranch'].keys())]
             self.generator = self.generator[list(keys['generator'].keys())]
             self.consumer = self.consumer[list(keys['consumer'].keys())]
-                
-                
+
+
     def _checkGridDataFields(self,keys):
-        '''check if all required columns are present 
+        '''check if all required columns are present
         (ie. all columns with no default value)'''
         for k,v in keys['node'].items():
             if v==None and not k in self.node:
@@ -229,12 +229,12 @@ class GridData(object):
         for k,v in keys['consumer'].items():
             if v==None and not k in self.consumer:
                 raise Exception("Consumer input file must contain %s" %k)
-        
-           
-        
+
+
+
     def _checkGridData(self):
         '''Check consistency of grid data'''
-                    
+
         #generator nodes
         for g in self.generator['node']:
             if not g in self.node['id'].values:
@@ -259,34 +259,34 @@ class GridData(object):
         for c in self.dcbranch['node_to']:
             if not c in self.node['id'].values:
                 raise Exception("DC Branch to node does not exist: '%s'" %c)
-                
 
-    def _readProfileFromFile(self,filename,timerange):          
+
+    def _readProfileFromFile(self,filename,timerange):
         profiles = pd.read_csv(filename,sep=self.CSV_SEPARATOR,engine='python')
         profiles = profiles.loc[timerange]
         profiles.index = range(len(timerange))
         return profiles
 
-    def _readStoragevaluesFromFile(self,filename):  
+    def _readStoragevaluesFromFile(self,filename):
         profiles = pd.read_csv(filename,sep=self.CSV_SEPARATOR,engine='python')
         return profiles
-        
-        
+
+
     def readProfileData(self,filename,timerange,
                         storagevalue_filling=None,
                         storagevalue_time=None,
                         timedelta=1.0):
         """Read profile (timeseries) into numpy arrays"""
-        
+
         #self.inflowProfiles = self._readProfileFromFile(inflow,timerange)
         #self.demandProfiles = self._readProfileFromFile(demand,timerange)
         self.profiles = self._readProfileFromFile(filename,timerange)
         self.timerange = timerange
         self.timeDelta = timedelta
-        
+
         '''
         Storage values have both time dependence and filling level dependence
-       
+
        The dependence is on filling level (0-100%), is given as an array
         with 101 elements
         '''
@@ -294,47 +294,47 @@ class GridData(object):
             self.storagevalue_time = self._readProfileFromFile(
                 storagevalue_time,timerange)
             self.storagevalue_filling = self._readStoragevaluesFromFile(
-                storagevalue_filling)        
-        return  
-    
+                storagevalue_filling)
+        return
+
 
 
     def writeGridDataToFiles(self,prefix):
         '''
         Save data to new input files
-        ''' 
+        '''
 
         file_nodes = prefix+"node.csv"
         file_branches = prefix+"branch.csv"
-        file_consumers = prefix+"consumer.csv"     
-        file_generators = prefix+"generator.csv"       
-        file_dcbranch = prefix+"dcbranch.csv"       
+        file_consumers = prefix+"consumer.csv"
+        file_generators = prefix+"generator.csv"
+        file_dcbranch = prefix+"dcbranch.csv"
 
-        sep = self.CSV_SEPARATOR        
+        sep = self.CSV_SEPARATOR
         if sep is None:
             sep=','
 
-                
+
         self.node.to_csv(file_nodes,sep=sep)
         self.branch.to_csv(file_branches,sep=sep)
         self.consumer.to_csv(file_consumers,sep=sep)
         self.generator.to_csv(file_generators,sep=sep)
         self.dcbranch.to_csv(file_dcbranch,sep=sep)
         return
-        
-        
+
+
     def numConsumers(self):
         return self.consumer.shape[0]
-    
+
     def numGenerators(self):
         return self.generator.shape[0]
-        
+
     def numNodes(self):
         return self.node.shape[0]
-    
+
     def numBranches(self):
         return self.branch.shape[0]
-    
+
     def numDcBranches(self):
         if not self.dcbranch is None:
             return self.dcbranch.shape[0]
@@ -350,9 +350,9 @@ class GridData(object):
 
     def branchToNodeIdx(self):
         """get node indices for branch TO node"""
-        return [self.node[self.node['id']==self.branch['node_to'][k]] 
+        return [self.node[self.node['id']==self.branch['node_to'][k]]
                 .index.tolist()[0] for k in self.branch.index.tolist()]
-    
+
     def dcBranchFromNodeIdx(self):
         """get node indices for dc branch FROM node"""
         return [self.node[self.node['id']==self.dcbranch['node_from'][k]]
@@ -360,31 +360,31 @@ class GridData(object):
 
     def dcBranchToNodeIdx(self):
         """get node indices for dc branch TO node"""
-        return [self.node[self.node['id']==self.dcbranch['node_to'][k]] 
+        return [self.node[self.node['id']==self.dcbranch['node_to'][k]]
                 .index.tolist()[0] for k in self.dcbranch.index.tolist()]
-    
-    
+
+
     def getGeneratorsAtNode(self,nodeIdx):
         """Indices of all generators attached to a particular node"""
-        #indices = [i for i, x in enumerate(self.generator['node']) 
+        #indices = [i for i, x in enumerate(self.generator['node'])
         #            if x == self.node['id'][nodeIdx]]
         indices = self.generator['node'][self.generator.loc[:,'node']
                         ==self.node['id'][nodeIdx]].index.tolist()
         return indices
-        
+
     def getGeneratorsWithPumpAtNode(self,nodeIdx):
         """Indices of all pumps attached to a particular node"""
-        #indices = [i for i, x in enumerate(self.generator['node']) 
+        #indices = [i for i, x in enumerate(self.generator['node'])
         #            if x == self.node['id'][nodeIdx]
         #            and self.generator['pump_cap'][i]>0]
         indices = self.generator['node'][
                     (self.generator.loc[:,'node']==self.node['id'][nodeIdx])
                     & (self.generator.loc[:,'pump_cap']>0)].index.tolist()
         return indices
-        
+
     def getLoadsAtNode(self,nodeIdx):
         """Indices of all loads (consumers) attached to a particular node"""
-        #indices = [i for i, x in enumerate(self.consumer['node']) 
+        #indices = [i for i, x in enumerate(self.consumer['node'])
         #            if x == self.node['id'][nodeIdx]]:
         #25 times faster:
         indices = self.consumer['node'][self.consumer.loc[:,'node']
@@ -393,38 +393,38 @@ class GridData(object):
 
     def getLoadsFlexibleAtNode(self,nodeIdx):
         """Indices of all flexible nodes attached to a particular node"""
-        #indices = [i for i, x in enumerate(self.consumer['node']) 
+        #indices = [i for i, x in enumerate(self.consumer['node'])
         #            if x == self.node['id'][nodeIdx]
         #            and self.consumer['flex_fraction'][i]>0
         #            and self.consumer['demand_avg'][i]>0]
         #faster:
         indices = self.consumer['node'][
-            (self.consumer.loc[:,'node']==self.node['id'][nodeIdx]) 
-            & (self.consumer.loc[:,'flex_fraction'] > 0) 
+            (self.consumer.loc[:,'node']==self.node['id'][nodeIdx])
+            & (self.consumer.loc[:,'flex_fraction'] > 0)
             & (self.consumer.loc[:,'demand_avg'] > 0)].index.tolist()
         return indices
-        
+
     def getIdxConsumersWithFlexibleLoad(self):
         """Indices of all consumers with flexible load"""
-        idx = [i for i,v in enumerate(self.consumer['flex_fraction']) 
+        idx = [i for i,v in enumerate(self.consumer['flex_fraction'])
             if v>0 and v<numpy.inf and self.consumer['demand_avg'][i]>0]
         return idx
-        
+
     def getFlexibleLoadStorageCapacity(self,consumer_indx):
         ''' flexible load storage capacity in MWh'''
-        cap = (self.consumer['demand_avg'][consumer_indx] 
-                * self.consumer['flex_fraction'][consumer_indx] 
+        cap = (self.consumer['demand_avg'][consumer_indx]
+                * self.consumer['flex_fraction'][consumer_indx]
                 * self.consumer['flex_storage'][consumer_indx] )
         return cap
-   
+
 
     def getDcBranchesAtNode(self,nodeIdx,direction):
         """Indices of all DC branches attached to a particular node"""
         if direction=='from':
-            indices = [i for i, x in enumerate(self.dcbranch['node_from']) 
+            indices = [i for i, x in enumerate(self.dcbranch['node_from'])
             if x == self.node['id'][nodeIdx]]
         elif direction=='to':
-            indices = [i for i, x in enumerate(self.dcbranch['node_to']) 
+            indices = [i for i, x in enumerate(self.dcbranch['node_to'])
             if x == self.node['id'][nodeIdx]]
         else:
             raise Exception("Unknown direction in GridData.getDcBranchesAtNode")
@@ -443,49 +443,49 @@ class GridData(object):
             areaFrom = self.node['area'][fromNodeIdx]
             areaTo = self.node['area'][toNodeIdx]
             hvdcBranches.append([idx,areaFrom,areaTo])
-        return hvdcBranches    
+        return hvdcBranches
 
-    
+
     def getIdxNodesWithLoad(self):
-        """Indices of nodes that have load (consumer) attached to them"""        
-        # Get index of node associated with all consumer        
+        """Indices of nodes that have load (consumer) attached to them"""
+        # Get index of node associated with all consumer
         #indices = numpy.asarray(self.consumer.nodeIdx(self.node))
         ## Return indices only once (unique values)
         #indices = numpy.unique(indices)
         loadnodes = self.node[self.node['id'].isin(self.consumer['node'])]
         indices = numpy.asarray(loadnodes.index)
         return indices
-        
-        
+
+
     def getIdxGeneratorsWithStorage(self):
         """Indices of all generators with nonzero and non-infinite storage"""
-        idx = [i for i,v in enumerate(self.generator['storage_cap']) 
+        idx = [i for i,v in enumerate(self.generator['storage_cap'])
             if v>0 and v<numpy.inf]
         return idx
-        
+
     def getIdxGeneratorsWithNonzeroInflow(self):
         """Indices of all generators with nonzero inflow"""
-        idx = [i for i,v in enumerate(self.generator['inflow_fac']) 
+        idx = [i for i,v in enumerate(self.generator['inflow_fac'])
             if v>0]
         return idx
 
     def getIdxGeneratorsWithPumping(self):
         """Indices of all generators with pumping capacity"""
-        idx = [i for i,v in enumerate(self.generator['pump_cap']) 
+        idx = [i for i,v in enumerate(self.generator['pump_cap'])
             if v>0 and v<numpy.inf]
         return idx
-        
+
     def getIdxBranchesWithFlowConstraints(self):
         '''Indices of branches with less than infinite branch capacity'''
         idx = [i for i,v in enumerate(self.branch['capacity']) if v<numpy.inf]
         return idx
-        
+
     def getIdxDcBranchesWithFlowConstraints(self):
         '''Indices of DC branches with less than infinite branch capacity'''
         if self.dcbranch is None:
             idx = []
         else:
-            idx = [i for i,v in enumerate(self.dcbranch['capacity']) 
+            idx = [i for i,v in enumerate(self.dcbranch['capacity'])
                         if v<numpy.inf]
         return idx
 
@@ -500,6 +500,8 @@ class GridData(object):
         If not, well... baseOhm depends on the voltage level, so need to know
         the nominal voltage at the bus to convert from ohm to pu.
         '''
+        if (self.branch['reactance']==0).any():
+            raise Exception("Zero branch reactance is not allowed.")
         return [-1/self.branch['reactance'][i]*baseOhm 
                 for i in self.branch.index.tolist()]
 
@@ -507,18 +509,18 @@ class GridData(object):
     def computePowerFlowMatrices(self,baseZ=1):
         """
         Compute and return dc power flow matrices B' and DA
-        
+
         Parameters
         ==========
         baseZ : float (impedance should already be in pu.)
-                base value for impedance        
-        
-        Returns 
+                base value for impedance
+
+        Returns
         =======
-        (Bprime, DA) : compressed sparse row matrix 
-              
+        (Bprime, DA) : compressed sparse row matrix
+
         """
-        
+
         b = numpy.asarray(self._susceptancePu(baseZ))
         # MultiDiGraph to allow parallel lines
         G = nx.MultiDiGraph()
@@ -527,18 +529,18 @@ class GridData(object):
                   i,{'i':i,'b':b[i]})
                   for i in self.branch.index]
         G.add_nodes_from(self.node['id'])
-        G.add_edges_from(edges)   
-    
+        G.add_edges_from(edges)
+
         #G.add_edges_from(zip(data.branch['node_from'],
-        #                     data.branch['node_to'],data.branch.index,{}))                         
+        #                     data.branch['node_to'],data.branch.index,{}))
         A_incidence_matrix = -nx.incidence_matrix(G,oriented=True,
                                                  nodelist=self.node['id'],
                                                  edgelist=edges).T
-    
+
         # Diagonal matrix
         D = scipy.sparse.diags(-b,offsets=0)
         DA = D*A_incidence_matrix
-        
+
         # Bf constructed from incidence matrix with branch susceptance
         # used as weight (this is quite fast)
         Bf = -nx.incidence_matrix(G,oriented=True,
@@ -546,10 +548,10 @@ class GridData(object):
                                  edgelist=edges,
                                  weight='b').T
         Bprime = A_incidence_matrix.T * Bf
-        
+
         return Bprime, DA
 
-    
+
     def getAllAreas(self):
         '''Return list of areas included in the grid model'''
         areas = self.node['area']
@@ -558,7 +560,7 @@ class GridData(object):
             if co not in allareas:
                 allareas.append(co)
         return allareas
-        
+
     def getAllGeneratorTypes(self,sort='fuelcost'):
         '''Return list of generator types included in the grid model'''
         gentypes = self.generator.type
@@ -572,7 +574,7 @@ class GridData(object):
             return alltypes
         elif sort=='fuelcost':
             generators = self.getGeneratorsPerType()
-            avg = {ge_k : numpy.mean(self.generator.fuelcost[ge_v]) 
+            avg = {ge_k : numpy.mean(self.generator.fuelcost[ge_v])
                    for ge_k,ge_v in generators.items()}
             sorted_list = [k for k in sorted(avg, key=avg.get, reverse=False)]
 
@@ -580,27 +582,27 @@ class GridData(object):
 #            fuelcosts = []
 #            for ge in gentypes:
 #                gen_this_type = generators[ge]
-#                fuelcosts.append(numpy.mean([self.generator.fuelcost[i] 
+#                fuelcosts.append(numpy.mean([self.generator.fuelcost[i]
 #                                         for i in gen_this_type]) )
-#            sorted_list = [x for (y,x) in 
-#                           sorted(zip(fuelcosts,gentypes))]    
+#            sorted_list = [x for (y,x) in
+#                           sorted(zip(fuelcosts,gentypes))]
             return sorted_list
         else:
             raise Exception("sort must be None or 'fuelcost'")
 
-			
+
     def getConsumerAreas(self):
         """List of areas for each consumer"""
         areas = [self.node.area[self.node['id']==n].tolist()[0]
                     for n in self.consumer['node']]
         return areas
-    
+
     def getGeneratorAreas(self):
         """List of areas for each generator"""
         areas = [self.node.area[self.node['id']==n].tolist()[0]
                     for n in self.generator.node]
         return areas
-    
+
     def getConsumersPerArea(self):
         '''Returns dictionary with indices of loads within each area'''
         consumers = {}
@@ -610,10 +612,10 @@ class GridData(object):
             if area_name in consumers:
                 consumers[area_name].append(idx_load)
             else:
-                consumers[area_name] =  [idx_load]   
+                consumers[area_name] =  [idx_load]
         return consumers
-   
-    def getGeneratorsPerAreaAndType(self): 
+
+    def getGeneratorsPerAreaAndType(self):
         '''Returns dictionary with indices of generators within each area'''
         generators = {}
         generator_areas = self.getGeneratorAreas()
@@ -629,7 +631,7 @@ class GridData(object):
                 generators[area_name] = {gtype:[idx_gen]}
         return generators
 
-    def getGeneratorsPerType(self): 
+    def getGeneratorsPerType(self):
         '''Returns dictionary with indices of generators per type'''
         generators = {}
         for idx_gen in self.generator.index.tolist():
@@ -682,30 +684,30 @@ class GridData(object):
     def getInterAreaBranches(self,area_from=None,area_to=None,acdc='ac'):
         '''
         Get indices of branches from and/or to specified area(s)
-        
+
         area_from = area from. Use None (default) to leave unspecifie
         area_to= area to. Use None (default) to leave unspecified
-        acdc = 'ac' (default) for ac branches, 'dc' for dc branches        
+        acdc = 'ac' (default) for ac branches, 'dc' for dc branches
         '''
-        
+
         if area_from is None and area_to is None:
             raise Exception("Either from area or to area (or both) has"
                             +"to be specified)")
-        
+
         if acdc=='ac':
             br_witharea = self.getBranchAreas()
         elif acdc=='dc':
             br_witharea = self.getDcBranchAreas()
-        
+
         if area_to is not None:
-            mask_pos = ((br_witharea['area_to']==area_to) 
+            mask_pos = ((br_witharea['area_to']==area_to)
                        & (br_witharea['area_from']!=area_to))
-            mask_neg = ((br_witharea['area_from']==area_to) 
+            mask_neg = ((br_witharea['area_from']==area_to)
                         & (br_witharea['area_to']!=area_to))
         if area_from is not None:
-            mask_pos2 = ((br_witharea['area_from']==area_from) 
+            mask_pos2 = ((br_witharea['area_from']==area_from)
                      & (br_witharea['area_to']!=area_from) )
-            mask_neg2 = ((br_witharea['area_to']==area_from) 
+            mask_neg2 = ((br_witharea['area_to']==area_from)
                         & (br_witharea['area_from']!=area_from))
             if area_to is not None:
                 mask_pos = mask_pos & mask_pos2
@@ -713,10 +715,10 @@ class GridData(object):
             else:
                 mask_pos = mask_pos2
                 mask_neg = mask_neg2
-        
+
         branches_pos = list(br_witharea.index[mask_pos])
         branches_neg = list(br_witharea.index[mask_neg])
-            
+
 #        # indices of from and to nodes of all branches:
 #        if acdc=='ac':
 #            br_from_nodes = self.branchFromNodeIdx()
@@ -726,15 +728,15 @@ class GridData(object):
 #            br_to_nodes = self.dcBranchToNodeIdx()
 #        else:
 #            raise Exception('Branch type must be "ac" or "dc"')
-#        
-#        
+#
+#
 #        br_from_area = [self.node.area[i] for i in br_from_nodes]
 #        br_to_area = [self.node.area[i] for i in br_to_nodes]
-#        
-#        # indices of all inter-area branches (from area != to area)        
-#        br_is_interarea = [i for i in range(len(br_from_area)) 
+#
+#        # indices of all inter-area branches (from area != to area)
+#        br_is_interarea = [i for i in range(len(br_from_area))
 #                                if br_from_area[i] != br_to_area[i]]
-#        
+#
 #        # branches connected to area_from
 #        fromArea_branches_pos = [i for i in br_is_interarea
 #                                 if br_from_area[i]==area_from]
@@ -757,24 +759,24 @@ class GridData(object):
 #            branches_neg = fromArea_branches_neg
 #        else:
 #            # Both to and from area has been specified
-#            branches_pos = [b for b in fromArea_branches_pos 
+#            branches_pos = [b for b in fromArea_branches_pos
 #                                    if b in toArea_branches_neg ]
-#            branches_neg = [b for b in fromArea_branches_neg 
+#            branches_neg = [b for b in fromArea_branches_neg
 #                                    if b in toArea_branches_pos ]
         return dict(branches_pos=branches_pos,
-                    branches_neg=branches_neg)   
+                    branches_neg=branches_neg)
 
 
     def branchDistances(self,R=6373.0):
         '''computes branch distance from node coordinates, resuls in km
-        
+
         Uses haversine formula
-        
+
         Parameters
         ----------
         R : radius of the Earth
         '''
-        
+
         # approximate radius of earth in km
         n_from = self.branchFromNodeIdx()
         n_to = self.branchToNodeIdx()
@@ -788,17 +790,17 @@ class GridData(object):
         lons1.index=self.branch.index
         lats2.index=self.branch.index
         lons2.index=self.branch.index
-        
+
         for b in self.branch.index:
             lat1=lats1[b]
             lon1=lons1[b]
             lat2=lats2[b]
             lon2=lons2[b]
-        
+
             dlon = lon2 - lon1
             dlat = lat2 - lat1
-        
-            a = (math.sin(dlat/2)**2 
+
+            a = (math.sin(dlat/2)**2
                 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon/2)**2 )
             c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
             #atan2 better than asin: c = 2 * math.asin(math.sqrt(a))
@@ -808,14 +810,14 @@ class GridData(object):
     def spreadNodeCoordinates(self,radius=0.01,inplace=False):
         '''Spread nodes with identical coordinates in a small circle
         with radius r
-        
+
         Parameters
         ----------
         radius : float
             radius in degrees for the size of the spread
         inplace : boolean
             if true, update GridData object
-            
+
         Returns
         -------
         coords : array
@@ -837,4 +839,3 @@ class GridData(object):
         if inplace:
             self.node[['lat','lon']] = coords_new
         return coords_new
-
