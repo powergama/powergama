@@ -12,7 +12,8 @@ import pyomo.pysp.util.rapper as rapper
 import networkx
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
-import xml
+#import xml
+import yaml
 import copy
 import math
 from . import constants as const
@@ -40,6 +41,11 @@ def _myround(x, base=1,method='round'):
         return int(base * math.ceil(float(x)/base))
     else:
         raise
+
+def readParametersFromYaml(yaml_file):
+    with open(yaml_file, 'r') as stream:
+        data = yaml.safe_load(stream)
+    return data
 
 
 class SipModel():
@@ -694,7 +700,7 @@ class SipModel():
         return concretemodel
 
 
-    def createModelData(self,grid_data,datafile,
+    def createModelData(self,grid_data,parameter_data,
                         maxNewBranchNum, maxNewBranchCap):
         '''Create model data in dictionary format
 
@@ -702,8 +708,8 @@ class SipModel():
         ----------
         grid_data : powergama.GridData object
             contains grid model
-        datafile : string
-            name of XML file containing additional parameters
+        parameter_data : dict
+            dictionary containing parameters (read from YAML file)
         maxNewBranchNum : int
             upper limit on parallel branches to consider (e.g. 10)
         maxNewBranchCap : float (MW)
@@ -873,60 +879,46 @@ class SipModel():
                 di['maxShed'][(k,t)] = grid_data.profiles[ref][i]*row['demand_avg']
 
 
-        # Read input data from XML file
-        tree=xml.etree.ElementTree.parse(datafile)
-        root = tree.getroot()
+        # Parameters coming from YAML file
 
-        di['NODETYPE'] = {None:[]}
+        di['NODETYPE'] = {None: parameter_data['nodetype'].keys()}
         di['nodetypeCost'] = {}
-        for i in root.findall('./nodetype/item'):
-            name = i.attrib['name']
-            di['NODETYPE'][None].append(name)
-            di['nodetypeCost'][(name,'L')] = float(i.attrib['L'])
-            di['nodetypeCost'][(name,'S')] = float(i.attrib['S'])
+        for name,item in parameter_data['nodetype'].items():
+            di['nodetypeCost'][(name,'L')] = float(item['L'])
+            di['nodetypeCost'][(name,'S')] = float(item['S'])
 
-        di['BRANCHTYPE'] = {None:[]}
+        di['BRANCHTYPE'] = {None:parameter_data['branchtype'].keys()}
         di['branchtypeCost'] = {}
         di['branchtypeMaxCapacity'] = {}
         di['branchLossfactor'] = {}
-        for i in root.findall('./branchtype/item'):
-            name = i.attrib['name']
-            di['BRANCHTYPE'][None].append(name)
-            di['branchtypeCost'][(name,'B')] = float(i.attrib['B'])
-            di['branchtypeCost'][(name,'Bd')] = float(i.attrib['Bd'])
-            di['branchtypeCost'][(name,'Bdp')] = float(i.attrib['Bdp'])
-            di['branchtypeCost'][(name,'CL')] = float(i.attrib['CL'])
-            di['branchtypeCost'][(name,'CLp')] = float(i.attrib['CLp'])
-            di['branchtypeCost'][(name,'CS')] = float(i.attrib['CS'])
-            di['branchtypeCost'][(name,'CSp')] = float(i.attrib['CSp'])
-            di['branchtypeMaxCapacity'][name] = float(i.attrib['maxCap'])
-            di['branchLossfactor'][(name,'fix')] = float(i.attrib['lossFix'])
-            di['branchLossfactor'][(name,'slope')] = float(i.attrib['lossSlope'])
+        for name,item in parameter_data['branchtype'].items():
+            di['branchtypeCost'][(name,'B')] = float(item['B'])
+            di['branchtypeCost'][(name,'Bd')] = float(item['Bd'])
+            di['branchtypeCost'][(name,'Bdp')] = float(item['Bdp'])
+            di['branchtypeCost'][(name,'CL')] = float(item['CL'])
+            di['branchtypeCost'][(name,'CLp')] = float(item['CLp'])
+            di['branchtypeCost'][(name,'CS')] = float(item['CS'])
+            di['branchtypeCost'][(name,'CSp')] = float(item['CSp'])
+            di['branchtypeMaxCapacity'][name] = float(item['maxCap'])
+            di['branchLossfactor'][(name,'fix')] = float(item['lossFix'])
+            di['branchLossfactor'][(name,'slope')] = float(item['lossSlope'])
 
-        di['GENTYPE'] = {None:[]}
+        di['GENTYPE'] = {None:parameter_data['gentype'].keys()}
         di['genTypeCost'] = {}
         di['genTypeEmissionRate'] = {}
-        for i in root.findall('./gentype/item'):
-            name = i.attrib['name']
-            di['GENTYPE'][None].append(name)
-            di['genTypeCost'][name] = float(i.attrib['CX'])
-            di['genTypeEmissionRate'][name] = float(i.attrib['CO2'])
+        for name,item in parameter_data['gentype'].items():
+            di['genTypeCost'][name] = float(item['CX'])
+            di['genTypeEmissionRate'][name] = float(item['CO2'])
 
-        for i in root.findall('./parameters'):
-            di['financeInterestrate'] = {None:
-                float(i.attrib['financeInterestrate'])}
-            di['financeYears'] = {None:
-                float(i.attrib['financeYears'])}
-            di['omRate'] = {None:
-                float(i.attrib['omRate'])}
-            di['CO2price'] = {None:
-                float(i.attrib['CO2price'])}
-            di['VOLL'] = {None:
-                float(i.attrib['VOLL'])}
-            di['stage2TimeDelta'] = {None:
-                float(i.attrib['stage2TimeDelta'])}
-            di['STAGE'] = {None:
-                list(range(1,int(i.attrib['stages'])+1))}
+        # OTHER PARAMETERS:
+        item = parameter_data['parameters']
+        di['financeInterestrate'] = {None: float(item['financeInterestrate'])}
+        di['financeYears'] = {None: float(item['financeYears'])}
+        di['omRate'] = {None: float(item['omRate'])}
+        di['CO2price'] = {None: float(item['CO2price'])}
+        di['VOLL'] = {None: float(item['VOLL'])}
+        di['stage2TimeDelta'] = {None: float(item['stage2TimeDelta'])}
+        di['STAGE'] = {None: list(range(1,int(item['stages'])+1))}
 
          # Compute matrices used in power flow equaions
 #        import scipy.sparse
