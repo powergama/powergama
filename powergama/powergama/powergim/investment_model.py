@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Module for power grid investment analyses
 
@@ -7,22 +6,18 @@ Module for power grid investment analyses
 import pandas as pd
 import numpy as np
 import pyomo.environ as pyo
-
-# import pyomo.pysp.scenariotree.tree_structure_model as tsm
-# import mpisppy.utils.pysp_model.tree_structure_model as tsm
-
-# import pyomo.pysp.util.rapper as rapper
 import networkx
 import copy
-import math
+import mpisppy.scenario_tree as scenario_tree
 from powergama import constants as const
 from .utils import annuityfactor
 
 
 def _slice_to_list(component_slice):
     """expand slice to list of components"""
-    mylist = [v for k,v in component_slice.expanded_items()]
+    mylist = [v for k, v in component_slice.expanded_items()]
     return mylist
+
 
 class SipModel:
     """
@@ -1094,7 +1089,9 @@ class SipModel:
 
         return dat_str
 
-    def OBSOLETE_createScenarioTreeModel(self, num_scenarios, probabilities=None, stages=[1, 2]):
+    def OBSOLETE_createScenarioTreeModel(
+        self, num_scenarios, probabilities=None, stages=[1, 2]
+    ):
         """Generate model instance with data. Alternative to .dat files
 
         Parameters
@@ -1156,57 +1153,49 @@ class SipModel:
 
         return st_model
 
-
-
-    #TODO: Tidy up this...
-    def scenario_creator(self, scenario_name, use_integer=False, sense=pyo.minimize, **scenario_creator_kwargs):
+    # TODO: Check if use_integer and sense is needed.
+    # Perhaps needed when solved with command line mpi?
+    def scenario_creator(
+        self,
+        scenario_name,
+        use_integer=False,
+        sense=pyo.minimize,
+        **scenario_creator_kwargs
+    ):
         """
-        The scenario_creator function somehow needs to create a list of non-leaf tree 
-        node objects that are constructed by calling scenario_tree.ScenarioNode which 
-        is not very hard for two stage problems, because there is only one non-leaf node 
-        and it must be called “ROOT”. If there are other scenario tree nodes, their 
-        names, although strings, must either be a unique integer or end in a unique 
-        integer (e.g. “1” or “Node1”, etc.) The node constructor takes as arguments: 
-        
-        name, 
-        conditional probability, 
-        stage number,
-        stage cost expression,
-        list of scenario names at the node (optional and not used)
-        list of Vars subject to non-anticipativity at the node (I think slicing is allowed)
-        the concrete model instance.
-        
+        Creates a list of non-leaf tree node objects associated with this scenario
+
+        Returns a Pyomo Concrete Model
         """
-        # returns a concrete pyomo model
 
         dict_data = scenario_creator_kwargs["dict_data"]
         grid_data = scenario_creator_kwargs["grid_data"]
         probabilities = scenario_creator_kwargs["cond_prob"]
         scenario_data_callback = scenario_creator_kwargs["scenario_data_callback"]
 
-        dict_data = scenario_data_callback(scenario_name,grid_data,dict_data)
-        model = self.createConcreteModel(dict_data=dict_data)   
+        dict_data = scenario_data_callback(scenario_name, grid_data, dict_data)
+        model = self.createConcreteModel(dict_data=dict_data)
         model._mpisppy_probability = probabilities[scenario_name]
-        
+
         # Convert slices to lists as slices otherwise give error
         stage1vars = (
-            _slice_to_list(model.branchNewCables[:,1])
-            +_slice_to_list(model.branchNewCapacity[:,1])
-            +_slice_to_list(model.newNodes[:,1])
-            +_slice_to_list(model.genNewCapacity[:,1])
+            _slice_to_list(model.branchNewCables[:, 1])
+            + _slice_to_list(model.branchNewCapacity[:, 1])
+            + _slice_to_list(model.newNodes[:, 1])
+            + _slice_to_list(model.genNewCapacity[:, 1])
         )
         # Create the list of nodes associated with the scenario (for two stage,
         # there is only one node associated with the scenario--leaf nodes are
         # ignored).
         root_node = scenario_tree.ScenarioNode(
-                name="ROOT",
-                cond_prob=1.0,
-                stage=1,
-                cost_expression=model.stageCost[1],
-                scen_name_list=None, # Deprecated?
-                nonant_list=stage1vars,
-                scen_model=model,
-            )
+            name="ROOT",
+            cond_prob=1.0,
+            stage=1,
+            cost_expression=model.stageCost[1],
+            scen_name_list=None,  # Deprecated?
+            nonant_list=stage1vars,
+            scen_model=model,
+        )
         model._mpisppy_node_list = [root_node]
         return model
 
@@ -1254,46 +1243,6 @@ class SipModel:
         cost_value = pyo.value(cost1npv)
         return cost_value
 
-    #        ar = 1
-    #        br_num=0
-    #        br_cap=0
-    #        b_cost = 0
-    #
-    #        salvagefactor = (int(stage-1)*model.stage2TimeDelta/model.financeYears)*(
-    #                1/((1+model.financeInterestrate)
-    #                **(model.financeYears-model.stage2TimeDelta*int(stage-1))))
-    #        discount_t0 = (1/((1+model.financeInterestrate)
-    #                        **(model.stage2TimeDelta*int(stage-1))))
-    #        if stage==1:
-    #            ar = annuityfactor(model.financeInterestrate,model.financeYears)
-    #        else:
-    #            ar = (annuityfactor(model.financeInterestrate,model.financeYears)
-    #                  -annuityfactor(model.financeInterestrate,
-    #                                 int(stage-1)*model.stage2TimeDelta))
-    #        br_num += model.branchNewCables[b,stage].value
-    #        br_cap += model.branchNewCapacity[b,stage].value
-    #        typ = model.branchType[b]
-    #        b_cost += (model.branchtypeCost[typ,'B']
-    #                    *br_num)
-    #        b_cost += (model.branchtypeCost[typ,'Bd']
-    #                    *model.branchDistance[b]*br_num)
-    #        b_cost += (model.branchtypeCost[typ,'Bdp']
-    #                    *model.branchDistance[b]*br_cap)
-    #        #endpoints offshore (N=1) or onshore (N=0) ?
-    #        N1 = model.branchOffshoreFrom[b]
-    #        N2 = model.branchOffshoreTo[b]
-    #        for N in [N1,N2]:
-    #            b_cost += N*(model.branchtypeCost[typ,'CS']*br_num
-    #                        +model.branchtypeCost[typ,'CSp']*br_cap)
-    #            b_cost += (1-N)*(model.branchtypeCost[typ,'CL']*br_num
-    #                        +model.branchtypeCost[typ,'CLp']*br_cap)
-    #        cost = model.branchCostScale[b]*b_cost
-    #        if include_om:
-    #            cost = cost*(1 + model.omRate * ar)
-    #        cost -= cost*salvagefactor
-    #        cost = cost*discount_t0
-    #        return cost
-
     def computeCostNode(self, model, n, include_om=False):
         """Investment cost of single node
 
@@ -1316,38 +1265,6 @@ class SipModel:
             cost_value = cost_value + pyo.value(costnpv[stage])
         return cost_value
 
-    #        # node may be expanded in stage 1 or stage 2, but will never be
-    #        # expanded in both
-    #        # TODO: cope with stages
-    #
-    #        ar = 1
-    #        n_num = 0
-    #        stage=2
-    #        salvagefactor = (int(stage-1)*model.stage2TimeDelta/model.financeYears)*(
-    #                1/((1+model.financeInterestrate)
-    #                **(model.financeYears-model.stage2TimeDelta*int(stage-1))))
-    #        discount_t0 = (1/((1+model.financeInterestrate)
-    #                        **(model.stage2TimeDelta*int(stage-1))))
-    #        for s in model.STAGE:
-    #            if s<2:
-    #                n_num = model.newNodes[n,s].value
-    #                ar = (annuityfactor(model.financeInterestrate,model.financeYears))
-    #            else:
-    #                n_num = model.newNodes[n,s-1].value+model.newNodes[n,s].value
-    #                ar = (annuityfactor(model.financeInterestrate,model.financeYears)
-    #                      -annuityfactor(model.financeInterestrate,
-    #                                     (s-1)*model.stage2TimeDelta))
-    #        n_cost = 0
-    #        N = model.nodeOffshore[n]
-    #        n_cost += N*(model.nodetypeCost[model.nodeType[n],'S']*n_num)
-    #        n_cost += (1-N)*(model.nodetypeCost[model.nodeType[n],'L']*n_num)
-    #        cost = model.nodeCostScale[n]*n_cost
-    #        if include_om:
-    #            cost = cost*(1 + model.omRate * ar)
-    #        cost -= cost*salvagefactor
-    #        cost = cost*discount_t0
-    #        return cost
-
     def computeCostGenerator(self, model, g, stage=2, include_om=False):
         """Investment cost of generator NPV"""
         cost1 = self.costGen(model, g, stage=stage)
@@ -1361,28 +1278,6 @@ class SipModel:
         cost_value = pyo.value(cost1npv)
         return cost_value
 
-    #        ar = 1
-    #        g_cap = 0
-    #        salvagefactor = (int(stage-1)*model.stage2TimeDelta/model.financeYears)*(
-    #                1/((1+model.financeInterestrate)
-    #                **(model.financeYears-model.stage2TimeDelta*int(stage-1))))
-    #        discount_t0 = (1/((1+model.financeInterestrate)
-    #                        **(model.stage2TimeDelta*int(stage-1))))
-    #        if stage==1:
-    #            ar = annuityfactor(model.financeInterestrate,model.financeYears)
-    #        elif stage==2:
-    #            ar = (annuityfactor(model.financeInterestrate,model.financeYears)
-    #                      -annuityfactor(model.financeInterestrate,
-    #                                     model.stage2TimeDelta))
-    #        g_cap = model.genNewCapacity[g,stage].value
-    #        typ = model.genType[g]
-    #        cost = model.genTypeCost[typ]*g_cap*ar
-    #        if include_om:
-    #            cost = cost*(1 + model.omRate * ar)
-    #        cost -= cost*salvagefactor
-    #        cost = cost*discount_t0
-    #        return cost
-
     def computeGenerationCost(self, model, g, stage):
         """compute NPV cost of generation (+ CO2 emissions)
 
@@ -1391,29 +1286,6 @@ class SipModel:
         cost1 = self.costOperationSingleGen(model, g, stage=stage)
         cost_value = pyo.value(cost1)
         return cost_value
-
-    #        return cost_value
-    #        ar = 1
-    #        if stage == 1:
-    #            gen = model.generation
-    #            ar = annuityfactor(model.financeInterestrate,
-    #                               model.stage2TimeDelta)
-    #        elif stage==2:
-    #            gen = model.generation
-    #            ar = (
-    #                annuityfactor(model.financeInterestrate,model.financeYears)
-    #                -annuityfactor(model.financeInterestrate,model.stage2TimeDelta)
-    #                )
-    #        expr = sum(gen[g,t,stage].value*model.samplefactor[t]*
-    #                    model.genCostAvg[g]*model.genCostProfile[g,t]
-    #                     for t in model.TIME)
-    #        expr2 = sum(gen[g,t,stage].value*model.samplefactor[t]*
-    #                            model.genTypeEmissionRate[model.genType[g]]
-    #                            for t in model.TIME)
-    #        expr2 = expr2*model.CO2price.value
-    #        # lifetime cost
-    #        expr = (expr+expr2)*ar
-    #        return expr
 
     def computeDemand(self, model, c, t):
         """compute demand at specified load ant time"""
@@ -2161,4 +2033,3 @@ class SipModel:
             grid_res.node["existing"] > self._NUMERICAL_THRESHOLD_ZERO
         ]
         return grid_res
-
