@@ -60,9 +60,7 @@ def plotEnergyMix(
     elif variable == "spilled":
         print("Getting curatailed energy from all generators...")
         for g in model.GEN:
-            gen_output.append(
-                sum(self.computeCurtailment(model, g, t, s) for t in timeMaxMin)
-            )
+            gen_output.append(sum(self.computeCurtailment(model, g, t, s) for t in timeMaxMin))
         title = "Energy spilled"
     else:
         print("Variable not valid")
@@ -165,9 +163,7 @@ def plotAreaPrice(
         df = pd.DataFrame.from_dict(areaprice)
         props = dict(whiskers="DarkOrange", medians="lime", caps="Gray")
         boxprops = dict(linestyle="--", linewidth=3, color="DarkOrange", facecolor="k")
-        flierprops = dict(
-            marker="o", markerfacecolor="none", markersize=8, linestyle="none"
-        )
+        flierprops = dict(marker="o", markerfacecolor="none", markersize=8, linestyle="none")
         meanpointprops = dict(marker="D", markeredgecolor="red", markerfacecolor="red")
         medianprops = dict(linestyle="-", linewidth=4, color="red")
         df.plot.box(
@@ -242,13 +238,7 @@ def plotWelfare(
             welfare[typ] = {}
             for c in model.LOAD:
                 welfare[typ][c] = (
-                    sum(
-                        [
-                            sip_model.computeAreaWelfare(model, c, t, s)[typ]
-                            * model.samplefactor[t]
-                            for t in model.TIME
-                        ]
-                    )
+                    sum([sip_model.computeAreaWelfare(model, c, t, s)[typ] * model.samplefactor[t] for t in model.TIME])
                     / 10 ** 9
                 )
         title = "Total welfare"
@@ -262,11 +252,7 @@ def plotWelfare(
             total[c] = 0
             for typ in types:
                 total[c] += sum(
-                    [
-                        sip_model.computeAreaWelfare(model, c, t, s)[typ]
-                        * model.samplefactor[t]
-                        for t in model.TIME
-                    ]
+                    [sip_model.computeAreaWelfare(model, c, t, s)[typ] * model.samplefactor[t] for t in model.TIME]
                 )
 
     plt.figure()

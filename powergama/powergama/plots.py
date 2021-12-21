@@ -257,9 +257,9 @@ def plotMap(
         m.add_child(cm_branch)
     elif branchtype == "type":
         type_val, types = branch["type"].factorize(sort=True)
-        print(types)
+        # print(types)
         branch["type_num"] = type_val
-        print(branch[["type", "type_num"]])
+        # print(branch[["type", "type_num"]])
         value_col = "type_num"
         val_max = branch[value_col].max()
         cm_branch = cmSet1.scale(0, val_max).to_step(10)
