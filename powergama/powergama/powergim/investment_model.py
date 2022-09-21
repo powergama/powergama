@@ -817,7 +817,8 @@ class SipModel:
             ref = row["demand_ref"]
             for i, t in enumerate(grid_data.timerange):
                 di["demandProfile"][(k, t)] = grid_data.profiles[ref][i]
-                di["maxShed"][(k, t)] = grid_data.profiles[ref][i] * row["demand_avg"]
+                # if profile is negative, maxShed should be zero (not negative)
+                di["maxShed"][(k, t)] = max(0, grid_data.profiles[ref][i]) * row["demand_avg"]
 
         # Parameters coming from YAML file
 
