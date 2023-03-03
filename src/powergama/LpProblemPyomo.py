@@ -432,7 +432,7 @@ class LpProblem(object):
 
         # Compute matrices used in power flow equaions
         print("Computing B and DA matrices...")
-        Bbus, DA = grid_data.computePowerFlowMatrices()
+        Bbus, DA = grid_data.compute_power_flow_matrices()
 
         n_i = di['NODE'][None]
         b_i = di['BRANCH_AC'][None]

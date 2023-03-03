@@ -506,51 +506,52 @@ class GridData(object):
                 for i in self.branch.index.tolist()]
 
 
-    def computePowerFlowMatrices(self,baseZ=1):
+    def compute_power_flow_matrices(self, base_Z=1):
         """
         Compute and return dc power flow matrices B' and DA
-
         Parameters
         ==========
-        baseZ : float (impedance should already be in pu.)
+        base_Z : float (impedance should already be in pu.)
                 base value for impedance
-
         Returns
         =======
-        (Bprime, DA) : compressed sparse row matrix
-
+        (coeff_B, coeff_DA) : scipy.sparse matrices
         """
 
-        b = numpy.asarray(self._susceptancePu(baseZ))
+        #df_branch = pd.DataFrame.from_dict(branches, orient="index")
+        branches = self.branch
+        susceptance = 1 / branches["reactance"] * base_Z
+        nodes = list(self.node["id"])
+        #node_ids = nodes
+        edge_ids = []
+        edges = []
+        #for br_id, branch in branches.items():
+        for br_id, branch in branches.iterrows():
+            b = susceptance[br_id]
+            edges.append((branch["node_from"], branch["node_to"], br_id, {"i": br_id, "b": b}))
+            edge_ids.append(br_id)
+
         # MultiDiGraph to allow parallel lines
         G = nx.MultiDiGraph()
-        edges = [(self.branch['node_from'][i],
-                  self.branch['node_to'][i],
-                  i,{'i':i,'b':b[i]})
-                  for i in self.branch.index]
-        G.add_nodes_from(self.node['id'])
+        G.add_nodes_from(nodes)
         G.add_edges_from(edges)
-
-        #G.add_edges_from(zip(data.branch['node_from'],
-        #                     data.branch['node_to'],data.branch.index,{}))
-        A_incidence_matrix = -nx.incidence_matrix(G,oriented=True,
-                                                 nodelist=self.node['id'],
-                                                 edgelist=edges).T
+        A_incidence_matrix = -nx.incidence_matrix(G, oriented=True, nodelist=nodes, edgelist=edges).T       
+        A_incidence_matrix = scipy.sparse.csc_matrix(A_incidence_matrix)
 
         # Diagonal matrix
-        D = scipy.sparse.diags(-b,offsets=0)
-        DA = D*A_incidence_matrix
+        D = scipy.sparse.diags(-susceptance, offsets=0)
+        # Element-wise multiplication:
+        DA = D * A_incidence_matrix
 
         # Bf constructed from incidence matrix with branch susceptance
         # used as weight (this is quite fast)
-        Bf = -nx.incidence_matrix(G,oriented=True,
-                                 nodelist=self.node['id'],
-                                 edgelist=edges,
-                                 weight='b').T
-        Bprime = A_incidence_matrix.T * Bf
-
-        return Bprime, DA
-
+        Bf = -nx.incidence_matrix(G, oriented=True, nodelist=nodes, edgelist=edges, weight="b").T
+        # See note above for this conversion
+        Bf = scipy.sparse.csc_matrix(Bf)
+        # Element-wise multiplication:
+        Bbus = A_incidence_matrix.T * Bf
+        return Bbus, DA
+    
 
     def getAllAreas(self):
         '''Return list of areas included in the grid model'''
