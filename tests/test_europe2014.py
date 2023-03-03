@@ -1,30 +1,30 @@
-# -*- coding: utf-8 -*-
-from __future__ import division
+from pathlib import Path
 import powergama
-#import powergama.GIS
 import powergama.scenarios
 import powergama.plots
 import time
 import matplotlib.pyplot as plt
 
+TEST_DATA_ROOT_PATH = Path(__file__).parent / "test_data"
+
 timerange=range(0,12)
 
 data = powergama.GridData()
 
-datapath= "data_europe2014/"
+datapath= TEST_DATA_ROOT_PATH/"data_europe2014/"
 resultpath= ""
 scenarioPrefix = "2014_"
 rerun = True
 sqlfile = "example_europe2014.sqlite3"
 
-data.readGridData(nodes=datapath + scenarioPrefix + "nodes.csv",
-                  ac_branches=datapath + scenarioPrefix + "branches.csv",
-                  dc_branches=datapath + scenarioPrefix+ "hvdc.csv",
-                  generators=datapath + scenarioPrefix + "generators.csv",
-                  consumers=datapath + scenarioPrefix + "consumers.csv")
-data.readProfileData(filename=datapath+"profiles.csv",
-            storagevalue_filling=datapath+"profiles_storval_filling.csv",
-            storagevalue_time=datapath+"profiles_storval_time.csv",
+data.readGridData(nodes=datapath/(scenarioPrefix + "nodes.csv"),
+                  ac_branches=datapath/(scenarioPrefix + "branches.csv"),
+                  dc_branches=datapath/(scenarioPrefix+ "hvdc.csv"),
+                  generators=datapath/(scenarioPrefix + "generators.csv"),
+                  consumers=datapath/(scenarioPrefix + "consumers.csv"))
+data.readProfileData(filename=datapath/"profiles.csv",
+            storagevalue_filling=datapath/"profiles_storval_filling.csv",
+            storagevalue_time=datapath/"profiles_storval_time.csv",
             timerange=timerange, 
             timedelta=1.0)
 
