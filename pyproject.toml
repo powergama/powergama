@@ -1,0 +1,64 @@
+[tool.poetry]
+name = "powergama"
+version = "1.1.4"
+description = "PowerGAMA - Power Grid And Market Analysis tool)"
+authors = ["Harald G Svendsen <harald.svendsen@sintef.no>"]
+license = "MIT License (http://opensource.org/licenses/MIT)"
+readme = "README.md"
+homepage = "https://github.com/powergama/powergama"
+repository = "https://github.com/powergama/powergama"
+classifiers=[
+    "Development Status :: 4 - Beta",
+    "Topic :: Scientific/Engineering",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Natural Language :: English",
+    "License :: OSI Approved :: MIT License",
+]
+
+[tool.poetry.dependencies]
+python = ">=3.9,<3.11"
+numpy = "^1.23.0"
+pandas = "^1.5.0"
+"ruamel.yaml" = "^0.17.21"
+Pyomo = "^6.4.2"
+mpi-sppy = "^0.11.1"
+mpi4py = "^3.1.1"
+scipy = "^1.9.1"
+ipywidgets = "^8"
+pydantic = "^1.10.0"
+jupyterlab = "^3.4.7"
+scikit-learn = "^1.1.2"
+matplotlib = {version = "^3.6.0", optional = true}
+plotly = {version = "^5.10.0", optional = true}
+seaborn = {version = "^0.12.0", optional = true}
+branca = {version = "^0.5", optional = true}
+folium = {version = "^0.12", optional = true}
+jinja2 = {version = "^3.1", optional = true}
+openpyxl = "^3.0.10"
+geopandas = "^0.12.1"
+cloudpickle = "^2.2.0"
+highspy = "^1.5.0.dev0"
+networkx = "^3.0"
+
+[tool.poetry.dev-dependencies]
+pytest = "^7"
+mypy = ">=0.96"
+pylint = "^2"
+black = "22.08.0"
+nbmake = "^1"
+bandit = "^1.7.4"
+flake8 = "^5.0.4"
+setuptools = "^65.6.3"
+pre-commit = "^2.20.0"
+
+[tool.poetry.extras]
+plotting = ["matplotlib","seaborn", "plotly", "folium", "branca", "jinja2"]
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+
