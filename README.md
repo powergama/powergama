@@ -2,17 +2,21 @@
 [![Python](https://img.shields.io/badge/python-3-blue.svg)](https://python.org)
 [![Code style](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 [![pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit&logoColor=white)](https://github.com/pre-commit/pre-commit)
-[![build](https://github.com/powergama/powergama/actions/workflows/build/badge.svg)](https://github.com/powergama/powergama/actions/workflows/build.yml)
-[![Verion](https://badge.fury.io/gh/powergama/powergama)](https://badge.fury.io/gh/powergama%2Fpowergama.svg")
+[![build](https://github.com/powergama/powergama/actions/workflows/build.yml/badge.svg)](https://github.com/powergama/powergama/actions/workflows/build.yml)
+[![Version](https://badge.fury.io/gh/powergama%2Fpowergama)](https://badge.fury.io/gh/powergama%2Fpowergama.svg")
 # PowerGAMA - Power Grid And Market Analysis
 
-PowerGAMA is a Python package for hour-by-hour optimal power flow analysis of interconnected power systems with variable energy sources and storage systems.
+## Introduction
+PowerGAMA is an open-source Python package for power system grid and market analyses.
 
-## 
+Since some generators may have an energy storage (hydro power with reservoir and concentrated solar power with thermal storage) the optimal solution in one timestep depends on the previous timestep, and the problem is therefore be solved sequentially. A realistic utilisation of energy storage is ensured through the use of storage values.
 
+PowerGAMA does not include any power market subtleties (such as start-up costs, limited ramp rates, forecast errors, unit commitments) and as such will tend to overestimate the ability to accommodate large amounts of variable renewable energy. Essentially it assumes a perfect market based on nodal pricing without barriers between different countries. This is naturally a gross oversimplification of the real power system, but gives nonetheless very useful information to guide the planning of grid developments and to assess broadly the impacts of new generation and new interconnections.
 
+Reference:
+* HG Svendsen and OC Spro, *PowerGAMA: A new simplified modelling approach for analyses of large interconnected power systems, applied to a 2030 Western Mediterranean case study*, J. Renewable and Sustainable Energy 8 (2016), [doi.org/10.1063/1.4962415](https://doi.org/10.1063/1.4962415)
 
-## Getting started
+## Install use-only version
 Install latest PowerGAMA release from PyPi:
 ```
 pip install powergama
