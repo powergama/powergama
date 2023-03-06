@@ -15,18 +15,18 @@ Install latest PowerGAMA release from PyPi:
 pip install powergama
 ```
 
-## Local installation
+## Install development version
 Prerequisite: 
 - [Poetry](https://python-poetry.org/docs/#installation)
 - [Pre-commit](https://pre-commit.com/)
-- A MILP solver, e.g. the free [CBC solver](https://projects.coin-or.org/Cbc).
+- An LP solver, e.g. the free [CBC solver](https://projects.coin-or.org/Cbc).
 Clone or download the code and install it as a python package. 
 
 
-### Install dependencies
+### Install 
 1. `git clone git@github.com:powergama/powergama.git`
 2. `cd powergama`
-3. `poetry install --no-root`  --no-root to not install the package itself, only the dependencies.
+3. `poetry install`
 4. `poetry shell`
 5. `poetry run pytest tests`
 
@@ -36,7 +36,7 @@ These pipelines are defined:
 
 1. Build: Building and testing on multiple OS and python versions. Triggered on any push to GitHub.
 
-## Contribute
+## Contribute to the code
 You are welcome to contribute to the improvement of the code.
 
 * Use Issues to describe and track needed improvements and bug fixes

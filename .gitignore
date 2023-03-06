@@ -4,7 +4,6 @@ powergama/userguide/UserGuide.synctex.gz
 powergama/build/
 powergama/dist/
 powergama/doc/doc_sphinx/
-*.sqlite3
 powergama/examples/.ipynb_checkpoints/
 powergama/examples/powergim_doggerbank/.ipynb_checkpoints/
 *.sqlite
