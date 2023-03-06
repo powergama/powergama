@@ -3,7 +3,7 @@
 [![Code style](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 [![pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit&logoColor=white)](https://github.com/pre-commit/pre-commit)
 [![build](https://github.com/powergama/powergama/actions/workflows/build.yml/badge.svg)](https://github.com/powergama/powergama/actions/workflows/build.yml)
-[![Version](https://badge.fury.io/gh/powergama%2Fpowergama)](https://badge.fury.io/gh/powergama%2Fpowergama.svg")
+[![GitHub version](https://badge.fury.io/gh/powergama%2Fpowergama.svg)](https://badge.fury.io/gh/powergama%2Fpowergama)
 # PowerGAMA - Power Grid And Market Analysis
 
 ## Introduction
