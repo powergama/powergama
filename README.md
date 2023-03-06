@@ -1,6 +1,9 @@
 [![GitHub license](https://img.shields.io/github/license/powergama/powergama)](https://github.com/powergama/powergama/blob/main/LICENSE)
-[![Python](https://img.shields.io/badge/python-3.9%20%7C%203.10-blue.svg)](https://python.org)
+[![Python](https://img.shields.io/badge/python-3-blue.svg)](https://python.org)
 [![Code style](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+[![pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit&logoColor=white)](https://github.com/pre-commit/pre-commit)
+[![build](https://github.com/powergama/powergama/actions/workflows/build/badge.svg)](https://github.com/powergama/powergama/actions/workflows/build.yml)
+[![Verion](https://badge.fury.io/gh/powergama/powergama)](https://badge.fury.io/gh/powergama%2Fpowergama.svg")
 # PowerGAMA - Power Grid And Market Analysis
 
 PowerGAMA is a Python package for hour-by-hour optimal power flow analysis of interconnected power systems with variable energy sources and storage systems.
