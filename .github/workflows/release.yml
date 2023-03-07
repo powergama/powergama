@@ -56,9 +56,8 @@ jobs:
           poetry install --no-interaction
 
       - name: Setup GLPK on ubuntu
-        if: matrix.os == 'ubuntu-latest'
         run: sudo apt-get install glpk-utils
-        
+
       - name: Run tests
         run: poetry run pytest -v
 
