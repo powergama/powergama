@@ -5,6 +5,8 @@ Specific topics:
 - [Input data](input_data.md)
 - [Output data and result analysis](output_data_and_analysis.md)
 - [Model description](model_description.md)
+- [Example: 9 bus case](../tests/example_notebook_9bus.ipynb) (Jupyter notebook)
+- [Example: Europe 2014](../tests/example_notebook_Europe2014.ipynb) (Jupyter notebook)
 
 # Introduction
 

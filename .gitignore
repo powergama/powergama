@@ -7,6 +7,7 @@ powergama/doc/doc_sphinx/
 powergama/examples/.ipynb_checkpoints/
 powergama/examples/powergim_doggerbank/.ipynb_checkpoints/
 *.sqlite
+*.sqlite3
 *.pyc
 lpsolver_log.txt
 poetry.lock
