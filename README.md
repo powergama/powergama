@@ -13,9 +13,11 @@ Since some generators may have an energy storage (hydro power with reservoir and
 
 PowerGAMA does not include any power market subtleties (such as start-up costs, limited ramp rates, forecast errors, unit commitments) and as such will tend to overestimate the ability to accommodate large amounts of variable renewable energy. Essentially it assumes a perfect market based on nodal pricing without barriers between different countries. This is naturally a gross oversimplification of the real power system, but gives nonetheless very useful information to guide the planning of grid developments and to assess broadly the impacts of new generation and new interconnections.
 
-Reference:
-* HG Svendsen and OC Spro, *PowerGAMA: A new simplified modelling approach for analyses of large interconnected power systems, applied to a 2030 Western Mediterranean case study*, J. Renewable and Sustainable Energy 8 (2016), [doi.org/10.1063/1.4962415](https://doi.org/10.1063/1.4962415)
+## Documentation
 
+- [Online user guide](userguide/index.md)
+
+- HG Svendsen and OC Spro, *PowerGAMA: A new simplified modelling approach for analyses of large interconnected power systems, applied to a 2030 Western Mediterranean case study*, J. Renewable and Sustainable Energy 8 (2016), [doi.org/10.1063/1.4962415](https://doi.org/10.1063/1.4962415)
 ## Install use-only version
 Install latest PowerGAMA release from PyPi:
 ```
