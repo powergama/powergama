@@ -71,8 +71,7 @@ jobs:
         run: poetry run pytest -v
 
       - name: Run notebook tests (ubuntu latest only)
-        if: matrix.os == 'ubuntu-latest'
-        if: matrix.python-version =='3.11'
+        if: (matrix.os == 'ubuntu-latest') && (matrix.python-version =='3.11')
         run: poetry run pytest -v --nbmake -k ipynb --ignore=tests/example_notebook_Europe2014.ipynb
 
       - name: Build artifacts
