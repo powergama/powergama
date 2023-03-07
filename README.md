@@ -42,6 +42,8 @@ Clone or download the code and install it as a python package.
 These pipelines are defined:
 
 1. Build: Building and testing on multiple OS and python versions. Triggered on any push to GitHub.
+2. Release: Create a release. Triggered when a version tag v* is created.
+3. Publish: Publish to PyPI. Triggered when a release is published
 
 ## Contribute to the code
 You are welcome to contribute to the improvement of the code.
