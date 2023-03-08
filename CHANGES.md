@@ -2,6 +2,8 @@
 
 ## Unpublished
 - update user documentation
+- speedup of model creation
+
 ## v1.1.4
 2023-03-06
 - moved repository to github
