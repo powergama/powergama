@@ -9,7 +9,7 @@
 ## Introduction
 PowerGAMA is an open-source Python package for power system grid and market analyses.
 
-Since some generators may have an energy storage (hydro power with reservoir and concentrated solar power with thermal storage) the optimal solution in one timestep depends on the previous timestep, and the problem is therefore be solved sequentially. A realistic utilisation of energy storage is ensured through the use of storage values.
+Since some generators may have an energy storage (hydro power with reservoir and concentrated solar power with thermal storage) the optimal solution in one timestep depends on the previous timestep, and the problem should therefore be solved sequentially. A realistic utilisation of energy storage is ensured through the use of storage values.
 
 PowerGAMA does not include any power market subtleties (such as start-up costs, limited ramp rates, forecast errors, unit commitments) and as such will tend to overestimate the ability to accommodate large amounts of variable renewable energy. Essentially it assumes a perfect market based on nodal pricing without barriers between different countries. This is naturally a gross oversimplification of the real power system, but gives nonetheless very useful information to guide the planning of grid developments and to assess broadly the impacts of new generation and new interconnections.
 
@@ -29,7 +29,7 @@ Prerequisite:
 - [Poetry](https://python-poetry.org/docs/#installation)
 - [Pre-commit](https://pre-commit.com/)
 - An LP solver, e.g. the free [CBC solver](https://projects.coin-or.org/Cbc).
-Clone or download the code and install it as a python package. 
+Clone or download the code and install it as a python package. The tests rely on the [GLPK solver](https://www.gnu.org/software/glpk/).
 
 
 ### Install 
