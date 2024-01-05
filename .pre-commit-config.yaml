@@ -10,7 +10,7 @@ repos:
     hooks:
       - id: flake8
   - repo: https://github.com/timothycrosley/isort
-    rev: "5.10.1"
+    rev: "5.11.5"
     hooks:
       - id: isort
         args: ['--settings-path=.isort.cfg']
