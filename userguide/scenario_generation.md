@@ -39,7 +39,7 @@ To load an existing grid model and export a scenario file
 
 ## Create modified dataset using scenario file
 
-In order to create a scenario file, the simplest way is to to save an
+In order to create a scenario file, the simplest way is to save an
 existing grid model to a scenario file as shown above. Then, it can be
 opened in a spreadsheet editor and modified according to the
 specifications of the new scenario. Values that should not be modified
