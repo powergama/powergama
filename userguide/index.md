@@ -26,7 +26,7 @@ physical power flow eqautions.
 Since some generators may have an energy storage (hydro power with
 reservoir and consentrated solar power with thermal storage) the optimal
 solution in one timestep depends on the previous timestep, and the
-problem is therefore be solved sequentially. A realistic utilisation of
+problem should therefore be solved sequentially. A realistic utilisation of
 energy storage is ensured through the use of storage values.
 
 PowerGAMA does not include any power market subtleties (such as start-up

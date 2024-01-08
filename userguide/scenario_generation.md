@@ -1,7 +1,7 @@
 # Scenario generation tool
 
-In order to simplify the process of generating scenarios with differeng
-generation mix and demand, the package includes a scenario module that
+In order to simplify the process of generating scenarios with different
+generation mixes and demands, the package includes a scenario module that
 can be used to save the loaded grid model to a scenario file. This is a
 summary file that includes demand per area, generation capacities per
 type and area etc. Exporting the grid model to a scenario file can be
@@ -17,7 +17,7 @@ The key functions are :
 ## Saving grid model to scenario file
 
 To load an existing grid model and export a scenario file
-("scenario.csv"'), run code similar to the following:
+("scenario.csv"), run code similar to the following:
 
     >>>import powergama
     >>>import powergama.scenarios
@@ -39,9 +39,9 @@ To load an existing grid model and export a scenario file
 
 ## Create modified dataset using scenario file
 
-In order to create a scenario file, the simplest is to to save an
-existing grid model to scenario file as shown above. Then, it can be
-open in a spreadsheet editor and modified according to the
+In order to create a scenario file, the simplest way is to save an
+existing grid model to a scenario file as shown above. Then, it can be
+opened in a spreadsheet editor and modified according to the
 specifications of the new scenario. Values that should not be modified
 should be left blank. Irrelevant rows can be removed. In general, the
 newScenario function only modifies data where information is provided in
@@ -86,11 +86,11 @@ code similar to the following in order to create new input data files:
                    timedelta=1.0)
                 
     >>>powergama.scenarios.newScenario(gridmodel, 
-                                       scenario\_file="scenario\_new.csv", 
-                                       new_file_prefix="new_")
+                                       scenario_file="scenario_new.csv", 
+                                       newfile_prefix="new_")
 
 The new input files will have the same names as the original, but with
-the prefix "new\_", e.g. "new_nodes..csv".
+the prefix "new\_", e.g. "new_nodes.csv".
 
 Now, you can run a new simulation with these new input files instead of
 the original ones.
