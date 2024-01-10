@@ -119,9 +119,15 @@ storage value table to be used for this generator/storage system
 of the associated inflow profile.
 
 Power inflow at a given timestep $t$ is computed according to
-$$ P_\text{inflow}(t) =  P_\text{max} \times \text{inflow factor} \times \text{profile value}(t) $$
+
+$$
+%\label{eq:inflow}
+     P_\text{inflow}(t) =  P_\text{max} \times \text{inflow factor} \times \text{profile value}(t) .
+$$
+
 In case the annual inflow is known, the inflow factor can be expressed
 by integrating the above equation, giving 
+
 $$
 %\label{eq:inflow_annual}
      \text{inflow factor} = \frac{\text{annual inflow}}{8760~\text{h} \times P_\text{max} \times  \text{avg}(\text{profile value})}.
@@ -197,10 +203,12 @@ There are two dependencies:
 -   Time of year and time of day
 
 All in all, the storage values are computed according to
+
 $$
 %\label{eq:storagevalue_calc}
      \text{storage value}(f,t) = \text{base value} \times \text{filling level profile}(f) \times \text{time profile}(t),
 $$
+
 where $f$ is the relative filling level, and $t$ is the timestep.
 
 Time dependence of storage values reflect the time dependence of the
