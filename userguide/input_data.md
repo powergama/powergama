@@ -10,16 +10,16 @@ all lower case.
 ## Grid data
 
 There are 5 input files associated with nodes, AC branches, DC branches,
-consumers and generators. These files contains references to additional
-files which has information about normalised storage values, energy
+consumers and generators. These files contain references to additional
+files which have information about normalised storage values, energy
 inflow profiles and power demand profiles. The reference identifier
 (integer number or string) in the generator and consumer files should
 match an identifier in the relevant storage value or profile files.
 
 ### Nodes
 
-Nodes need to have unique identifier string. Area information is used
-for scenario generation (preprosessing), and for plotting and
+Nodes need to have unique identifier strings. Area information is used
+for scenario generation (preprocessing), and for plotting and
 presentation of results. Latitude and longitude information is only used
 for plotting the grid on a map.
 
@@ -119,10 +119,7 @@ storage value table to be used for this generator/storage system
 of the associated inflow profile.
 
 Power inflow at a given timestep $t$ is computed according to
-$$
-%\label{eq:inflow}
-     P_\text{inflow}(t) =  P_\text{max} \times \text{inflow factor} \times \text{profile value}(t) .
-$$
+$$ P_\text{inflow}(t) =  P_\text{max} \times \text{inflow factor} \times \text{profile value}(t) $$
 In case the annual inflow is known, the inflow factor can be expressed
 by integrating the above equation, giving 
 $$
