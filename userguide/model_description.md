@@ -16,39 +16,39 @@ The cost of generation is assumed to be the marginal cost times power
 output for all generators. Start-up costs and ramp rates are not
 considered.
 
-For generators with a storage, the marginal cost is given by storage
+For generators with storage, the marginal cost is given by storage
 values, which depends on filling level. Storage values are inspired by
 watervalues used for modelling and planning of production for hydro
 power generators with storage [@fosso1999; @wolfgang2009]. Storage
 values reflect the value of adding power inflow to the storage. The
 generator will therefore produce if the cost of alternative generation
 is higher than the storage value at any given time. This is identical to
-saying that a generator with storage will produce powr if the nodal
+saying that a generator with storage will produce power if the nodal
 price is higher than the storage value.
 
-Storage values curves are given as input, as functions of storage
+Storage value curves are given as input, as functions of storage
 filling level and time. If the storage is nearly full, the storage value
 is low, since adding to the storage may lead to energy spillage. If the
 storage is nearly empty, the storage value is high. For predictable
 seasonal or daily inflow patterns, the storage value is low just before
 a peak in the inflow, and high before a dip. An illustration of how the
 storage values may vary with filling level and time is given in
-[Figure 1](#fig:storagevalues) for solar consentrated power with small
+[Figure 1](#fig:storagevalues) for solar concentrated power with small
 storage (hours) and for hydro power with large reservoir for seasonal
 storage.
 
 <p>
 <img src="storagevalues.png" id= "fig:storagevalues" />
-<b>Figure 1</b>: Illustration of typical storage values with dependence on filling level (left) and time variation for solar power with small storage (middle) and hydro with large storage (right)
+<b>Figure 1</b>: Illustration of typical storage values with dependence on filling level (left) and time variation for solar power with small storage (middle) and hydro with large storage (right).
 </p>
 
 ## Power generation
 
 
 <p> <img src="generator_model4.png" id="fig:generator_model" />
-<b>Figure 2:</b> Power generation model</p>
+<b>Figure 2:</b> Power generation model.</p>
 
-<p id="tab:generator_parameters"><b>Table 1:</b> Generator parameters: Inflow, storage capacity and marginal cost for different types of generators
+<p id="tab:generator_parameters"><b>Table 1:</b> Generator parameters: Inflow, storage capacity and marginal cost for different types of generators.
 
   Generator type      | Inflow             |  Storage           |   Price
   --------------------|--------------------|--------------------|---------------
@@ -102,7 +102,7 @@ capacity to vary throughout the year, which may be relevant at least for
 nuclear power and perhaps biomass. But it will wrongly indicate spilled
 energy whenever actual output is less than the available capacity.
 
-For generators with a storage, a pump, or more generally, an energy
+For generators with storage, a pump, or more generally, an energy
 storage charger, may be included in the model. Technically, a pump is
 represented as a generator with zero or negative output that takes
 energy from the grid and adds to the storage, with a certain amount of
@@ -136,13 +136,17 @@ conditions that the power output is higher than the nominal capacity. In
 this case output power should not be constrained by the nominal
 capacity, but only by the available power. In fact, this is true for all
 generators with zero storage. In general, therefore, the upper limit on
-generator output is given as $$\begin{aligned}
+generator output is given as 
+
+$$\begin{aligned}
     \text{No storage generators:} \quad && P_\text{limit} = P_\text{avail},
     \\
     \text{Non-zero storage generators:} \quad && P_\text{limit} = \min[P_\text{avail}, P_\text{max}],
     \\
     \text{Infinite storage generators:} \quad && P_\text{limit} = P_\text{max}.\end{aligned}$$
+
 The constraint on generator power output can then be written
+
 $$P_\text{min} \le P_\text{output} \le P_\text{limit}.$$
 
 ### Power inflow
@@ -177,7 +181,7 @@ fill up (due to inflow). If the price is also lower than the storage
 value minus a certain dead-band value, the pump will add energy to the
 storage, increasing the filling level.
 
-The dead-band ensures that the generator--pumping system doesn't
+The dead-band ensures that the generator-pumping system doesn't
 continuously alternate between generating and pumping, and indirectly
 takes into account the losses associated with pumping.
 
@@ -189,18 +193,18 @@ $$\frac{dE}{dt} = P_\text{inflow} - P_\text{output} + \eta_\text{pump}P_\text{pu
 maximum capacity of the storage. Discretised, this equation is written
 $$E(t+\Delta t) = \max[\min[E(t) 
     + \Delta t (P_\text{inflow} - P_\text{output} + P_\text{pump}), 
-    E_\text{max})],0]$$
+    E_\text{max}],0]$$
 
 ## Power consumption
 
 Power consumption is modelled as loads connected to different nodes with
 a given average power demand and a certain profile which describes the
-time dependent variation, i.e. how the power consumptions varies from
+time dependent variation, i.e. how the power consumption varies from
 time step to time step. Any number of demand profiles can be specified
 and any number of loads can be connected to each node.
 
 The full consumption model is illustrated in
-[Figure 4](#fig:load_model), with futher explanaitions in the following.
+[Figure 4](#fig:load_model), with further explanations in the following.
 
 <p id="#fig:load_model">
 <img src="load_model.png"/>
@@ -265,13 +269,13 @@ constrained by capacity limits. These physical relationships and
 constraints can be formulated by a set of equations and inequalities.
 Together with a cost function which describes the total cost of
 generation, the problem of minimising the cost becomes an optimal power
-flow (OPF) problem. In our case we apply approximate this problem using
+flow (OPF) problem. In our case we approximate this problem using
 only linear relationships, which gives a linear programming (LP) problem
 formulation. This must be solved time step by time step, where time
 steps are coupled due to the presence of storage.
 
 DC branches (i.e. HVDC connections) are considered fully controllable
-such that powr flow is a free variable only constrained by the branch
+such that power flow is a free variable only constrained by the branch
 capacity.
 
 The linearised power flow equations are obtained as follows.
@@ -279,7 +283,7 @@ The linearised power flow equations are obtained as follows.
 Assume there are $N$ buses, enumerated from 1 to $N$. Denote branches by
 double indices referring to endpoint buses. The impedance on the branch
 between node $i$ and $j$ is thus written $z_{ij} = r_{ij} + j x_{ij}$,
-where $i,j \in \{1,2,\dots, N\}$. From these impedances , the bus
+where $i,j \in \{1,2,\dots, N\}$. From these impedances, the bus
 admittance matrix $Y$ may be constructed:
 
 $$Y_{ij} = G_{ij}+jB_{ij} = \bigg\{ \begin{array}{ll} 
@@ -291,11 +295,13 @@ where $y_{ij} = g_{ij} + j b_{ij} = \frac{1}{z_{ij}}$
 is the admittance of the branch between $i$ and $j$.
 
 The AC power flow equations are 
+
 $$\begin{split}
     P_k & = \sum_{J=1}^N |v_k| |v_j| \Bigl(G_{kj}\cos(\theta_k-\theta_j) + B_{kj}\sin(\theta_k-\theta_j) \Bigr),
     \\
     Q_k & = \sum_{J=1}^N |v_k| |v_j| \Bigl(G_{kj}\sin(\theta_k-\theta_j) - B_{kj}\cos(\theta_k-\theta_j) \Bigr).
 \end{split}$$ 
+
 Here, $P_k$ and $Q_k$ are the net active and reactive
 power flow *into* node $i$. To arrive at the linearised equations, the
 following approximations are made:
@@ -314,9 +320,11 @@ reactive power flow equation becomes trivial, and the power flow
 equations reduce to $$P_k  = \sum_{j=1}^N   B_{kj}(\theta_k-\theta_j).$$
 This is the linearised power flow equation. On matrix form it can be
 written 
+
 $$
 \Delta P = B^\prime \Delta\theta,
 $$ 
+
 where $\Delta P$ is the
 net power into a node (i.e. production minus consumption), and
 $\Delta\theta$ is the angle relative to the angle of a chosen reference
@@ -324,6 +332,7 @@ node. The $B^\prime$ matrix is related to the $B$ matrix.
 
 The net power flow into a node $\Delta P = [P_k]$ is the sum of
 generation, demand, load shedding and hvdc power inflow:
+
 $$
 P_k  = \sum_{j=1}^{N_\text{gen}} P_j^\text{gen}
             - \sum_{j=1}^{N_\text{pump}} P_j^\text{pump}
@@ -331,6 +340,7 @@ P_k  = \sum_{j=1}^{N_\text{gen}} P_j^\text{gen}
             +\sum_{j=1}^{N_\text{dc}} P_j^\text{dc}
             -\sum_{j=1}^{N_\text{cons}} P_j^\text{cons},
 $$ 
+
 where
 $P_j^\text{gen}$ is generator output, $N_\text{gen}$ is number of
 generators at the given node, $P_j^\text{pump}$ is pump demand,
@@ -341,65 +351,18 @@ branches connected to the given node, $P_j^\text{cons}$ is consumer
 demand, and $N_\text{cons}$ is number of consumers at the given node.
 
 Power flow $P_B$ on each branch is computed by the matrix equation
+
 $$
 P_B = (D A) \Delta\theta,
 $$ 
+
 where $D$ is a diagonal matrix with
 elements given by the branch susceptance $D_{mm} =-b_m$, and $A$ is the
 node--arc incidence matrix.
 
 # Optimisation problem {#sec:linearoptimisation}
 
-A linear objective function is used in order to ensure fast optimisation
-that converges, with the practical benefit that it also requires fewer
-input parameters.
-
-The set of variables to be determined by the optimisation are
-
-$$
-%\label{eq:variables}
-    X = \{P_g^\text{gen}, P_p^\text{pump},P_f^\text{flex}, P_n^\text{shed}, \theta_n, P_j \},
-$$
-where $g\in \mathcal{G}$, the set of generators; $p\in \mathcal{P}$, the
-set of pumps; $f\in \mathcal{F}$, the set of flexible loads;
-$n\in \mathcal{N}$, the set of nodes. $j\in \mathcal{B}$, the set of AC
-and DC branches.
-
-The objective of the optimisation is expressed in terms of an objective
-function, which in our case is 
-$$\begin{split}
-%    \label{eq:objectivefunction}
-    F = & \sum_{g\in \mathcal{G}} c_g^\text{gen} P^\text{gen}_g 
-        - \sum_{p\in \mathcal{P}} c_p^\text{pump} P^\text{pump}_p
-        \\ &
-        - \sum_{f\in \mathcal{F}} c_f^\text{flex} P_c^\text{flex}       
-        + \sum_{n\in \mathcal{N}} c^\text{shed} P_n^\text{shed},        
-\end{split}$$ 
-where $c_g$ is the cost of generator $g$,
-$c_p^\text{pump}$ is the cost of pump $p$, $c_f^\text{flex}$ is the cost
-of flexible load $p$, and $c^\text{shed}$ is the fixed cost of load
-shedding. As discussed in
-the secton on [energy storage](#sec:energystorage), these cost parameters are determined by
-the fuel price for generators without storage, and by storage values in
-the other cases. The negative sign in front of pumping and flexible load
-means that increasing their value reduces the objective function.
-However, the energy balance constraint (see below) implies that power
-for pumping or flexible load must be compensated by generation
-elsewhere. So whether it is beneficial therefore depends on the cost of
-that alternative generation.
-
-The variables [\[eq:variables\]](#eq:variables){reference-type="eqref"
-reference="eq:variables"} are not free, but constrained through upper
-and lower bounds, and through equations expressing relationships between
-them. Referring to these constraints as $C_m$, the optimisation problem
-is formulated in the standard Linear Programming (LP) form
-$$
-%\label{eq:optimisation}
-    \min F = \min \sum c_i X_i \quad \text{such that} \quad  \{C_1,\dots C_6\}.
-$$
-This must be solved time step by time step, where time steps are coupled
-due to the presence of storage. The various constraints are now
-described in more detail.
+A linear objective function is used in order to ensure fast optimisation that converges, with the practical benefit that it also requires fewer input parameters. The set of variables to be determined by the optimisation are $$ %\label{eq:variables} X = \{P_g^\text{gen}, P_p^\text{pump},P_f^\text{flex}, P_n^\text{shed}, \theta_n, P_j \}, $$ where $g\in \mathcal{G}$, the set of generators; $p\in \mathcal{P}$, the set of pumps; $f\in \mathcal{F}$, the set of flexible loads; $n\in \mathcal{N}$, the set of nodes. $j\in \mathcal{B}$, the set of AC and DC branches. The objective of the optimisation is expressed in terms of an objective function, which in our case is $$\begin{split} %    \label{eq:objectivefunction} F = & \sum_{g\in \mathcal{G}} c_g^\text{gen} P^\text{gen}_g - \sum_{p\in \mathcal{P}} c_p^\text{pump} P^\text{pump}_p \\ & - \sum_{f\in \mathcal{F}} c_f^\text{flex} P_c^\text{flex}       + \sum_{n\in \mathcal{N}} c^\text{shed} P_n^\text{shed},        \end{split}$$ where $c_g$ is the cost of generator $g$, $c_p^\text{pump}$ is the cost of pump $p$, $c_f^\text{flex}$ is the cost of flexible load $p$, and $c^\text{shed}$ is the fixed cost of load shedding. As discussed in the secton on [energy storage](#sec:energystorage), these cost parameters are determined by the fuel price for generators without storage, and by storage values in the other cases. The negative sign in front of pumping and flexible load means that increasing their value reduces the objective function.  However, the energy balance constraint (see below) implies that power for pumping or flexible load must be compensated by generation elsewhere. So whether it is beneficial therefore depends on the cost of that alternative generation. The variables [\[eq:variables\]](#eq:variables){reference-type="eqref" reference="eq:variables"} are not free, but constrained through upper and lower bounds, and through equations expressing relationships between them. Referring to these constraints as $C_m$, the optimisation problem is formulated in the standard Linear Programming (LP) form $$ %\label{eq:optimisation} \min F = \min \sum c_i X_i \quad \text{such that} \quad  \{C_1,\dots C_6\}.  $$ This must be solved time step by time step, where time steps are coupled due to the presence of storage. The various constraints are now described in more detail.
 
 The *first* set of constraints state that power flow on branches is
 constrained by their capacity limits: $$C_1:\quad  
