@@ -33,19 +33,19 @@ storage is nearly empty, the storage value is high. For predictable
 seasonal or daily inflow patterns, the storage value is low just before
 a peak in the inflow, and high before a dip. An illustration of how the
 storage values may vary with filling level and time is given in
-[Figure 1](#fig:storagevalues) for solar concentrated power with small
+[Figure 1](#fig_storagevalues) for solar concentrated power with small
 storage (hours) and for hydro power with large reservoir for seasonal
 storage.
 
 <p>
-<img src="storagevalues.png" id= "fig:storagevalues" />
+<img src="storagevalues.png" id= "fig_storagevalues" />
 <b>Figure 1</b>: Illustration of typical storage values with dependence on filling level (left) and time variation for solar power with small storage (middle) and hydro with large storage (right).
 </p>
 
 ## Power generation
 
 
-<p> <img src="generator_model4.png" id="fig:generator_model" />
+<p> <img src="generator_model4.png" id="fig_generator_model" />
 <b>Figure 2:</b> Power generation model.</p>
 
 <p id="tab:generator_parameters"><b>Table 1:</b> Generator parameters: Inflow, storage capacity and marginal cost for different types of generators.
@@ -62,13 +62,13 @@ storage.
 
 
 Power generators are described by the same universal model, illustrated
-in [Figure 2](#fig:generator_model). Different types of power plants are
+in [Figure 2](#fig_generator_model). Different types of power plants are
 simply distinguished by their different parameters, as indicated in
 [Table 1](#tab:generator_parameters). 
 PowerGAMA assumes that the power
 inflow (average value and time profile) is given as input, and so the
 resource and primary energy converter parts included in
-[Figure 2](#fig:generator_model) are not directly relevant.
+[Figure 2](#fig_generator_model) are not directly relevant.
 
 Wind and solar PV power are similar. The inflow represents the available
 electrical power in the wind or solar radiation. Zero storage implies
@@ -164,7 +164,7 @@ depends on precipitation, temperature, topography and soil conditions.
 
 ### Pumping
 
-<p id="#fig:pumping_model">
+<p id="fig_pumping_model">
 <img src="generate_idle_pump2.png" />
 <b>Figure 3:</b> Generator with storage and pumping. The red dots represent three
 different situations with different nodal price at the generator
@@ -174,7 +174,7 @@ dead-band.</p>
 
 
 The implementation of pumping is illustrated in
-[Figure 3](#fig:pumping_model). If the price is high, the generator will
+[Figure 3](#fig_pumping_model). If the price is high, the generator will
 produce power, reducing the storage filling level. If the price is below
 the storage value the generator will be idle, allowing the storage to
 fill up (due to inflow). If the price is also lower than the storage
@@ -204,9 +204,9 @@ time step to time step. Any number of demand profiles can be specified
 and any number of loads can be connected to each node.
 
 The full consumption model is illustrated in
-[Figure 4](#fig:load_model), with further explanations in the following.
+[Figure 4](#fig_load_model), with further explanations in the following.
 
-<p id="#fig:load_model">
+<p id="fig:load_model">
 <img src="load_model.png"/>
 <b>Figure 4:</b> Power consumption model.
 </p>
@@ -252,11 +252,11 @@ initial value of the filling level is 0.5.
 Flexibility value curves specify flexibility values as functions of
 flexibility status. This is akin to storage values versus filling level
 for storage generators. An example of such a curve is shown in
-[Figure 5](#fig:flexvalue_curve). If the associated nodal price is lower
+[Figure 5](#fig_flexvalue_curve). If the associated nodal price is lower
 than the flexibility value, then the load is served. This in turn
 increases the flexibility status.
 
-<p id="#fig:flexvalue_curve"><img src="flexvalues.png"/>
+<p id="fig_flexvalue_curve"><img src="flexvalues.png"/>
 <b>Figure 5:</b> Storage value curve for flexible load. The red dots represent nodal prices in two different operating points.</p>
 
 
@@ -358,7 +358,7 @@ $$
 
 where $D$ is a diagonal matrix with
 elements given by the branch susceptance $D_{mm} =-b_m$, and $A$ is the
-node--arc incidence matrix.
+node-arc incidence matrix.
 
 # Optimisation problem {#sec:linearoptimisation}
 
@@ -432,7 +432,7 @@ approximation, power flow $\mathbf{P^\text{ac}}$ on AC branches is
 related to nodal voltage angles as expressed by the equation
 $$C_6:\quad \mathbf{P}^\text{ac} = \mathbf{D A \Theta},$$ where
 $\mathbf{D}$ is a diagonal matrix with elements given by the branch
-reactance $D_{mm} =-\frac{1}{x_m}$, and $\mathbf{A}$ is the node--branch
+reactance $D_{mm} =-\frac{1}{x_m}$, and $\mathbf{A}$ is the node-branch
 incidence matrix describing the network topology.
 
 The *seventh* constraint specifies the reference node and its voltage
