@@ -48,7 +48,7 @@ storage.
 <p> <img src="generator_model4.png" id="fig_generator_model" />
 <b>Figure 2:</b> Power generation model.</p>
 
-<p id="tab:generator_parameters"><b>Table 1:</b> Generator parameters: Inflow, storage capacity and marginal cost for different types of generators.
+<p id="tab_generator_parameters"><b>Table 1:</b> Generator parameters: Inflow, storage capacity and marginal cost for different types of generators.
 
   Generator type      | Inflow             |  Storage           |   Price
   --------------------|--------------------|--------------------|---------------
@@ -64,7 +64,7 @@ storage.
 Power generators are described by the same universal model, illustrated
 in [Figure 2](#fig_generator_model). Different types of power plants are
 simply distinguished by their different parameters, as indicated in
-[Table 1](#tab:generator_parameters). 
+[Table 1](#tab_generator_parameters). 
 PowerGAMA assumes that the power
 inflow (average value and time profile) is given as input, and so the
 resource and primary energy converter parts included in
@@ -206,7 +206,7 @@ and any number of loads can be connected to each node.
 The full consumption model is illustrated in
 [Figure 4](#fig_load_model), with further explanations in the following.
 
-<p id="fig:load_model">
+<p id="fig_load_model">
 <img src="load_model.png"/>
 <b>Figure 4:</b> Power consumption model.
 </p>
@@ -360,10 +360,11 @@ where $D$ is a diagonal matrix with
 elements given by the branch susceptance $D_{mm} =-b_m$, and $A$ is the
 node-arc incidence matrix.
 
-# Optimisation problem {#sec:linearoptimisation}
+# Optimisation problem <p id="sec_linearoptimisation">
 
 A linear objective function is used in order to ensure fast optimisation that converges, with the practical benefit that it also requires fewer input parameters. The set of variables to be determined by the optimisation are $$ %\label{eq:variables} X = \{P_g^\text{gen}, P_p^\text{pump},P_f^\text{flex}, P_n^\text{shed}, \theta_n, P_j \}, $$ where $g\in \mathcal{G}$, the set of generators; $p\in \mathcal{P}$, the set of pumps; $f\in \mathcal{F}$, the set of flexible loads; $n\in \mathcal{N}$, the set of nodes. $j\in \mathcal{B}$, the set of AC and DC branches. The objective of the optimisation is expressed in terms of an objective function, which in our case is $$\begin{split} %    \label{eq:objectivefunction} F = & \sum_{g\in \mathcal{G}} c_g^\text{gen} P^\text{gen}_g - \sum_{p\in \mathcal{P}} c_p^\text{pump} P^\text{pump}_p \\ & - \sum_{f\in \mathcal{F}} c_f^\text{flex} P_c^\text{flex}       + \sum_{n\in \mathcal{N}} c^\text{shed} P_n^\text{shed},        \end{split}$$ where $c_g$ is the cost of generator $g$, $c_p^\text{pump}$ is the cost of pump $p$, $c_f^\text{flex}$ is the cost of flexible load $p$, and $c^\text{shed}$ is the fixed cost of load shedding. As discussed in the secton on [energy storage](#sec:energystorage), these cost parameters are determined by the fuel price for generators without storage, and by storage values in the other cases. The negative sign in front of pumping and flexible load means that increasing their value reduces the objective function.  However, the energy balance constraint (see below) implies that power for pumping or flexible load must be compensated by generation elsewhere. So whether it is beneficial therefore depends on the cost of that alternative generation. The variables [\[eq:variables\]](#eq:variables){reference-type="eqref" reference="eq:variables"} are not free, but constrained through upper and lower bounds, and through equations expressing relationships between them. Referring to these constraints as $C_m$, the optimisation problem is formulated in the standard Linear Programming (LP) form $$ %\label{eq:optimisation} \min F = \min \sum c_i X_i \quad \text{such that} \quad  \{C_1,\dots C_6\}.  $$ This must be solved time step by time step, where time steps are coupled due to the presence of storage. The various constraints are now described in more detail.
 
+[Test](#sec_linearopimitsation)
 The *first* set of constraints state that power flow on branches is
 constrained by their capacity limits: $$C_1:\quad  
     - P_j^\text{max} \le P_j \le P_j^\text{max}$$ where $j$ refers to AC
