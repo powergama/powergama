@@ -1,0 +1,2 @@
+desc,type,node,pmax,pmin,fuelcost,inflow_fac,inflow_ref,storage_cap,storage_price,storage_ini,storval_filling_ref,storval_time_ref
+wind,wind,graakallen,10,0,0,1,wind,,,,,
