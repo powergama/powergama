@@ -370,7 +370,7 @@ where $g\in \mathcal{G}$, the set of generators; $p\in \mathcal{P}$, the set of 
 
 $$\begin{split}  F = & \sum_{g\in \mathcal{G}} c_g^\text{gen} P_g^\text{gen} - \sum_{p\in \mathcal{P}} c_p^\text{pump} P_p^\text{pump} \\\\ & - \sum_{f\in \mathcal{F}} c_f^\text{flex} P_c^\text{flex}       + \sum_{n\in \mathcal{N}} c^\text{shed} P_n^\text{shed},        \end{split} %\label{eq:objectivefunction} $$ 
 
-where $c_g$ is the cost of generator $g$, $c_p^\text{pump}$ is the cost of pump $p$, $c_f^\text{flex}$ is the cost of flexible load $p$, and $c^\text{shed}$ is the fixed cost of load shedding. As discussed in the secton on [energy storage](#sec:energystorage), these cost parameters are determined by the fuel price for generators without storage, and by storage values in the other cases. The negative sign in front of pumping and flexible load means that increasing their value reduces the objective function.  However, the energy balance constraint (see below) implies that power for pumping or flexible load must be compensated by generation elsewhere. So whether it is beneficial therefore depends on the cost of that alternative generation. The variables [\[eq:variables\]](#eq:variables){reference-type="eqref" reference="eq:variables"} are not free, but constrained through upper and lower bounds, and through equations expressing relationships between them. Referring to these constraints as $C_m$, the optimisation problem is formulated in the standard Linear Programming (LP) form 
+where $c_g$ is the cost of generator $g$, $c_p^\text{pump}$ is the cost of pump $p$, $c_f^\text{flex}$ is the cost of flexible load $p$, and $c^\text{shed}$ is the fixed cost of load shedding. As discussed in the [\[section on energy storage\]](./input_data.md#generators), these cost parameters are determined by the fuel price for generators without storage, and by storage values in the other cases. The negative sign in front of pumping and flexible load means that increasing their value reduces the objective function.  However, the energy balance constraint (see below) implies that power for pumping or flexible load must be compensated by generation elsewhere. So whether it is beneficial therefore depends on the cost of that alternative generation. The variables [\[eq:variables\]](#eq:variables){reference-type="eqref" reference="eq:variables"} are not free, but constrained through upper and lower bounds, and through equations expressing relationships between them. Referring to these constraints as $C_m$, the optimisation problem is formulated in the standard Linear Programming (LP) form 
 
 $$ \min F = \min \sum c_i X_i \quad \text{such that} \quad  \\{C_1,\dots C_6\\}. %\label{eq:optimisation}  $$ 
 
@@ -387,9 +387,8 @@ and DC branches with limited capacity.
 
 The *second* set of constraints state that the power generation at
 generators is limited by lower and upper bounds, most notably the
-generation capacity and available power as described in Section
-[\[sec:generation\]](#sec:generation){reference-type="ref"
-reference="sec:generation"}: $$C_2:\quad 
+generation capacity and available power as described in the 
+[\[section on power generation\]](#power-generation): $$C_2:\quad 
     P_g^\text{min} \le P^\text{gen}_g \le P_g^\text{limit},$$ where $g$
 refers to all generators.
 
@@ -431,7 +430,7 @@ $$\begin{split}
             P_j^\text{gen}
             - \sum_{j\in\mathcal{P}\_k} P_j^\text{pump}
             - \sum_{j\in\mathcal{C}\_k} P_j^\text{cons}
-            \\ &
+            \\\\ &
             +\ P_k^\text{shed}
             +\sum_{j\in\mathcal{D}_k} P_j^\text{dc}
             ,
