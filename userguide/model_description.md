@@ -360,7 +360,7 @@ where $D$ is a diagonal matrix with
 elements given by the branch susceptance $D_{mm} =-b_m$, and $A$ is the
 node-arc incidence matrix.
 
-# Optimisation problem <p id="sec_linearoptimisation">
+# Optimisation problem
 
 A linear objective function is used in order to ensure fast optimisation that converges, with the practical benefit that it also requires fewer input parameters. The set of variables to be determined by the optimisation are 
 
@@ -376,7 +376,6 @@ $$ \min F = \min \sum c_i X_i \quad \text{such that} \quad  \\{C_1,\dots C_6\\}.
 
 This must be solved time step by time step, where time steps are coupled due to the presence of storage. The various constraints are now described in more detail.
 
-[Test](#sec_linearopimitsation)
 The *first* set of constraints state that power flow on branches is
 constrained by their capacity limits: 
 
