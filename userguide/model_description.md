@@ -362,9 +362,9 @@ node-arc incidence matrix.
 
 # Optimisation problem
 
-A linear objective function is used in order to ensure fast optimisation that converges, with the practical benefit that it also requires fewer input parameters. The set of variables to be determined by the optimisation are 
+A linear objective function is used in order to ensure fast optimisation that converges, with the practical benefit that it also requires fewer input parameters. The set of variables <a id="eq_variables"></a> to be determined by the optimisation are 
 
-$$  X = \{P_g^\text{gen}, P_p^\text{pump},P_f^\text{flex}, P_n^\text{shed}, \theta_n, P_j \}, \label{eq_variables} $$ 
+$$  X = \{P_g^\text{gen}, P_p^\text{pump},P_f^\text{flex}, P_n^\text{shed}, \theta_n, P_j \}, %\label{eq_variables} $$ 
 
 where $g\in \mathcal{G}$, the set of generators; $p\in \mathcal{P}$, the set of pumps; $f\in \mathcal{F}$, the set of flexible loads; $n\in \mathcal{N}$, the set of nodes. $j\in \mathcal{B}$, the set of AC and DC branches. The objective of the optimisation is expressed in terms of an objective function, which in our case is 
 
