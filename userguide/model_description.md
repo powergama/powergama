@@ -362,12 +362,28 @@ node-arc incidence matrix.
 
 # Optimisation problem <p id="sec_linearoptimisation">
 
-A linear objective function is used in order to ensure fast optimisation that converges, with the practical benefit that it also requires fewer input parameters. The set of variables to be determined by the optimisation are $$ %\label{eq:variables} X = \{P_g^\text{gen}, P_p^\text{pump},P_f^\text{flex}, P_n^\text{shed}, \theta_n, P_j \}, $$ where $g\in \mathcal{G}$, the set of generators; $p\in \mathcal{P}$, the set of pumps; $f\in \mathcal{F}$, the set of flexible loads; $n\in \mathcal{N}$, the set of nodes. $j\in \mathcal{B}$, the set of AC and DC branches. The objective of the optimisation is expressed in terms of an objective function, which in our case is $$\begin{split} %    \label{eq:objectivefunction} F = & \sum_{g\in \mathcal{G}} c_g^\text{gen} P^\text{gen}_g - \sum_{p\in \mathcal{P}} c_p^\text{pump} P^\text{pump}_p \\ & - \sum_{f\in \mathcal{F}} c_f^\text{flex} P_c^\text{flex}       + \sum_{n\in \mathcal{N}} c^\text{shed} P_n^\text{shed},        \end{split}$$ where $c_g$ is the cost of generator $g$, $c_p^\text{pump}$ is the cost of pump $p$, $c_f^\text{flex}$ is the cost of flexible load $p$, and $c^\text{shed}$ is the fixed cost of load shedding. As discussed in the secton on [energy storage](#sec:energystorage), these cost parameters are determined by the fuel price for generators without storage, and by storage values in the other cases. The negative sign in front of pumping and flexible load means that increasing their value reduces the objective function.  However, the energy balance constraint (see below) implies that power for pumping or flexible load must be compensated by generation elsewhere. So whether it is beneficial therefore depends on the cost of that alternative generation. The variables [\[eq:variables\]](#eq:variables){reference-type="eqref" reference="eq:variables"} are not free, but constrained through upper and lower bounds, and through equations expressing relationships between them. Referring to these constraints as $C_m$, the optimisation problem is formulated in the standard Linear Programming (LP) form $$ %\label{eq:optimisation} \min F = \min \sum c_i X_i \quad \text{such that} \quad  \{C_1,\dots C_6\}.  $$ This must be solved time step by time step, where time steps are coupled due to the presence of storage. The various constraints are now described in more detail.
+A linear objective function is used in order to ensure fast optimisation that converges, with the practical benefit that it also requires fewer input parameters. The set of variables to be determined by the optimisation are 
+
+$$  X = \{P_g^\text{gen}, P_p^\text{pump},P_f^\text{flex}, P_n^\text{shed}, \theta_n, P_j \}, %\label{eq:variables} $$ 
+
+where $g\in \mathcal{G}$, the set of generators; $p\in \mathcal{P}$, the set of pumps; $f\in \mathcal{F}$, the set of flexible loads; $n\in \mathcal{N}$, the set of nodes. $j\in \mathcal{B}$, the set of AC and DC branches. The objective of the optimisation is expressed in terms of an objective function, which in our case is 
+
+$$\begin{split}  F = & \sum_{g\in \mathcal{G}} c_g^\text{gen} P_g^\text{gen} - \sum_{p\in \mathcal{P}} c_p^\text{pump} P_p^\text{pump} \\\\ & - \sum_{f\in \mathcal{F}} c_f^\text{flex} P_c^\text{flex}       + \sum_{n\in \mathcal{N}} c^\text{shed} P_n^\text{shed},        \end{split} %\label{eq:objectivefunction} $$ 
+
+where $c_g$ is the cost of generator $g$, $c_p^\text{pump}$ is the cost of pump $p$, $c_f^\text{flex}$ is the cost of flexible load $p$, and $c^\text{shed}$ is the fixed cost of load shedding. As discussed in the secton on [energy storage](#sec:energystorage), these cost parameters are determined by the fuel price for generators without storage, and by storage values in the other cases. The negative sign in front of pumping and flexible load means that increasing their value reduces the objective function.  However, the energy balance constraint (see below) implies that power for pumping or flexible load must be compensated by generation elsewhere. So whether it is beneficial therefore depends on the cost of that alternative generation. The variables [\[eq:variables\]](#eq:variables){reference-type="eqref" reference="eq:variables"} are not free, but constrained through upper and lower bounds, and through equations expressing relationships between them. Referring to these constraints as $C_m$, the optimisation problem is formulated in the standard Linear Programming (LP) form 
+
+$$ \min F = \min \sum c_i X_i \quad \text{such that} \quad  \\{C_1,\dots C_6\\}. %\label{eq:optimisation}  $$ 
+
+This must be solved time step by time step, where time steps are coupled due to the presence of storage. The various constraints are now described in more detail.
 
 [Test](#sec_linearopimitsation)
 The *first* set of constraints state that power flow on branches is
-constrained by their capacity limits: $$C_1:\quad  
-    - P_j^\text{max} \le P_j \le P_j^\text{max}$$ where $j$ refers to AC
+constrained by their capacity limits: 
+
+$$C_1:\quad  
+    - P_j^\text{max} \le P_j \le P_j^\text{max}$$
+    
+where $j$ refers to AC
 and DC branches with limited capacity.
 
 The *second* set of constraints state that the power generation at
@@ -409,16 +425,20 @@ the conductance matrix, and $\mathbf{P}^\text{node}$ is a vector of net
 power injections into all nodes. The conductance matrix
 $\mathbf{B}^\prime$ is the imaginary part of the bus admittance matrix,
 which are the same with the approximations given above. The
-$\mathbf{P}^\text{node}$ vector elements are given as $$\begin{split}
-    P^\text{node}_k  = & \sum_{j\in\mathcal{G}_k} 
+$\mathbf{P}^\text{node}$ vector elements are given as 
+
+$$\begin{split}
+    P_k^\text{node}  = & \sum_{j\in\mathcal{G}\_k} 
             P_j^\text{gen}
-            - \sum_{j\in\mathcal{P}_k} P_j^\text{pump}
-            - \sum_{j\in\mathcal{C}_k} P_j^\text{cons}
+            - \sum_{j\in\mathcal{P}\_k} P_j^\text{pump}
+            - \sum_{j\in\mathcal{C}\_k} P_j^\text{cons}
             \\ &
             +\ P_k^\text{shed}
             +\sum_{j\in\mathcal{D}_k} P_j^\text{dc}
             ,
-\end{split}$$ where $P_j^\text{gen}$ is generator output,
+\end{split}$$
+
+where $P_j^\text{gen}$ is generator output,
 $\mathcal{G}_k$ is the set of generators at node $k$, $P_j^\text{pump}$
 is pump demand, $\mathcal{P}_k$ is the set of pumps at node $k$,
 $P_k^\text{shed}$ is amount of load shedding at node $k$,
