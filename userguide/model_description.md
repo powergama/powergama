@@ -364,19 +364,19 @@ node-arc incidence matrix.
 
 A linear objective function is used in order to ensure fast optimisation that converges, with the practical benefit that it also requires fewer input parameters. The set of variables <a id="eq_variables"></a> to be determined by the optimisation are 
 
-$$  X = \{P_g^\text{gen}, P_p^\text{pump},P_f^\text{flex}, P_n^\text{shed}, \theta_n, P_j \}, %\label{eq_variables} $$ 
+$$  X = \\{P_g^\text{gen}, P_p^\text{pump},P_f^\text{flex}, P_n^\text{shed}, \theta_n, P_j \\}, %\label{eq_variables} $$ 
 
-where $g\in \mathcal{G}$, the set of generators; $p\in \mathcal{P}$, the set of pumps; $f\in \mathcal{F}$, the set of flexible loads; $n\in \mathcal{N}$, the set of nodes. $j\in \mathcal{B}$, the set of AC and DC branches. The objective of the optimisation is expressed in terms of an objective function, which in our case is 
+where $g\in \mathcal{G}$, the set of generators; $p\in \mathcal{P}$, the set of pumps; $f\in \mathcal{F}$, the set of flexible loads; $n\in \mathcal{N}$, the set of nodes; $j\in \mathcal{B}$, the set of AC and DC branches. The objective of the optimisation is expressed in terms of an objective function, which in our case is 
 
 $$\begin{split}  F = & \sum_{g\in \mathcal{G}} c_g^\text{gen} P_g^\text{gen} - \sum_{p\in \mathcal{P}} c_p^\text{pump} P_p^\text{pump} \\\\ & - \sum_{f\in \mathcal{F}} c_f^\text{flex} P_c^\text{flex}       + \sum_{n\in \mathcal{N}} c^\text{shed} P_n^\text{shed},        \end{split} %\label{eq:objectivefunction} $$ 
 
 where $c_g$ is the cost of generator $g$, $c_p^\text{pump}$ is the cost of pump $p$, $c_f^\text{flex}$ is the cost of flexible load $p$, and $c^\text{shed}$ is the fixed cost of load shedding. As discussed in the [\[section on energy storage\]](./input_data.md#generators), these cost parameters are determined by the fuel price for generators without storage, and by storage values in the other cases. The negative sign in front of pumping and flexible load means that increasing their value reduces the objective function.  However, the energy balance constraint (see below) implies that power for pumping or flexible load must be compensated by generation elsewhere. So whether it is beneficial therefore depends on the cost of that alternative generation. The [\[variables\]](#eq_variables) are not free, but constrained through upper and lower bounds, and through equations expressing relationships between them. Referring to these constraints as $C_m$, the optimisation problem is formulated in the standard Linear Programming (LP) form 
 
-$$ \min F = \min \sum c_i X_i \quad \text{such that} \quad  \\{C_1,\dots C_6\\}. %\label{eq:optimisation}  $$ 
+$$ \min F = \min \sum c_i X_i \quad \text{such that} \quad  \\{C_1,\dots C_7\\}. %\label{eq:optimisation}  $$ 
 
 This must be solved time step by time step, where time steps are coupled due to the presence of storage. The various constraints are now described in more detail.
 
-The *first* set of constraints state that power flow on branches is
+The *first* set of constraints states that power flow on branches is
 constrained by their capacity limits: 
 
 $$C_1:\quad  
@@ -385,24 +385,24 @@ $$C_1:\quad
 where $j$ refers to AC
 and DC branches with limited capacity.
 
-The *second* set of constraints state that the power generation at
+The *second* set of constraints states that the power generation at
 generators is limited by lower and upper bounds, most notably the
 generation capacity and available power as described in the 
 [\[section on power generation\]](#power-generation): $$C_2:\quad 
     P_g^\text{min} \le P^\text{gen}_g \le P_g^\text{limit},$$ where $g$
 refers to all generators.
 
-The *third* set of constraints state that the pumping is limited by the
+The *third* set of constraints states that the pumping is limited by the
 pump capacity $$C_3:\quad
     0 \le P^\text{pump}_p \le P^\text{pump,max}_p,$$ where $p$ refers to
 all pumps.
 
-The *fourth* set of constraints state that the flexible load is limited
+The *fourth* set of constraints states that the flexible load is limited
 by the maximum demand $$C_4:\quad
     0 \le P^\text{flex}_f \le P^\text{flex,max}_f,$$ where $f$ refers to
 all flexible loads.
 
-The *fifth* set of constraints express the condition of power balance at
+The *fifth* set of constraints expresses the condition of power balance at
 each node, which requires that net power injection at a node equals the
 net AC power flow out of the node. Net power injection is given as
 generated power minus demand, pumping and load shed plus power inflow
@@ -439,13 +439,13 @@ $$\begin{split}
 where $P_j^\text{gen}$ is generator output,
 $\mathcal{G}_k$ is the set of generators at node $k$, $P_j^\text{pump}$
 is pump demand, $\mathcal{P}_k$ is the set of pumps at node $k$,
-$P_k^\text{shed}$ is amount of load shedding at node $k$,
+$P_k^\text{shed}$ is the amount of load shedding at node $k$,
 $P_j^\text{dc}$ is inflow on DC branches (positive or negative),
 $\mathcal{D}_k$ is the set of DC branches connected to node $k$,
 $P_j^\text{cons}$ is consumer demand (fixed *and* flexible), and
 $\mathcal{C}_k$ is the set of loads at node $k$.
 
-The *sixth* set of constraints express the relationship between power
+The *sixth* set of constraints expresses the relationship between power
 flow on branches and nodal voltage angle differences. In the linear
 approximation, power flow $\mathbf{P^\text{ac}}$ on AC branches is
 related to nodal voltage angles as expressed by the equation
