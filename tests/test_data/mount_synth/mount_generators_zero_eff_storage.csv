@@ -1,0 +1,3 @@
+desc,type,node,pmax,pmin,fuelcost,inflow_fac,inflow_ref,storage_cap,storage_price,storage_ini,storval_filling_ref,storval_time_ref,pump_cap
+wind,wind,graakallen,10,0,0.1,1,wind,,,,,,
+storage,battery,kraakfjellet,10,0,0.2,0,storage,4,1,0,cons,cons,10
