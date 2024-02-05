@@ -726,9 +726,7 @@ class LpProblem(pyo.ConcreteModel):
             # solve the LP problem
             if savefiles:
                 # self.concretemodel.pprint('concretemodel_{}.txt'.format(timestep))
-                self.concretemodel.write(
-                    "LPproblem_{}.mps".format(timestep), io_options={"symbolic_solver_labels": True}
-                )
+                self.write("LPproblem_{}.mps".format(timestep), io_options={"symbolic_solver_labels": True})
                 # self.concretemodel.write("LPproblem_{}.nl".format(timestep))
 
             if warmstart and opt.warm_start_capable():
