@@ -49,8 +49,12 @@ class LpProblem(pyo.ConcreteModel):
 
         # Mutable parameters
         # Quantities that change from timestep to the next:
-        self.p_gen_pmin = pyo.Param(self.s_gen, within=pyo.Reals, default=0, mutable=True)
-        self.p_gen_pmax = pyo.Param(self.s_gen, within=pyo.Reals, default=0, mutable=True)
+        self.p_gen_pmin = pyo.Param(
+            self.s_gen, within=pyo.Reals, default=0, mutable=True, initialize=grid_data.generator["pmin"].values
+        )
+        self.p_gen_pmax = pyo.Param(
+            self.s_gen, within=pyo.Reals, default=0, mutable=True, initialize=grid_data.generator["pmax"].values
+        )
         self.p_gen_cost = pyo.Param(
             self.s_gen, within=pyo.Reals, default=0, mutable=True, initialize=grid_data.generator["fuelcost"].values
         )
@@ -439,7 +443,7 @@ class LpProblem(pyo.ConcreteModel):
             self.p_gen_cost[i] = storagevalue
             if i in self._idx_generatorsWithPumping:
                 deadband = self._grid.generator.pump_deadband[i]
-                self.pumpCost[i] = storagevalue - deadband
+                self.p_genpump_cost[i] = storagevalue - deadband
 
         # 3b. flexible load (storage value)
         for i in self._idx_consumersWithFlexLoad:
