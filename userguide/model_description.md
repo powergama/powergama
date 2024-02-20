@@ -289,6 +289,7 @@ $$Y_{ij} = G_{ij}+jB_{ij} = \bigg\{ \begin{array}{ll}
 
 where $y_{ij} = g_{ij} + j b_{ij} = \frac{1}{z_{ij}}$
 is the admittance of the branch between $i$ and $j$.
+The bus admittance matrix $Y$ can be decomposed as $Y=G+jB$.
 
 The AC power flow equations are 
 $$\begin{split}
@@ -313,7 +314,7 @@ The last two approximations imply that $Y_{ij}\approx jB_{ij}$. The
 reactive power flow equation becomes trivial, and the power flow
 equations reduce to $$P_k  = \sum_{j=1}^N   B_{kj}(\theta_k-\theta_j).$$
 This is the linearised power flow equation. On matrix form it can be
-written 
+written (Grainger and Stevenson, p. 373) 
 $$
 \Delta P = B^\prime \Delta\theta,
 $$ 
@@ -438,13 +439,13 @@ following assumptions are made: 1) phase angle differences are small; 2)
 voltage deviations are small; 3) branch resistance is small compared to
 reactance; 4) shunt reactances are small, so self-admittances can be
 ignored. With these assumptions the AC power flow equations reduce to
-the linear equations $$C_5: \quad
+the linear equations (Grainger and Stevenson, pp. 371, 373) $$C_5: \quad
     \mathbf{P}^\text{node} = \mathbf{B}^\prime \mathbf{\Theta},$$ where
-$\mathbf{\Theta}$ is a vector of voltage angles, $\mathbf{B}^\prime$ is
-the conductance matrix, and $\mathbf{P}^\text{node}$ is a vector of net
-power injections into all nodes. The conductance matrix
-$\mathbf{B}^\prime$ is the imaginary part of the bus admittance matrix,
-which are the same with the approximations given above. The
+$\mathbf{\Theta}$ is a vector of voltage angles,
+$\mathbf{B}^\prime = - \mathbf{B}$, and $\mathbf{P}^\text{node}$ is a
+vector of net power injections into all nodes. The matrix
+$\mathbf{B}$ is the imaginary part of the bus admittance matrix,
+$\mathbf{Y}=j \mathbf{B}$ with the approximations given above. The
 $\mathbf{P}^\text{node}$ vector elements are given as $$\begin{split}
     P^\text{node}_k  = & \sum_{j\in\mathcal{G}_k} 
             P_j^\text{gen}
@@ -478,4 +479,6 @@ angle, $$C_7:\quad
 results, the reference is chosen such that the zeroth node has zero
 voltage angle.
 
-
+# References
+* Grainger, J.J. and Stevenson Jr, W.D., 1994. *Power system analysis*.
+McGraw-Hill series in electrical and computer engineering.
