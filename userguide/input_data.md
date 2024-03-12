@@ -5,21 +5,21 @@ Input files are comma separated text files (CSV), with a comma as
 delimiter and period as the decimal symbol. The first line in the files
 contains a header, with unique keys associated with each column. The
 ordering of columns is arbitrary. Keys are case sensitive and should be
-all lower case.
+all lower case. Columns labelled OPT are optional.
 
 ## Grid data
 
 There are 5 input files associated with nodes, AC branches, DC branches,
-consumers and generators. These files contains references to additional
-files which has information about normalised storage values, energy
+consumers and generators. These files contain references to additional
+files which have information about normalised storage values, energy
 inflow profiles and power demand profiles. The reference identifier
 (integer number or string) in the generator and consumer files should
 match an identifier in the relevant storage value or profile files.
 
 ### Nodes
 
-Nodes need to have unique identifier string. Area information is used
-for scenario generation (preprosessing), and for plotting and
+Nodes need to have unique identifier strings. Area information is used
+for scenario generation (preprocessing), and for plotting and
 presentation of results. Latitude and longitude information is only used
 for plotting the grid on a map.
 
@@ -34,7 +34,7 @@ for plotting the grid on a map.
 
 Branches have from and to references that must match a node identifier
 in the list of nodes. Impedance should be given as per unit system with
-the the base power being the global one (powergama.constants.baseS)
+the base power being the global one (powergama.constants.baseS).
 
   column key     | description      |  type  |  units
   ---------------|------------------|--------|-------
@@ -104,11 +104,11 @@ out if the pumping capacity is non-zero.
 
 `node` is the string identifier of the node where the generator is
 connected. There may be any number of generators per node. `pmax` is the
-maximum power production, i.e. the generator capacity `pmin` is the
+maximum power production, i.e. the generator capacity. `pmin` is the
 minimum power production. This is normally zero, but may be nonzero for
 certain generator types such as nuclear power generators. `fuelcost` is
 the cost of generation. For generators without storage, the marginal
-cost is set equal to this value value. `storage_price` is the the base
+cost is set equal to this value. `storage_price` is the base
 value for storage generator's storage values. It sets the absolute scale
 in the storage value calculation. `storage_capacity` is the capacity of
 the storage system. This is usually relevant only for hydro power and
@@ -119,12 +119,15 @@ storage value table to be used for this generator/storage system
 of the associated inflow profile.
 
 Power inflow at a given timestep $t$ is computed according to
+
 $$
 %\label{eq:inflow}
      P_\text{inflow}(t) =  P_\text{max} \times \text{inflow factor} \times \text{profile value}(t) .
 $$
+
 In case the annual inflow is known, the inflow factor can be expressed
 by integrating the above equation, giving 
+
 $$
 %\label{eq:inflow_annual}
      \text{inflow factor} = \frac{\text{annual inflow}}{8760~\text{h} \times P_\text{max} \times  \text{avg}(\text{profile value})}.
@@ -150,7 +153,7 @@ there is storage), the inflow factor must be reduced correspondingly.
 
 If fine resolution is not needed, many generators may use the same
 profile, but with different inflow factors to get representative
-capacity factor.
+capacity factors.
 
 ## Time dependence of power consumption, power inflow and storage values
 
@@ -162,7 +165,7 @@ The following quantities vary with time:
 
 -   Storage values
 
-For these, there are two field in the input data, one parameter that
+For these, there are two fields in the input data, one parameter that
 gives the absolute scale, and a reference to a normalised profile which
 entails the time profile. Multiplied together these give the absolute
 variation over time, as expressed e.g. in the inflow equation above.
@@ -177,7 +180,7 @@ Power inflow is given by weather conditions. Hydro has mainly a seasonal
 profile, whereas wind and solar varies from hour to hour. Solar has a
 characteristic daily profile with no production in dark hours. As stated
 previously, there are two alternative ways to specify inflow profile and
-absolute scale (inflow factor) are used: 1) The profile is normalised to
+absolute scale (inflow factor): 1) The profile is normalised to
 give power inflow per installed capacity (with average value
 representing the capacity factor), and absolute scale is nominally equal
 to one; 2) The profile is normalised to have an average value of unity,
@@ -200,15 +203,17 @@ There are two dependencies:
 -   Time of year and time of day
 
 All in all, the storage values are computed according to
+
 $$
 %\label{eq:storagevalue_calc}
      \text{storage value}(f,t) = \text{base value} \times \text{filling level profile}(f) \times \text{time profile}(t),
 $$
+
 where $f$ is the relative filling level, and $t$ is the timestep.
 
 Time dependence of storage values reflect the time dependence of the
 associated inflow, and is therefore quite different for hydro (seasonal
-variation) and CSP (daily variation). This depenency is given in the
+variation) and CSP (daily variation). This dependency is given in the
 same format as for inflow and consumption, see above.
 
 Storage value dependence on filling level is specified as follows:
