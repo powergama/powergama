@@ -60,7 +60,13 @@ class LpProblem(pyo.ConcreteModel):
         )
         self.p_genpump_cost = pyo.Param(self.s_gen, within=pyo.Reals, default=0, mutable=True)
         self.p_demand = pyo.Param(self.s_load, within=pyo.Reals, default=0, mutable=True)
-        self.p_loadflex_cost = pyo.Param(self.s_load_flex, within=pyo.Reals, default=0, mutable=True)
+        self.p_loadflex_cost = pyo.Param(
+            self.s_load_flex,
+            within=pyo.Reals,
+            default=0,
+            mutable=True,
+            initialize=grid_data.consumer.loc[self.s_load_flex, "flex_basevalue"].values,
+        )
         if self._lossmethod == 2:
             self.p_branch_ac_power_loss = pyo.Param(self.s_branch_ac, within=pyo.Reals, default=0, mutable=True)
             self.p_branch_dc_power_loss = pyo.Param(self.s_branch_ac, within=pyo.Reals, default=0, mutable=True)
@@ -155,7 +161,7 @@ class LpProblem(pyo.ConcreteModel):
             self.cLossDc12 = pyo.Constraint(self.s_branch_dc, rule=lossDc_rule12)
             self.cLossDc21 = pyo.Constraint(self.s_branch_dc, rule=lossDc_rule21)
 
-    def _create_constraint_generator_output(self, grid_data, timestep=0):
+    def _create_constraint_generator_output(self):
         """Constraint: Generator output limit"""
 
         # Generator output constraint is not necessary, as lower and upper
@@ -203,63 +209,49 @@ class LpProblem(pyo.ConcreteModel):
 
     def _create_constraint_powerbalance(self, grid_data):
         """ConstraintPower balance (power flow equation)  (Pnode = B theta)"""
-        # TODO: Speed this up by not looping over all generators etc for each
-        # node, use instead a dictionary with key=node, value=list of generators
-        # make it from grp=pg_data.generator.groupby('node')
+
         def powerbalance_rule(model, n):
             lhs = 0
-            for g in model.s_gen:
-                if grid_data.generator.loc[g, "node"] == n:
-                    lhs += model.varGeneration[g]
-            for p in model.s_gen_pump:
-                if grid_data.generator.loc[g, "node"] == n:
-                    lhs -= model.varPump[p]
-            for lod in model.s_load:
-                if grid_data.consumer.loc[lod, "node"] == n:
-                    lhs -= self.p_demand[lod]
-                    lhs += model.varLoadShed[lod]
-            for f in model.s_load_flex:
-                if grid_data.consumer.loc[f, "node"] == n:
-                    lhs -= model.varFlexLoad[f]
-            for b in model.s_branch_dc:
-                # positive sign for flow into node
-                if grid_data.dcbranch.loc[b, "node_to"] == n:
-                    lhs += model.varDcBranchFlow[b]
-                    if model._lossmethod == 1:
-                        lhs -= model.varLossDc12[b]
-                    elif model._lossmethod == 2:
-                        lhs -= model.p_branch_dc_power_loss[b] / 2
-                elif grid_data.dcbranch.loc[b, "node_from"] == n:
-                    lhs += -model.varDcBranchFlow[b]
-                    if model._lossmethod == 1:
-                        lhs -= model.varLossDc21[b]
-                    elif model._lossmethod == 2:
-                        lhs -= model.p_branch_dc_power_loss[b] / 2
+            for g in self._generators_at_node[n]:
+                # this is a generator connected to node n
+                lhs += model.varGeneration[g]
+                if g in model.s_gen_pump:
+                    lhs -= model.varPump[g]
+            for lod in self._loads_at_node[n]:
+                lhs -= self.p_demand[lod]
+                lhs += model.varLoadShed[lod]
+                if lod in model.s_load_flex:
+                    lhs -= model.varFlexLoad[lod]
+            for b in self._dcbranch_to_node[n]:
+                lhs += model.varDcBranchFlow[b]
+                if model._lossmethod == 1:
+                    lhs -= model.varLossDc12[b]
+                elif model._lossmethod == 2:
+                    lhs -= model.p_branch_dc_power_loss[b] / 2
+            for b in self._dcbranch_from_node[n]:
+                lhs += -model.varDcBranchFlow[b]
+                if model._lossmethod == 1:
+                    lhs -= model.varLossDc21[b]
+                elif model._lossmethod == 2:
+                    lhs -= model.p_branch_dc_power_loss[b] / 2
             if self._lossmethod == 1:
-                for b in model.s_branch_ac:
-                    # positive sign for flow into node
-                    if grid_data.branch.loc[b, "node_to"] == n:
-                        lhs += -model.varLossAc12[b]
-                    elif grid_data.branch.loc[b, "node_from"] == n:
-                        lhs += -model.varLossAc21[b]
+                # add ac branch losses as load
+                for b in self._branch_to_node[n]:
+                    lhs += -model.varLossAc12[b]
+                for b in self._branch_from_node[n]:
+                    lhs += -model.varLossAc21[b]
             elif self._lossmethod == 2:
-                for b in model.s_branch_ac:
+                for b in self._branch_to_node[n]:
                     # positive sign for flow into node
-                    if grid_data.branch.loc[b, "node_to"] == n:
-                        lhs -= model.p_branch_ac_power_loss[b] / 2
-                    elif grid_data.branch.loc[b, "node_from"] == n:
-                        lhs -= model.p_branch_ac_power_loss[b] / 2
+                    lhs -= model.p_branch_ac_power_loss[b] / 2
+                for b in self._branch_from_node[n]:
+                    lhs -= model.p_branch_ac_power_loss[b] / 2
 
             lhs = lhs / const.baseMVA
 
-            rhs = 0
-            # node id's are strings, but Bbus and DA matrices need matrix indices (int)
-            idx_node = list(model.s_node).index(n)
-            for i in range(len(self._Bbus[idx_node].indices)):
-                idx_node2 = self._Bbus[idx_node].indices[i]
-                B_element = self._Bbus[idx_node].data[i]
-                n2 = list(self.s_node)[idx_node2]  # list since pyomo set is 1-based (could probably use +1 instead)
-                rhs -= B_element * model.varVoltageAngle[n2] * const.baseAngle
+            # self._powerbalance_rhs = self._get_powerbalance_rhs()
+            rhs = self._powerbalance_rhs[n]
+
             expr = lhs == rhs
             # Skip constraint if it is trivial (otherwise run-time error)
             # TODO: Check if this is safe
@@ -315,6 +307,21 @@ class LpProblem(pyo.ConcreteModel):
 
         self.OBJ = pyo.Objective(rule=cost_rule, sense=pyo.minimize)
 
+    def _get_powerbalance_rhs(self):
+        """Get rhs expression in powerbalance constraint"""
+        # This is taken out of the constraint creation function to speed up constraint creation
+        rhs = dict()
+        for n in self.s_node:
+            rhs[n] = 0
+            # node id's are strings, but Bbus and DA matrices need matrix indices (int)
+            idx_node = list(self.s_node).index(n)
+            for i in range(len(self._Bbus[idx_node].indices)):
+                idx_node2 = self._Bbus[idx_node].indices[i]
+                B_element = self._Bbus[idx_node].data[i]
+                n2 = list(self.s_node)[idx_node2]  # list since pyomo set is 1-based (could probably use +1 instead)
+                rhs[n] -= B_element * self.varVoltageAngle[n2] * const.baseAngle
+        return rhs
+
     def __init__(self, grid, lossmethod=0):
         """LP problem formulation
 
@@ -335,10 +342,31 @@ class LpProblem(pyo.ConcreteModel):
 
         print("Initialising LP problem...")
 
-        # 3. Create local variables to keep track of changable parameters
+        # Helpers
         self._lossmethod = lossmethod
         self._grid = grid
         self.timeDelta = grid.timeDelta
+        self._solver_persistent = False
+        self._generators_at_node = grid.generator.groupby("node").groups
+        self._loads_at_node = grid.consumer.groupby("node").groups
+        self._branch_from_node = grid.branch.groupby("node_from").groups
+        self._branch_to_node = grid.branch.groupby("node_to").groups
+        self._dcbranch_from_node = grid.dcbranch.groupby("node_from").groups
+        self._dcbranch_to_node = grid.dcbranch.groupby("node_to").groups
+        for n in grid.node["id"]:
+            # fill in so dict is defined for all nodes:
+            if n not in self._generators_at_node:
+                self._generators_at_node[n] = []
+            if n not in self._loads_at_node:
+                self._loads_at_node[n] = []
+            if n not in self._branch_from_node:
+                self._branch_from_node[n] = []
+            if n not in self._branch_to_node:
+                self._branch_to_node[n] = []
+            if n not in self._dcbranch_from_node:
+                self._dcbranch_from_node[n] = []
+            if n not in self._dcbranch_to_node:
+                self._dcbranch_to_node[n] = []
 
         self._idx_generatorsWithPumping = grid.getIdxGeneratorsWithPumping()
         self._idx_generatorsWithStorage = grid.getIdxGeneratorsWithStorage()
@@ -373,10 +401,11 @@ class LpProblem(pyo.ConcreteModel):
         self._create_sets_and_parameters(grid)
         self._create_variables()
         self._create_objective(grid)
+        self._powerbalance_rhs = self._get_powerbalance_rhs()
         # 3b. Constraints:
         self._create_constraint_powerflow_limit(grid)
         self._create_constraint_powerloss(grid)
-        self._create_constraint_generator_output(grid)
+        self._create_constraint_generator_output()
         self._create_constraint_generator_pump(grid)
         self._create_constraint_load_flex(grid)
         self._create_constraint_powerbalance(grid)
@@ -470,6 +499,61 @@ class LpProblem(pyo.ConcreteModel):
             self.p_loadflex_cost[i] = storagevalue_flex
 
         return
+
+    def _update_persistent_model(self, opt):
+        """Update objective function, constraints and bounds in persistent model"""
+        # Mutable parameters is not enough
+        #
+        # TODO: Code for persistent solver
+        # https://pyomo.readthedocs.io/en/latest/solvers/persistent_solvers.html
+        # to use pwersistent solvers, probably have to set instance at the
+        # start, and then modify it in each iteration rather than giving
+        # it as an argument to opt.solve:
+        #    opt.set_instance(self.concretemodel)
+        # and then use opt.solve()
+        # To modify e.g. a constraint between solves, remove and add, e.g.:
+        #    opt.remove_constraint(m.c)
+        #    del m.c
+        #    m.c = pe.Constraint(expr=m.y <= m.x)
+        #    opt.add_constraint(m.c)
+        # Variables can be updated without removing/adding
+        #    m.x.setlb(1.0)
+        #    opt.update_var(m.x)
+
+        # TODO Check that it is correct - speed up possible?
+        # TODO check if deleting and recreating constraint expression is necessary
+        # (seems not)
+
+        # 1. p_gen_pmin, p_gen_pmax => gen maxmin
+        # 2. p_demand, p_branch_ac_power_loss, p_branch_dc_power_loss => powerbalance
+        # 3. p_gen_cost, p_genpump_cost, p_loadflex_cost => OBJ
+
+        # 1.
+        for c in self.cGenMaxLimit.values():
+            opt.remove_constraint(c)
+        for c in self.cGenMinLimit.values():
+            opt.remove_constraint(c)
+        # del self.cGenMaxLimit
+        # del self.cGenMinLimit
+        # self._create_constraint_generator_output()
+        for c in self.cGenMaxLimit.values():
+            opt.add_constraint(c)
+        for c in self.cGenMinLimit.values():
+            opt.add_constraint(c)
+
+        # 2.
+        for c in self.cPowerbalance.values():
+            opt.remove_constraint(c)
+        # del self.cPowerbalance
+        # self._create_constraint_powerbalance(self._grid)
+        for c in self.cPowerbalance.values():
+            opt.add_constraint(c)
+
+        # 3.
+        # no remove_object?
+        # del self.OBJ
+        # self._create_objective(self._grid)
+        opt.set_objective(self.OBJ)
 
     def _updatePowerLosses(self, aclossmultiplier=1, dclossmultiplier=1):
         """Compute power losses from OPF solution and update parameters"""
@@ -629,7 +713,7 @@ class LpProblem(pyo.ConcreteModel):
         savefiles=False,
         aclossmultiplier=1,
         dclossmultiplier=1,
-        logfile="lpsolver_log.txt",
+        solve_args=None,
     ):
         """
         Solve LP problem for each time step in the time range
@@ -654,32 +738,41 @@ class LpProblem(pyo.ConcreteModel):
             Multiplier factor to scale computed DC losses, used with method 1
         logfile : string
             Name of log file for LP solver. Will keep only last iteration
+        solve_args : dict
+            Arguments passed on to pyomo.solve(...) in each iteration
 
         Returns
         -------
         results : Results
             PowerGAMA Results object reference
         """
-        solve_args = {
-            "tee": False,  # stream the solver output
-            "keepfiles": False,  # print the LP file for examination
-            "symbolic_solver_labels": True,  # use human readable names
-            "logfile": logfile,
-        }
+        if solve_args is None:
+            solve_args = {
+                "tee": False,  # stream the solver output
+                "keepfiles": False,  # print the LP file for examination
+                "symbolic_solver_labels": True,  # use human readable names
+                "logfile": "lpsolver_log.txt",
+            }
+
+        if "_persistent" in solver:
+            self._solver_persistent = True
 
         # Initalise solver, and check it is available
         if solver == "gurobi":
             opt = pyo.SolverFactory("gurobi", solver_io="python")
             print(":) Using direct python interface to solver")
+        elif solver == "gurobi_direct":  # think this is the same as gurobi above
+            opt = pyo.SolverFactory(solver)
+            print(":) Using gurobi_direct")
         elif solver == "gurobi_persistent":
             opt = pyo.SolverFactory("gurobi_persistent")
             print(":) Using persistent (in-memory) python interface to solver")
-            print(" => remember to notify solver of model changes!")
-            print("    https://pyomo.readthedocs.io/en/latest/solvers/persistent_solvers.html")
-            solve_args.pop("symbolic_solver_labels")
-            opt.set_instance(self, sumbolic_solver_labels=True)
-            # TODO This is not working yet. (Solves but results are completely off.)
-            raise NotImplementedError("gurobi_persistent not implemented yet")
+            print("-- Experimental --")
+            symbolic_solver_labels = True
+            if "symbolic_solver_labels" in solve_args:
+                symbolic_solver_labels = solve_args["symbolic_solver_labels"]
+                solve_args.pop("symbolic_solver_labels")
+            opt.set_instance(self, symbolic_solver_labels=symbolic_solver_labels)
         else:
             solver_io = None
             # if solver=="cbc":
@@ -691,22 +784,6 @@ class LpProblem(pyo.ConcreteModel):
             else:
                 print(":( Could not find solver {}. Returning.".format(solver))
                 raise Exception("Could not find LP solver {}".format(solver))
-
-        # TODO: Code for persistent solver
-        # https://pyomo.readthedocs.io/en/latest/solvers/persistent_solvers.html
-        # to use pwersistent solvers, probably have to set instance at the
-        # start, and then modify it in each iteration rather than giving
-        # it as an argument to opt.solve:
-        #    opt.set_instance(self.concretemodel)
-        # and then use opt.solve()
-        # To modify e.g. a constraint between solves, remove and add, e.g.:
-        #    opt.remove_constraint(m.c)
-        #    del m.c
-        #    m.c = pe.Constraint(expr=m.y <= m.x)
-        #    opt.add_constraint(m.c)
-        # Variables can be updated without removing/adding
-        #    m.x.setlb(1.0)
-        #    opt.update_var(m.x)
 
         # Enable access to dual values
         self.dual = pyo.Suffix(direction=pyo.Suffix.IMPORT)
@@ -726,6 +803,8 @@ class LpProblem(pyo.ConcreteModel):
             # update LP problem (inflow, storage, profiles)
             self._updateLpProblem(timestep)
             self._updatePowerLosses(aclossmultiplier, dclossmultiplier)
+            if self._solver_persistent:
+                self._update_persistent_model(opt=opt)
 
             # solve the LP problem
             if savefiles:
