@@ -3,6 +3,8 @@
 ## Unpublished
 - update user documentation
 - speedup of model creation
+- add option to use persistent solver
+- change from pyomo AbstractModel to ConcreteModel formulation
 
 ## v1.1.4
 2023-03-06
