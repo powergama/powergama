@@ -10,6 +10,7 @@ import numpy
 import scipy.sparse
 import math                                 # Used in myround
 import networkx as nx
+import warnings
 
 
 ##=============================================================================
@@ -128,6 +129,7 @@ class GridData(object):
         self._addDefaultColumns(keys=self.keys_powergama,
                                 remove_extra_columns=remove_extra_columns)
         self._fillEmptyCells(keys=self.keys_powergama)
+        self._checkConsistency()
 
     def readSipData(self,nodes,branches,generators,consumers):
         '''Read grid data for investment analysis from files (PowerGIM)
@@ -231,6 +233,22 @@ class GridData(object):
                 raise Exception("Consumer input file must contain %s" %k)
 
 
+    def _checkConsistency(self):
+        '''Check consistency between default and provided values.
+           Currently only checks for pumping capacity and efficiency,
+           but more tests could be added.'''
+
+        # generators
+        for g_idx in range(len(self.generator)):
+            # Check whether pump capacity and efficiency are consistent
+            cur_gen = self.generator.iloc[g_idx]
+            if not math.isclose(cur_gen.pump_cap, 0, abs_tol=1e-8) \
+            and math.isclose(cur_gen.pump_efficiency, 0, abs_tol=1e-8):
+                warn_message = "Warning, generator at node '%s' " %cur_gen.node \
+                    + "has very low pump efficiency (%s), " %cur_gen.pump_efficiency \
+                      + "but non-zero pump capacity (%s)." %cur_gen.pump_cap
+                warnings.warn(warn_message, UserWarning)
+
 
     def _checkGridData(self):
         '''Check consistency of grid data'''
@@ -239,6 +257,7 @@ class GridData(object):
         for g in self.generator['node']:
             if not g in self.node['id'].values:
                 raise Exception("Generator node does not exist: '%s'" %g)
+
         #consumer nodes
         for c in self.consumer['node']:
             if not c in self.node['id'].values:
