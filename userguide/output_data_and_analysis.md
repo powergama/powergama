@@ -48,7 +48,7 @@ are
 -   Identification of grid bottlenecks. This is relevant for existing
     bottlenecks, but even more so with future scenarios with new
     generators installed, e.g. large amounts of renewable generation.
-    Assessment of ot benefits by reinforcing certain connections, or
+    Assessment of benefits by reinforcing certain connections, or
     adding more lines.
 
 -   Identification of the potential of the grid and power system to
@@ -59,16 +59,16 @@ are
 
 It should be noted that PowerGAMA does not include any power market
 subtleties (such as start-up costs, forecast errors, unit commitments)
-and as such will tend to overestimate the ability to accomodate large
+and as such will tend to overestimate the ability to accommodate large
 amounts of variable renewable energy. Essentially it assumes a perfect
 marking based on nodal pricing without barriers between different
 countries. This is naturally a gross oversimplification of the real
-power system, but gives nontheless very useful information to guide the
+power system, but gives nonetheless very useful information to guide the
 planning of grid developments and to assess broadly the impacts of new
 generation and new interconnections.
 
 ## Included plots and other result analysis functions
 
 See the online powergama source code documentation for a complete
-overview of plotting functions and other functions to retreive
+overview of plotting functions and other functions to retrieve
 simulation results for further analysis.

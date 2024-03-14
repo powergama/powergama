@@ -21,28 +21,28 @@ for each timestep for a given duration. It takes into account the
 variable power available for solar, hydro and wind power generators. It
 also takes into account the variability of demand. Moreover, it is
 flow-based meaning that the power flow in the AC grid is determined by
-physical power flow eqautions.
+physical power flow equations.
 
 Since some generators may have an energy storage (hydro power with
-reservoir and consentrated solar power with thermal storage) the optimal
+reservoir and concentrated solar power with thermal storage) the optimal
 solution in one timestep depends on the previous timestep, and the
 problem should therefore be solved sequentially. A realistic utilisation of
 energy storage is ensured through the use of storage values.
 
 PowerGAMA does not include any power market subtleties (such as start-up
 costs, limited ramp rates, forecast errors, unit commitments) and as
-such will tend to overestimate the ability to accomodate large amounts
+such will tend to overestimate the ability to accommodate large amounts
 of variable renewable energy. Essentially it assumes a perfect market
 based on nodal pricing without barriers between different countries.
 This is naturally a gross oversimplification of the real power system,
-but gives nontheless very useful information to guide the planning of
+but gives nonetheless very useful information to guide the planning of
 grid developments and to assess broadly the impacts of new generation
 and new interconnections.
 
 
 ## Licence
 
-PowerGAMA is open source software distributed under the the [MIT License](http://opensource.org/licenses/MIT),
+PowerGAMA is open source software distributed under the [MIT License](http://opensource.org/licenses/MIT),
 
 ## Dependencies
 
