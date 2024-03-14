@@ -240,7 +240,7 @@ class GridData(object):
 
         # generators
         for g_idx in range(len(self.generator)):
-            # Check whether pump capacity and efficiency is consistent
+            # Check whether pump capacity and efficiency are consistent
             cur_gen = self.generator.iloc[g_idx]
             if not math.isclose(cur_gen.pump_cap, 0, abs_tol=1e-8) \
             and math.isclose(cur_gen.pump_efficiency, 0, abs_tol=1e-8):

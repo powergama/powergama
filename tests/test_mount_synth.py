@@ -5,6 +5,10 @@ import pytest
 
 import powergama
 
+"""
+A set of tests based on a small use case, where storage is required to avoid load shedding.
+"""
+
 datapath = Path(__file__).parent / "test_data/mount_synth"
 data_prefix = "mount_"
 
