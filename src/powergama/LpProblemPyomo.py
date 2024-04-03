@@ -411,6 +411,13 @@ class LpProblem(pyo.ConcreteModel):
         self._create_constraint_powerbalance(grid)
         self._create_constraint_powerflow_equation(grid)
 
+    def _get_timesteps_to_solve(self):
+        numTimesteps = len(self._grid.timerange)
+        return range(numTimesteps)
+
+    def _relax_and_retry(self, opt, warmstart, count, solve_args):
+        raise NotImplementedError
+
     # TODO: Update to allow persistent model solving
     # (remove+add constraint instead of mutable parameters)
     def _updateLpProblem(self, timestep):
@@ -799,7 +806,7 @@ class LpProblem(pyo.ConcreteModel):
         numTimesteps = len(self._grid.timerange)
         count = 0
         warmstart_now = False
-        for timestep in range(numTimesteps):
+        for timestep in self._get_timesteps_to_solve():
             # update LP problem (inflow, storage, profiles)
             self._updateLpProblem(timestep)
             self._updatePowerLosses(aclossmultiplier, dclossmultiplier)
@@ -837,10 +844,16 @@ class LpProblem(pyo.ConcreteModel):
 
             if res.solver.status != pyomo.opt.SolverStatus.ok:
                 warnings.warn("Something went wrong with LP solver: {}".format(res.solver.status))
-                raise Exception("Something went wrong with LP solver: {}".format(res.solver.status))
+                try:
+                    self._relax_and_retry(opt, warmstart, count, solve_args)
+                except NotImplementedError:
+                    raise Exception("Something went wrong with LP solver: {}".format(res.solver.status))
             elif res.solver.termination_condition == pyomo.opt.TerminationCondition.infeasible:
                 warnings.warn("t={}: No feasible solution found.".format(timestep))
-                raise Exception("t={}: No feasible solution found.".format(timestep))
+                try:
+                    self._relax_and_retry(opt, warmstart, count, solve_args)
+                except NotImplementedError:
+                    raise Exception("t={}: No feasible solution found.".format(timestep))
 
             self._update_progress(timestep, numTimesteps)
 
