@@ -596,6 +596,10 @@ class LpProblem(pyo.ConcreteModel):
         else:
             raise Exception("Loss method={} is not implemented".format(self._lossmethod))
 
+    def _get_fault_start(self, timestep):
+        # Used by LpFaultProblem
+        return None
+
     def _storeResultsAndUpdateStorage(self, timestep, results):
         """Store timestep results in local arrays, and update storage"""
 
@@ -707,6 +711,7 @@ class LpProblem(pyo.ConcreteModel):
             flexload_storagevalue=flexload_marginalprice,
             branch_ac_losses=acPowerLoss,
             branch_dc_losses=dcPowerLoss,
+            fault_start=self._get_fault_start(timestep),
         )
 
         return
@@ -803,7 +808,7 @@ class LpProblem(pyo.ConcreteModel):
             # power losses can be computed.
 
         print("Solving...")
-        numTimesteps = len(self._grid.timerange)
+        numTimesteps = len(self._get_timesteps_to_solve())
         count = 0
         warmstart_now = False
         for timestep in self._get_timesteps_to_solve():
