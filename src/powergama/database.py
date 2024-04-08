@@ -7,9 +7,9 @@ import sqlite3 as db
 import os
 import pandas as pd
 
-class Database(object):
+class DatabaseBaseClass(object):
     '''
-    Class for storing results from PowerGAMA in sqlite databse
+    Stripped-down version of class for storing results from PowerGAMA in sqlite databse
     '''    
 
     
@@ -18,6 +18,8 @@ class Database(object):
     def __init__(self,filename):
         self.filename = os.path.abspath(filename)
         self.sqlite_version = db.sqlite_version
+        self.timestep_str = 'timestep INT'
+        self.timestep_qs = '?'
 
     def createTables(self,data):
         """
@@ -73,22 +75,22 @@ class Database(object):
             cur.executemany("INSERT INTO Grid_Branches VALUES(?,?,?,?,?,?)",
                             branches)
     
-            cur.execute("CREATE TABLE Res_ObjFunc(timestep INT, value DOUBLE)")
-            cur.execute("CREATE TABLE Res_Branches(timestep INT, indx INT,"
+            cur.execute(f"CREATE TABLE Res_ObjFunc({self.timestep_str}, value DOUBLE)")
+            cur.execute(f"CREATE TABLE Res_Branches({self.timestep_str}, indx INT,"
                         +"flow DOUBLE, loss DOUBLE)")
-            cur.execute("CREATE TABLE Res_BranchesSens(timestep INT, indx INT,"
+            cur.execute(f"CREATE TABLE Res_BranchesSens({self.timestep_str}, indx INT,"
                         +"cap_sensitivity DOUBLE)")
-            cur.execute("CREATE TABLE Res_DcBranches(timestep INT, indx INT,"
+            cur.execute(f"CREATE TABLE Res_DcBranches({self.timestep_str}, indx INT,"
                         +"flow DOUBLE, cap_sensitivity DOUBLE,loss DOUBLE)")
-            cur.execute("CREATE TABLE Res_Nodes(timestep INT, indx INT,"
+            cur.execute(f"CREATE TABLE Res_Nodes({self.timestep_str}, indx INT,"
                         +"angle DOUBLE, nodalprice DOUBLE, loadshed DOUBLE)")
-            cur.execute("CREATE TABLE Res_Generators(timestep INT, indx INT,"
+            cur.execute(f"CREATE TABLE Res_Generators({self.timestep_str}, indx INT,"
                         +"output DOUBLE, inflow_spilled DOUBLE)")
-            cur.execute("CREATE TABLE Res_Storage(timestep INT, indx INT,"
+            cur.execute(f"CREATE TABLE Res_Storage({self.timestep_str}, indx INT,"
                         +"storage DOUBLE, marginalprice DOUBLE)")
-            cur.execute("CREATE TABLE Res_Pumping(timestep INT, indx INT,"
+            cur.execute(f"CREATE TABLE Res_Pumping({self.timestep_str}, indx INT,"
                         +"output DOUBLE)")
-            cur.execute("CREATE TABLE Res_FlexibleLoad(timestep INT, indx INT,"
+            cur.execute(f"CREATE TABLE Res_FlexibleLoad({self.timestep_str}, indx INT,"
                         +"demand DOUBLE, storage DOUBLE, value DOUBLE)")
     
     
@@ -105,6 +107,9 @@ class Database(object):
             values = [row[0] for row in rows]  
         return values
 
+    def timestep_tuple(self, timestep, fault_start):
+        # Base version only uses the timestep
+        return (timestep,)
         
     
     def appendResults(self,timestep,objective_function,
@@ -125,7 +130,8 @@ class Database(object):
                        idx_pumpgen,
                        idx_flexload,
                        branch_ac_losses,
-                       branch_dc_losses):
+                       branch_dc_losses,
+                       fault_start=None):
         '''
         Store results from a given timestep to the database
     
@@ -175,48 +181,58 @@ class Database(object):
             ac branch losses
         branch_dc_losses : list
             dc branch losses
+        fault_start  (int)
+            extra identifier for when simulations are run for several timesteps
+            from multiple starting timepoints
         '''
+
+        timestep_tuple = self.timestep_tuple(timestep, fault_start)
         
         con = db.connect(self.filename)
         with con:        
             cur = con.cursor()    
-            cur.execute("INSERT INTO Res_ObjFunc VALUES(?,?)",(timestep,objective_function))
-            cur.executemany("INSERT INTO Res_Nodes VALUES(?,?,?,?,?)",
-                    tuple((timestep,i,node_angle[i],
+            cur.execute(f"INSERT INTO Res_ObjFunc VALUES({self.timestep_qs},?)",
+                        timestep_tuple+(objective_function,))
+            cur.executemany(f"INSERT INTO Res_Nodes VALUES({self.timestep_qs},?,?,?,?)",
+                    tuple(timestep_tuple+(i,node_angle[i],
                           sensitivity_node_power[i],loadshed_power[i]) 
                     for i in range(len(sensitivity_node_power))))
-            cur.executemany("INSERT INTO Res_Branches VALUES(?,?,?,?)",
-                    tuple((timestep,i,branch_flow[i],branch_ac_losses[i]) 
+            cur.executemany(f"INSERT INTO Res_Branches VALUES({self.timestep_qs},?,?,?)",
+                    tuple(timestep_tuple+(i,branch_flow[i],branch_ac_losses[i]) 
                     for i in range(len(branch_flow))))
-            cur.executemany("INSERT INTO Res_BranchesSens VALUES(?,?,?)",
-                    tuple((timestep,idx_branchsens[i],
+            cur.executemany(f"INSERT INTO Res_BranchesSens VALUES({self.timestep_qs},?,?)",
+                    tuple(timestep_tuple+(idx_branchsens[i],
                            sensitivity_branch_capacity[i]) 
                     for i in range(len(sensitivity_branch_capacity))))
-            cur.executemany("INSERT INTO Res_DcBranches VALUES(?,?,?,?,?)",
-                    tuple((timestep,i,dcbranch_flow[i],
+            cur.executemany(f"INSERT INTO Res_DcBranches VALUES({self.timestep_qs},?,?,?,?)",
+                    tuple(timestep_tuple+(i,dcbranch_flow[i],
                           sensitivity_dcbranch_capacity[i],
                           branch_dc_losses[i]) 
                     for i in range(len(dcbranch_flow))))
-            cur.executemany("INSERT INTO Res_Generators VALUES(?,?,?,?)",
-                    tuple((timestep,i,generator_power[i],inflow_spilled[i]) 
+            cur.executemany(f"INSERT INTO Res_Generators VALUES({self.timestep_qs},?,?,?)",
+                    tuple(timestep_tuple+(i,generator_power[i],inflow_spilled[i])
                     for i in range(len(generator_power))))
-            cur.executemany("INSERT INTO Res_Storage VALUES(?,?,?,?)",
-                    tuple((timestep,idx_storagegen[i],
+            cur.executemany(f"INSERT INTO Res_Storage VALUES({self.timestep_qs},?,?,?)",
+                    tuple(timestep_tuple+(idx_storagegen[i],
                            storage[i],marginalprice[i]) 
                     for i in range(len(storage))))
-            cur.executemany("INSERT INTO Res_Pumping VALUES(?,?,?)",
-                    tuple((timestep,idx_pumpgen[i],
+            cur.executemany(f"INSERT INTO Res_Pumping VALUES({self.timestep_qs},?,?)",
+                    tuple(timestep_tuple+(idx_pumpgen[i],
                            generator_pumped[i],) 
                     for i in range(len(generator_pumped))))
-            cur.executemany("INSERT INTO Res_FlexibleLoad VALUES(?,?,?,?,?)",
-                    tuple((timestep,idx_flexload[i],
+            cur.executemany(f"INSERT INTO Res_FlexibleLoad VALUES({self.timestep_qs},?,?,?,?)",
+                    tuple(timestep_tuple+(idx_flexload[i],
                            flexload_power[i],
                            flexload_storage[i],
                            flexload_storagevalue[i]) 
                     for i in range(len(flexload_power))))
       
 
-    
+class Database(DatabaseBaseClass):
+    '''
+    Class for storing results from PowerGAMA in sqlite databse
+    '''
+
     def getGridNodeIndices(self):
         '''Get node indices as a list'''
         con = db.connect(self.filename)
