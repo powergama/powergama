@@ -13,6 +13,7 @@ import folium.utilities
 import itertools
 import pandas as pd
 import math
+import numpy as np
 
 
 def plotMap(
@@ -25,6 +26,7 @@ def plotMap(
     filter_branch=None,
     timeMaxMin=None,
     spread_nodes_r=None,
+    plotting_values=None,
     **kwargs
 ):
     """
@@ -51,6 +53,8 @@ def plotMap(
     spread_nodes_r : float (degrees)
         radius (degrees) of circle on which overlapping nodes are
         spread (use eg 0.04)
+    plotting_values : pandas dataframe
+        optional additional values to be used when colour-coding map
     kwargs : arguments passed on to folium.Map(...)
     """
 
@@ -183,6 +187,16 @@ def plotMap(
         )
         cm_node.caption = "Nodal price"
         m.add_child(cm_node)
+    elif plotting_values is not None and nodetype in plotting_values:
+        value_col = nodetype
+        node[value_col] = list(plotting_values[nodetype]) #TODO: keep indices
+        if filter_node is None:
+            filter_node = [node[value_col].min(), node[value_col].max()]
+        cm_node = branca.colormap.LinearColormap(
+            ["green", "yellow", "red"], vmin=filter_node[0], vmax=filter_node[1]
+        )
+        cm_node.caption = ' '.join(value_col.split('_'))
+        m.add_child(cm_node)
     elif nodetype == "area":
         value_col = "area_ind"
         val_max = node[value_col].max()
@@ -208,6 +222,9 @@ def plotMap(
                 colHex = cm_node(n[value_col])
                 data.append(colHex)
                 colour = ""
+                if plotting_values is not None and value_col in plotting_values:
+                    data[2] = "Node={}, area={}, {}={}".format(n["id"], n["area"],
+                        ' '.join(value_col.split('_')), np.round(n[value_col],6))
             else:
                 colour = "blue"
             locationsN.append(data)
