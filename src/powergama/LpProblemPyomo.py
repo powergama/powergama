@@ -65,7 +65,7 @@ class LpProblem(pyo.ConcreteModel):
             within=pyo.Reals,
             default=0,
             mutable=True,
-            initialize=grid_data.consumer.loc[self.s_load_flex, "flex_basevalue"].values,
+            # initialize=grid_data.consumer.loc[self.s_load_flex, "flex_basevalue"].values,
         )
         if self._lossmethod == 2:
             self.p_branch_ac_power_loss = pyo.Param(self.s_branch_ac, within=pyo.Reals, default=0, mutable=True)
