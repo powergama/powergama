@@ -3,17 +3,16 @@
 PowerGAMA module containing plotting functions
 """
 
+import itertools
+import math
+
+import branca.colormap
 import folium
 import folium.plugins
-import branca.colormap
-import matplotlib as mpl
-import matplotlib.colors
-import jinja2
 import folium.utilities
-import itertools
-import pandas as pd
-import math
+import jinja2
 import numpy as np
+import pandas as pd
 
 
 def plotMap(
@@ -27,7 +26,7 @@ def plotMap(
     timeMaxMin=None,
     spread_nodes_r=None,
     plotting_values=None,
-    **kwargs
+    **kwargs,
 ):
     """
     Plot PowerGAMA data/results on map
@@ -96,30 +95,34 @@ def plotMap(
         # node[['lat','lon']] = coords
 
     # Careful! Merge may change the order
-    branch = branch.merge(
-        node[["id", "lat", "lon"]], how="left", left_on="node_from", right_on="id"
-    )
-    branch = branch.merge(
-        node[["id", "lat", "lon"]], how="left", left_on="node_to", right_on="id"
-    )
-    dcbranch = dcbranch.merge(
-        node[["id", "lat", "lon"]], how="left", left_on="node_from", right_on="id"
-    )
-    dcbranch = dcbranch.merge(
-        node[["id", "lat", "lon"]], how="left", left_on="node_to", right_on="id"
-    )
-    generator = generator.merge(
-        node[["id", "lat", "lon"]], how="left", left_on="node", right_on="id"
-    )
-    consumer = consumer.merge(
-        node[["id", "lat", "lon"]], how="left", left_on="node", right_on="id"
-    )
+    branch = branch.merge(node[["id", "lat", "lon"]], how="left", left_on="node_from", right_on="id")
+    branch = branch.merge(node[["id", "lat", "lon"]], how="left", left_on="node_to", right_on="id")
+    dcbranch = dcbranch.merge(node[["id", "lat", "lon"]], how="left", left_on="node_from", right_on="id")
+    dcbranch = dcbranch.merge(node[["id", "lat", "lon"]], how="left", left_on="node_to", right_on="id")
+    branch_gen = pd.DataFrame()
+    if ("gen_lat" in generator.columns) and ("gen_lon" in generator.columns):
+        latlon_from_node = generator.merge(node[["id", "lat", "lon"]], how="left", left_on="node", right_on="id")
+        generator["lat"] = generator["gen_lat"].fillna(latlon_from_node["lat"])
+        generator["lon"] = generator["gen_lon"].fillna(latlon_from_node["lon"])
+        branch_gen = pd.DataFrame(index=generator.index)
+        branch_gen["lat_x"] = generator["gen_lat"]
+        branch_gen["lat_y"] = latlon_from_node["lat"]
+        branch_gen["lon_x"] = generator["gen_lon"]
+        branch_gen["lon_y"] = latlon_from_node["lon"]
+        # keep only those where generator lat/lon have been specified, and differs from node
+        m_remove = (branch_gen.isna().any(axis=1)) | (
+            (branch_gen["lat_x"] == branch_gen["lat_y"]) & (branch_gen["lat_x"] == branch_gen["lat_y"])
+        )
+        branch_gen = branch_gen[~m_remove]
+    else:
+        generator = generator.merge(node[["id", "lat", "lon"]], how="left", left_on="node", right_on="id")
+    consumer = consumer.merge(node[["id", "lat", "lon"]], how="left", left_on="node", right_on="id")
     gentypes = pg_data.getAllGeneratorTypes()
     areas = pg_data.getAllAreas()
     node = node.reset_index().rename(columns={"index": "index_orig"})
-    node = node.merge(
-        pd.DataFrame(areas).reset_index(), how="left", left_on="area", right_on=0
-    ).rename(columns={"index": "area_ind"})
+    node = node.merge(pd.DataFrame(areas).reset_index(), how="left", left_on="area", right_on=0).rename(
+        columns={"index": "area_ind"}
+    )
     node = node.set_index("index_orig")
     # node.sort_index(inplace=True)
     node["area_ind"] = 0.5 + node["area_ind"] % 10
@@ -130,30 +133,24 @@ def plotMap(
         branch_sensitivity = pg_res.getAverageBranchSensitivity(timeMaxMin)
         branch_utilisation = pg_res.getAverageUtilisation(timeMaxMin)
         br_ind = pg_data.getIdxBranchesWithFlowConstraints()
-        branch["flow"] = pg_res.getAverageBranchFlows(timeMaxMin)[2]
+        branch["flow12"] = pg_res.getAverageBranchFlows(timeMaxMin)[0]
+        branch["flow21"] = pg_res.getAverageBranchFlows(timeMaxMin)[1]
+        branch["flow"] = pg_res.getAverageBranchFlows(timeMaxMin)[2]  # avg of abs value
         branch["utilisation"] = branch_utilisation
         branch["sensitivity"] = 0
         branch.loc[branch.index.isin(br_ind), "sensitivity"] = branch_sensitivity
         # DC branch utilisation:
         if dcbranch.shape[0] > 0:
-            dcbranch_utilisation = pg_res.getAverageUtilisation(
-                timeMaxMin, branchtype="dc"
-            )
-            dcbranch_sensitivity = pg_res.getAverageBranchSensitivity(
-                timeMaxMin, branchtype="dc"
-            )
+            dcbranch_utilisation = pg_res.getAverageUtilisation(timeMaxMin, branchtype="dc")
+            dcbranch_sensitivity = pg_res.getAverageBranchSensitivity(timeMaxMin, branchtype="dc")
             dcbr_ind = pg_data.getIdxDcBranchesWithFlowConstraints()
-            dcbranch["flow"] = pg_res.getAverageBranchFlows(
-                timeMaxMin, branchtype="dc"
-            )[2]
+            dcbranch["flow12"] = pg_res.getAverageBranchFlows(timeMaxMin, branchtype="dc")[0]
+            dcbranch["flow21"] = pg_res.getAverageBranchFlows(timeMaxMin, branchtype="dc")[1]
+            dcbranch["flow"] = pg_res.getAverageBranchFlows(timeMaxMin, branchtype="dc")[2]
             dcbranch["utilisation"] = 0
-            dcbranch.loc[
-                dcbranch.index.isin(dcbr_ind), "utilisation"
-            ] = dcbranch_utilisation
+            dcbranch.loc[dcbranch.index.isin(dcbr_ind), "utilisation"] = dcbranch_utilisation
             dcbranch["sensitivity"] = 0
-            dcbranch.loc[
-                dcbranch.index.isin(dcbr_ind), "sensitivity"
-            ] = dcbranch_sensitivity
+            dcbranch.loc[dcbranch.index.isin(dcbr_ind), "sensitivity"] = dcbranch_sensitivity
 
     m = folium.Map(location=[node["lat"].median(), node["lon"].median()], **kwargs)
 
@@ -176,26 +173,32 @@ def plotMap(
                 polyline.bindPopup(row[2]);
                 return polyline;
             }"""
+    callbackFlowArrow = """function (row,colour) {
+               if (colour=='') {
+                   colour=row[3]
+               }
+               var marker = L.circleMarker(new L.LatLng(row[0],row[1]),
+                                           {"radius":row[4],
+                                            "color":colour} );
+                      marker.bindPopup(row[2]);
+                      return marker;
+            }"""
 
     # print("Nodes...")
     if nodetype == "nodalprice":
         value_col = "nodalprice"
         if filter_node is None:
             filter_node = [node[value_col].min(), node[value_col].max()]
-        cm_node = branca.colormap.LinearColormap(
-            ["green", "yellow", "red"], vmin=filter_node[0], vmax=filter_node[1]
-        )
+        cm_node = branca.colormap.LinearColormap(["green", "yellow", "red"], vmin=filter_node[0], vmax=filter_node[1])
         cm_node.caption = "Nodal price"
         m.add_child(cm_node)
     elif plotting_values is not None and nodetype in plotting_values:
         value_col = nodetype
-        node[value_col] = list(plotting_values[nodetype]) #TODO: keep indices
+        node[value_col] = list(plotting_values[nodetype])  # TODO: keep indices
         if filter_node is None:
             filter_node = [node[value_col].min(), node[value_col].max()]
-        cm_node = branca.colormap.LinearColormap(
-            ["green", "yellow", "red"], vmin=filter_node[0], vmax=filter_node[1]
-        )
-        cm_node.caption = ' '.join(value_col.split('_'))
+        cm_node = branca.colormap.LinearColormap(["green", "yellow", "red"], vmin=filter_node[0], vmax=filter_node[1])
+        cm_node.caption = " ".join(value_col.split("_"))
         m.add_child(cm_node)
     elif nodetype == "area":
         value_col = "area_ind"
@@ -223,17 +226,18 @@ def plotMap(
                 data.append(colHex)
                 colour = ""
                 if plotting_values is not None and value_col in plotting_values:
-                    data[2] = "Node={}, area={}, {}={}".format(n["id"], n["area"],
-                        ' '.join(value_col.split('_')), np.round(n[value_col],6))
+                    data[2] = "Node={}, area={}, {}={}".format(
+                        n["id"], n["area"], " ".join(value_col.split("_")), np.round(n[value_col], 6)
+                    )
             else:
                 colour = "blue"
             locationsN.append(data)
         else:
             print("Missing lat/lon for node index={}".format(i))
     feature_group_Nodes = folium.FeatureGroup(name="Nodes").add_to(m)
-    FeatureCollection(
-        data=locationsN, callback=callbackNode, addto=feature_group_Nodes, colour=colour
-    ).add_to(feature_group_Nodes)
+    FeatureCollection(data=locationsN, callback=callbackNode, addto=feature_group_Nodes, colour=colour).add_to(
+        feature_group_Nodes
+    )
 
     # print("AC branches...")
     if branchtype == "utilisation":
@@ -283,6 +287,7 @@ def plotMap(
     else:
         value_col = None
     locationsB = []
+    locationsB_flow_direction = []
     for i, n in branch.iterrows():
         if (branchtype == "capacity") and (n["capacity"] == 0):
             # skip this branch
@@ -291,16 +296,12 @@ def plotMap(
             data = [
                 [n["lat_x"], n["lon_x"]],
                 [n["lat_y"], n["lon_y"]],
-                "AC Branch={} ({}-{}), capacity={:g}".format(
-                    i, n["node_from"], n["node_to"], n["capacity"]
-                ),
+                "AC Branch={} ({}-{}), capacity={:g}".format(i, n["node_from"], n["node_to"], n["capacity"]),
             ]
             if branchtype == "type":
                 data[2] = "{}; type={}".format(data[2], n["type"])
             if pg_res is not None:
-                data[2] = "{}; flow={:g}; utilisation={:g}".format(
-                    data[2], n["flow"], n["utilisation"]
-                )
+                data[2] = "{}; flow={:g}; utilisation={:g}".format(data[2], n["flow"], n["utilisation"])
             if value_col is not None:
                 colHex = cm_branch(n[value_col])
                 data.append(colHex)
@@ -308,12 +309,33 @@ def plotMap(
             else:
                 colour = "black"
             locationsB.append(data)
+            # flow direction marker:
+            if pg_res is not None:
+                if n["flow12"] + n["flow21"] == 0:
+                    d = 0.5
+                else:
+                    d = min(0.9, max(0.1, n["flow12"] / (n["flow12"] + n["flow21"])))
+                (flow_lat, flow_lon) = _pointBetween((n["lat_x"], n["lon_x"]), (n["lat_y"], n["lon_y"]), weight=d)
+                radius = 6  # node radius=3
+                data2 = [
+                    flow_lat,
+                    flow_lon,
+                    f"flow 1->2: {n['flow12']:8.2f}<br>flow 2->1: {n['flow21']:8.2f}",
+                    colour,
+                    radius,
+                ]
+                locationsB_flow_direction.append(data2)
         else:
             print("Missing lat/lon for node index={}".format(i))
     feature_group_Branches = folium.FeatureGroup(name="AC branches").add_to(m)
-    FeatureCollection(
-        locationsB, callback=callbackBranch, addto=feature_group_Branches, colour=colour
-    ).add_to(feature_group_Branches)
+    FeatureCollection(locationsB, callback=callbackBranch, addto=feature_group_Branches, colour=colour).add_to(
+        feature_group_Branches
+    )
+    if pg_res is not None:
+        feature_group_Branches_flowdirection = folium.FeatureGroup(name="flow direction").add_to(feature_group_Branches)
+        FeatureCollection(
+            locationsB_flow_direction, callback=callbackFlowArrow, addto=feature_group_Branches_flowdirection, colour=""
+        ).add_to(feature_group_Branches_flowdirection)
 
     # print("DC branches...")
     #    if branchtype=="utilisation":
@@ -325,19 +347,16 @@ def plotMap(
     #    else:
     #        value_col=None
     locationsBdc = []
+    locationsBdc_flow_direction = []
     for i, n in dcbranch.iterrows():
         if not (n[["lat_x", "lon_x", "lat_y", "lon_y"]].isnull().any()):
             data = [
                 [n["lat_x"], n["lon_x"]],
                 [n["lat_y"], n["lon_y"]],
-                "DC Branch={} ({}-{}), capacity={:g}".format(
-                    i, n["node_from"], n["node_to"], n["capacity"]
-                ),
+                "DC Branch={} ({}-{}), capacity={:g}".format(i, n["node_from"], n["node_to"], n["capacity"]),
             ]
             if pg_res is not None:
-                data[2] = "{}; flow={:g}; utilisation={:g}".format(
-                    data[2], n["flow"], n["utilisation"]
-                )
+                data[2] = "{}; flow={:g}; utilisation={:g}".format(data[2], n["flow"], n["utilisation"])
             if value_col is not None:
                 colHex = cm_branch(n[value_col])
                 data.append(colHex)
@@ -345,6 +364,21 @@ def plotMap(
             else:
                 colour = "blue"
             locationsBdc.append(data)
+            if pg_res is not None:
+                if n["flow12"] + n["flow21"] == 0:
+                    d = 0.5
+                else:
+                    d = min(0.9, max(0.1, n["flow12"] / (n["flow12"] + n["flow21"])))
+                (flow_lat, flow_lon) = _pointBetween((n["lat_x"], n["lon_x"]), (n["lat_y"], n["lon_y"]), weight=d)
+                radius = 6  # node radius=3
+                data2 = [
+                    flow_lat,
+                    flow_lon,
+                    f"flow 1->2: {n['flow12']:8.2f}<br>flow 2->1: {n['flow21']:8.2f}",
+                    colour,
+                    radius,
+                ]
+                locationsBdc_flow_direction.append(data2)
         else:
             print("Missing lat/lon for node index={}".format(i))
     feature_group_DcBranches = folium.FeatureGroup(name="DC branches").add_to(m)
@@ -354,6 +388,16 @@ def plotMap(
         addto=feature_group_DcBranches,
         colour=colour,
     ).add_to(feature_group_DcBranches)
+    if pg_res is not None:
+        feature_group_DcBranches_flowdirection = folium.FeatureGroup(name="flow direction").add_to(
+            feature_group_DcBranches
+        )
+        FeatureCollection(
+            locationsBdc_flow_direction,
+            callback=callbackFlowArrow,
+            addto=feature_group_DcBranches_flowdirection,
+            colour="",
+        ).add_to(feature_group_DcBranches_flowdirection)
 
     # print("Consumers...")
     locationsN = []
@@ -393,6 +437,17 @@ def plotMap(
         iconSize: new L.Point(20, 20)
         });
     }"""
+
+    locationsBG = []
+    for i, n in branch_gen.iterrows():
+        if not (n[["lat_x", "lon_x", "lat_y", "lon_y"]].isnull().any()):
+            data = [[n["lat_x"], n["lon_x"]], [n["lat_y"], n["lon_y"]], ""]
+            colour = "gray"
+            locationsBG.append(data)
+    FeatureCollection(locationsBG, callback=callbackBranch, addto=feature_group_Generators, colour=colour).add_to(
+        feature_group_Generators
+    )
+
     #    for ind,gentype in enumerate(gentypes):
     #        #locationsN=[]
     #        for i,n in generator[generator['type']==gentype].iterrows():
@@ -401,7 +456,9 @@ def plotMap(
     for thenode, genindices in groups.groups.items():
         locationsN = []
         marker_cluster = folium.plugins.MarkerCluster(
-            icon_create_function=gencluster_icon_create_function
+            icon_create_function=gencluster_icon_create_function,
+            # disableClusteringAtZoom=1,
+            maxClusterRadius=1,  # only cluster if lat/lon are identical
         )
         marker_cluster.add_to(feature_group_Generators)
         for genind in genindices:
@@ -412,9 +469,7 @@ def plotMap(
                 data = [
                     n["lat"],
                     n["lon"],
-                    "{}<br>Generator {}: {}, pmax={:g}".format(
-                        gentype, genind, n["desc"], n["pmax"]
-                    ),
+                    "{}<br>Generator {}: {}, pmax={:g}".format(gentype, genind, n["desc"], n["pmax"]),
                 ]
                 col = cm_stepG(typeind)
                 data.append(col)
@@ -426,9 +481,9 @@ def plotMap(
         # FeatureCollection(data=locationsN,callback=callbackNode,
         #                  featuregroup=feature_group_GenX,
         #                  colour="red").add_to(feature_group_GenX)
-        FeatureCollection(
-            data=locationsN, callback=callbackNode, addto=marker_cluster, colour=""
-        ).add_to(marker_cluster)
+        FeatureCollection(data=locationsN, callback=callbackNode, addto=marker_cluster, colour="").add_to(
+            marker_cluster
+        )
 
     legend_generator_html = """
          <div style="position: fixed;
@@ -439,9 +494,8 @@ def plotMap(
     #             bottom: 50px; left: 50px; width: 150px; height: 300px;
     for typeind, gentype in enumerate(gentypes):
         col = cm_stepG(typeind)
-        legend_generator_html = (
-            '{}<br> &nbsp; <i class="fa fa-circle fa-1x" '
-            'style="color:{}">&nbsp;{}</i>'.format(legend_generator_html, col, gentype)
+        legend_generator_html = '{}<br> &nbsp; <i class="fa fa-circle fa-1x" ' 'style="color:{}">&nbsp;{}</i>'.format(
+            legend_generator_html, col, gentype
         )
     legend_generator_html = "{}</div>".format(legend_generator_html)
     m.get_root().html.add_child(folium.Element(legend_generator_html))
@@ -481,12 +535,8 @@ class FeatureCollection(folium.map.FeatureGroup):
 
     _counts = itertools.count(0)
 
-    def __init__(
-        self, data, callback, addto, colour, name=None, overlay=True, control=True
-    ):
-        super(FeatureCollection, self).__init__(
-            name=name, overlay=overlay, control=control
-        )
+    def __init__(self, data, callback, addto, colour, name=None, overlay=True, control=True):
+        super(FeatureCollection, self).__init__(name=name, overlay=overlay, control=control)
         self._name = "FeatureCollection"
         self._data = data
         self._addto = addto
@@ -495,7 +545,7 @@ class FeatureCollection(folium.map.FeatureGroup):
         self._callback = "var callback{} = {};".format(self._count, callback)
 
         self._template = jinja2.Template(
-            u"""
+            """
             {% macro script(this, kwargs) %}
             {{this._callback}}
             (function(){
@@ -507,7 +557,7 @@ class FeatureCollection(folium.map.FeatureGroup):
                     var row = data[i];
                     var feature = callback"""
             + "{}".format(self._count)
-            + u"""(row,colour);
+            + """(row,colour);
                     feature.addTo(addto);
                 };
             })();
@@ -515,5 +565,57 @@ class FeatureCollection(folium.map.FeatureGroup):
         )
 
 
-if __name__ == "__main__":
-    plotMap(pg_data, res, filename="mapTest.html")
+def _pointBetween(nodeA, nodeB, weight):
+    """computes coords on the line between two points
+
+     (lat,lon) = pointBetween(self,lat1,lon1,lat2,lon2,d)
+
+    Parameters
+    ----------
+        nodeA: dublet (lat,lon)
+            latitude/longitude of nodeA (degrees)
+        nodeB: dublet (lat,lon)
+            latitude/longitude of nodeB (degrees)
+        weight: double
+            weight=0 is node A, 0.5 is halfway between, and 1 is node B
+
+    Returns
+    -------
+        (lat,lon): dublet
+            coordinates of the point inbetween nodeA and nodeB (degrees)
+
+
+     ref: http://www.movable-type.co.uk/scripts/latlong.html
+    """
+    lat1 = nodeA[0]
+    lon1 = nodeA[1]
+    lat2 = nodeB[0]
+    lon2 = nodeB[1]
+    if (lat1 == lat2) and (lon1 == lon2):
+        lat = lat1
+        lon = lon1
+    else:
+        # transform to radians
+        lat1 = lat1 * math.pi / 180
+        lat2 = lat2 * math.pi / 180
+        lon1 = lon1 * math.pi / 180
+        lon2 = lon2 * math.pi / 180
+
+        # initial bearing
+        y = math.sin(lon2 - lon1) * math.cos(lat2)
+        x = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(lon2 - lon1)
+        bearing = math.atan2(y, x)
+
+        # angular distance from A to B
+        d_tot = math.acos(math.sin(lat1) * math.sin(lat2) + math.cos(lat1) * math.cos(lat2) * math.cos(lon2 - lon1))
+        d = d_tot * weight
+
+        lat = math.asin(math.sin(lat1) * math.cos(d) + math.cos(lat1) * math.sin(d) * math.cos(bearing))
+        lon = lon1 + math.atan2(
+            math.sin(bearing) * math.sin(d) * math.cos(lat1), math.cos(d) - math.sin(lat1) * math.sin(lat)
+        )
+
+        # tansform to degrees
+        lat = lat * 180 / math.pi
+        lon = lon * 180 / math.pi
+    return (lat, lon)
