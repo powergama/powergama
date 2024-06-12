@@ -1,6 +1,6 @@
 # Changes
 
-## Unpublished
+## v1.2.0
 - update user documentation
 - speedup of model creation
 - add option to use persistent solver
