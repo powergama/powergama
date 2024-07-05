@@ -793,7 +793,9 @@ class Results(object):
                 if gt in spillageGen:
                     prod[gt + " spilled"] = self.db.getResultGeneratorSpilled(generators[gt], timeMaxMin)
         prod["load shedding"] = self.getLoadheddingInArea(area, timeMaxMin)
-        prod["storage"] = self.db.getResultStorageFillingMultiple(matches, timeMaxMin, capacity=False)
+        storage = self.db.getResultStorageFillingMultiple(matches, timeMaxMin, capacity=False)
+        if storage:
+            prod["storage"] = storage
         if len(pumpIdx) > 0:
             prod["pumped"] = self.db.getResultPumpPowerMultiple(pumpIdx, timeMaxMin, negative=True)
         prod["net import"] = self.getNetImport(area, timeMaxMin)
