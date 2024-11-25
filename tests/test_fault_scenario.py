@@ -11,7 +11,6 @@ import pytest
 
 import powergama
 import powergama.fault_scenarios as fs
-from powergama.fault_scenarios.full_profiles import FullProfiles
 
 
 def test_fault_scenario_creation():
@@ -21,7 +20,7 @@ def test_fault_scenario_creation():
 
 @pytest.mark.skipif(not pyo.SolverFactory("glpk").available(), reason="Skipping test because GLPK is not available.")
 def test_faultsimulation(testcase_9bus_data, testcase_9bus_res):
-    """Test to check that fault scenario simulation works, and gives expected result"""
+    """9 bus test to check that fault scenario simulation works, and gives expected result"""
 
     gridmodel_base = testcase_9bus_data
 
@@ -29,7 +28,7 @@ def test_faultsimulation(testcase_9bus_data, testcase_9bus_res):
     fault_spec_generators = {"fault_rate": 0.05, "fault_duration": 4, "fault_sizes": {None: 100}}
     scenario_seeds = [1, 2]  # two fault scenarios
 
-    full_profiles = FullProfiles()
+    full_profiles = fs.FullProfiles()
     full_profiles.stored_profiles = gridmodel_base.profiles
     full_profiles.timedelta = gridmodel_base.timeDelta
     full_profiles.stored_storagevalue_time = gridmodel_base.storagevalue_time
@@ -79,7 +78,7 @@ def test_faultsimulation(testcase_9bus_data, testcase_9bus_res):
         for scen in scenario_seeds:
             print(f"fault scenario {scen}")
             fault_scenario_dir = failure_dir / f"fault_scenario_{scen}"
-            for subfolder in pathlib.Path(failure_dir).glob("failure_*/"):
+            for subfolder in pathlib.Path(fault_scenario_dir).glob("failure_*/"):
                 res_table = fs.specify_storage.load_table_from_res(
                     subfolder / "failure_case_combined.sqlite3", "Res_Nodes"
                 )
@@ -87,6 +86,7 @@ def test_faultsimulation(testcase_9bus_data, testcase_9bus_res):
                     # update result with data from this fault situation:
                     mask = base_node["timestep"].isin(res_table["timestep"])
                     base_node.loc[mask, :] = res_table.drop(columns="fault_start").set_index(base_node.loc[mask].index)
+            loadshedding_all[scen] = base_node["loadshed"]
 
         loadshedding_sums = loadshedding_all.sum()
 

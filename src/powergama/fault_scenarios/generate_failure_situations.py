@@ -3,8 +3,7 @@ import time
 
 import numpy as np
 
-from . import failure_situation as fsit
-from . import specify_storage as stor
+from . import failure_situation, specify_storage
 
 
 def create_fault_scenarios(gridmodel_base, fault_path, seed_list, fault_spec):
@@ -25,15 +24,15 @@ def create_fault_scenarios(gridmodel_base, fault_path, seed_list, fault_spec):
     N_steps = gridmodel_base.timerange[-1]
 
     for seed in seed_list:
-        switches_off = fsit.build_switches_off_array(
+        switches_off = failure_situation.build_switches_off_array(
             N_steps=N_steps, data=gridmodel_base, fault_spec=fault_spec, seed=seed
         )
-        fault_situation_list = fsit.build_off_states_list(
+        fault_situation_list = failure_situation.build_off_states_list(
             switches_off, N_steps=N_steps, generator_fault_duration=fault_duration
         )
         print(seed, len(fault_situation_list) * fault_duration / N_steps)
 
-        fsit.write_fault_sits_to_file(fault_path / f"fault_scenario_{seed}.txt", fault_situation_list)
+        failure_situation.write_fault_sits_to_file(fault_path / f"fault_scenario_{seed}.txt", fault_situation_list)
     print(f"Finished writing {len(seed_list)} scenarios to folder")
     print(fault_path)
 
@@ -50,14 +49,14 @@ def run_fault_simulation(gridmodel_base, full_profiles, fault_scenario_file, fai
     """
 
     # Load base results and model
-    base_case_storage = stor.load_storage_states_from_res(db_base)
-    base_case_flexload = stor.load_flexload_states_from_res(db_base)
+    base_case_storage = specify_storage.load_storage_states_from_res(db_base)
+    base_case_flexload = specify_storage.load_flexload_states_from_res(db_base)
 
     N_steps = gridmodel_base.timerange[-1]
     print(f"N_steps: {N_steps}")
 
     # Read in all fault situations from fault scenario file
-    fault_situation_list = fsit.read_fault_sits_from_file(fault_scenario_file)
+    fault_situation_list = failure_situation.read_fault_sits_from_file(fault_scenario_file)
 
     print("Number of fault situations: %s" % len(fault_situation_list))
     # print('Fraction of hours to be resimulated: %s' %(len(fault_situation_list)*FAULT_DUR/N_steps))
@@ -67,7 +66,7 @@ def run_fault_simulation(gridmodel_base, full_profiles, fault_scenario_file, fai
     for ii in range(len(fault_situation_list)):
         if ii % 1000 == 0:
             print(f"{ii}/{len(fault_situation_list)}")
-        fsit.collect_res_failure_situation(
+        failure_situation.collect_res_failure_situation(
             fault_situation_list[ii],
             full_profiles=full_profiles,
             gridmodel_base=gridmodel_base,

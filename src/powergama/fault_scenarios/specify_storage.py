@@ -60,6 +60,8 @@ def load_table_from_res(db_filename, tablename):
         rows = cur.fetchall()
         col_names = [desc[0] for desc in cur.description]
         df = pd.DataFrame(rows, columns=col_names)
+    # explicitly close to avoid error when running test in temporary directory
+    con.close()
     return df
 
 
@@ -117,7 +119,6 @@ def run_failure_case_LpFaultProblem(
     failure_dir : pathlib.Path
 
     """
-    # NB: run_failure_case and run_failure_case_LpFaultProblem return different objects
     res_file = pathlib.Path(failure_dir) / "failure_case_combined.sqlite3"
     max_timestep = np.max(timesteps)
     full_timerange = range(max_timestep + num_steps)
