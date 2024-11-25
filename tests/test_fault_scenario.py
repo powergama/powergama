@@ -40,10 +40,10 @@ def test_faultsimulation(testcase_9bus_data, testcase_9bus_res):
     lp_base = powergama.LpProblem(gridmodel_base, lossmethod=1)
 
     # temporary folder for files created during test:
+    # dirname = "tempdir"
+    # if True:
     with tempfile.TemporaryDirectory() as dirname:
-        # dirname="tempdir"
-        # if True:
-        base_db_loc = pathlib.Path(dirname) / "base_powergama.sqlite3"
+        base_db_loc = pathlib.Path(dirname).absolute() / "base_powergama.sqlite3"
         print("Base database file:", base_db_loc.absolute())
 
         # 1. Run baseline simulation and save result to database
@@ -52,11 +52,12 @@ def test_faultsimulation(testcase_9bus_data, testcase_9bus_res):
 
         # 2. Create fault scenario files:
         fault_spec = fs.FaultSpec(spec_generators=fault_spec_generators)
-        failure_dir = pathlib.Path(dirname) / "faults"
+        failure_dir = pathlib.Path(dirname).absolute() / "faults"
         print("failure_dir", failure_dir)
         fs.create_fault_scenarios(gridmodel_base, failure_dir, fault_spec=fault_spec, seed_list=scenario_seeds)
 
         # 3 Run simulations with faults (and save results to sql-files)
+        print("Running simulations with faults...")
         scen = scenario_seeds[0]
         fs.run_fault_simulation(
             gridmodel_base,
@@ -68,6 +69,7 @@ def test_faultsimulation(testcase_9bus_data, testcase_9bus_res):
         )
 
         # 4 Inspect results
+        print("Inspecting results...")
         res_nodes_base = fs.specify_storage.load_table_from_res(base_db_loc, "Res_Nodes")
         # res_gens = fs.specify_storage.load_table_from_res(base_db_loc, "Res_Generators")
         base_node = copy.deepcopy(res_nodes_base)
@@ -81,3 +83,6 @@ def test_faultsimulation(testcase_9bus_data, testcase_9bus_res):
 
         loadshedding_sum = base_node["loadshed"].sum()
         assert loadshedding_sum == pytest.approx(815.8665322112945)
+
+        print("Done with temporary")
+    print("Done. Temporary files deleted.")

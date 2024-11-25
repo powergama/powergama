@@ -47,10 +47,10 @@ def load_table_from_res(db_filename, tablename):
         query = "SELECT * FROM Res_Nodes "
     elif tablename == "Res_Storage":
         query = "SELECT * FROM Res_Storage "
-    elif tablename == "Res_FelxibleLoad":
-        query = "SELECT * FROM Res_FelxibleLoad "
+    elif tablename == "Res_FlexibleLoad":
+        query = "SELECT * FROM Res_FlexibleLoad "
     else:
-        raise Exception("Unknown SQL database table")
+        raise Exception(f"Unknown SQL database table {tablename}")
     con = db.connect(db_filename)
     with con:
         cur = con.cursor()

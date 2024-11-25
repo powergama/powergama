@@ -44,7 +44,7 @@ def run_fault_simulation(gridmodel_base, full_profiles, fault_scenario_file, fai
     gridmodel_base : powergama.GridData - base grid model
     full_profiles : FullProfiles
     fault_scenario_file : name of fault scenario file
-    failure_dir : where to save sql file with fault scenario results
+    failure_dir : pathlib.Path - where to save sql file with fault scenario results
     db_base : sqlite file with base model results
     solver : name of solver to use (glpk, cbc, gurobi_persistent, gurobi,...)
     """
@@ -71,7 +71,7 @@ def run_fault_simulation(gridmodel_base, full_profiles, fault_scenario_file, fai
             fault_situation_list[ii],
             full_profiles=full_profiles,
             gridmodel_base=gridmodel_base,
-            failure_dir=f"{failure_dir}/failure_{ii}",
+            failure_dir=failure_dir / f"failure_{ii}",
             base_case_storage=base_case_storage,
             base_case_flexload=base_case_flexload,
             solver=solver,

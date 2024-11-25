@@ -45,6 +45,7 @@ def collect_res_failure_situation(
     """For a specific failure situation, run the simulation for the specified duration
 
     fail_situtaion: tuple - (start, end, failed_generators, failed_branches)
+    failure_dir : pathlib.Path - where files are
     """
     start, end, failed_generators, failed_branches = fail_situation
 
