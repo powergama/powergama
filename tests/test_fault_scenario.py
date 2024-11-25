@@ -1,13 +1,11 @@
 """
 A set of tests for fault scenario analysis.
 """
-# import powergama.fault_scenarios.test_helper as th
-# import powergama.fault_scenarios.specify_storage as spec_stor
-# import powergama.fault_scenarios.loadshedding_stats as loadshed_stat
 import copy
 import pathlib
 import tempfile
 
+import pandas as pd
 import pyomo.environ as pyo
 import pytest
 
@@ -29,7 +27,7 @@ def test_faultsimulation(testcase_9bus_data, testcase_9bus_res):
 
     # Fault specs:
     fault_spec_generators = {"fault_rate": 0.05, "fault_duration": 4, "fault_sizes": {None: 100}}
-    scenario_seeds = [1]  # one fault scenario only
+    scenario_seeds = [1, 2]  # two fault scenarios
 
     full_profiles = FullProfiles()
     full_profiles.stored_profiles = gridmodel_base.profiles
@@ -58,15 +56,18 @@ def test_faultsimulation(testcase_9bus_data, testcase_9bus_res):
 
         # 3 Run simulations with faults (and save results to sql-files)
         print("Running simulations with faults...")
-        scen = scenario_seeds[0]
-        fs.run_fault_simulation(
-            gridmodel_base,
-            full_profiles,
-            fault_scenario_file=failure_dir / f"fault_scenario_{scen}.txt",
-            failure_dir=failure_dir,
-            db_base=base_db_loc,
-            solver="glpk",
-        )
+        for scen in scenario_seeds:
+            fault_scenario_dir = failure_dir / f"fault_scenario_{scen}"
+            fault_scenario_dir.mkdir(exist_ok=True)
+            fault_scenario_file = failure_dir / f"fault_scenario_{scen}.txt"
+            fs.run_fault_simulation(
+                gridmodel_base,
+                full_profiles,
+                fault_scenario_file=fault_scenario_file,
+                failure_dir=fault_scenario_dir,
+                db_base=base_db_loc,
+                solver="glpk",
+            )
 
         # 4 Inspect results
         print("Inspecting results...")
@@ -74,15 +75,22 @@ def test_faultsimulation(testcase_9bus_data, testcase_9bus_res):
         # res_gens = fs.specify_storage.load_table_from_res(base_db_loc, "Res_Generators")
         base_node = copy.deepcopy(res_nodes_base)
         # combine results from all fault situations:
-        for subfolder in pathlib.Path(failure_dir).glob("failure_*/"):
-            res_table = fs.specify_storage.load_table_from_res(subfolder / "failure_case_combined.sqlite3", "Res_Nodes")
-            if (res_table["loadshed"] > 0).any():
-                # update result with data from this fault situation:
-                mask = base_node["timestep"].isin(res_table["timestep"])
-                base_node.loc[mask, :] = res_table.drop(columns="fault_start").set_index(base_node.loc[mask].index)
+        loadshedding_all = pd.DataFrame()
+        for scen in scenario_seeds:
+            print(f"fault scenario {scen}")
+            fault_scenario_dir = failure_dir / f"fault_scenario_{scen}"
+            for subfolder in pathlib.Path(failure_dir).glob("failure_*/"):
+                res_table = fs.specify_storage.load_table_from_res(
+                    subfolder / "failure_case_combined.sqlite3", "Res_Nodes"
+                )
+                if (res_table["loadshed"] > 0).any():
+                    # update result with data from this fault situation:
+                    mask = base_node["timestep"].isin(res_table["timestep"])
+                    base_node.loc[mask, :] = res_table.drop(columns="fault_start").set_index(base_node.loc[mask].index)
 
-        loadshedding_sum = base_node["loadshed"].sum()
-        assert loadshedding_sum == pytest.approx(815.8665322112945)
+        loadshedding_sums = loadshedding_all.sum()
 
-        print("Done with temporary")
+        assert loadshedding_sums[1] == pytest.approx(815.8665322112945)
+
+        print("Done with temporary folder")
     print("Done. Temporary files deleted.")

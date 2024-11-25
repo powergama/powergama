@@ -49,6 +49,8 @@ def load_table_from_res(db_filename, tablename):
         query = "SELECT * FROM Res_Storage "
     elif tablename == "Res_FlexibleLoad":
         query = "SELECT * FROM Res_FlexibleLoad "
+    elif tablename == "Res_Generators":
+        query = "SELECT * FROM Res_Generators "
     else:
         raise Exception(f"Unknown SQL database table {tablename}")
     con = db.connect(db_filename)
