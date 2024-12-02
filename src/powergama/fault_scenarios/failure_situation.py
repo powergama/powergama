@@ -139,7 +139,9 @@ def build_off_states_list(switches_off, N_steps, generator_fault_duration):
             # Set any that start at tt to be off until tt + duration
             for gg in to_turn_off:
                 amount_off = np.max(switches_off[gg, start:end])
-                generators_amount.append((gg, amount_off))
+                # HACK Need to add int(...) and float(...) to avoid getting np.int64(...) in created files
+                # Code should be improved to avoid such things
+                generators_amount.append((int(gg), float(amount_off)))
             fault_situation_list.append((start, end, generators_amount, []))
             # jump to tt + duration
             tt += generator_fault_duration
@@ -154,7 +156,7 @@ def build_off_states_array(fault_situation_list, data, N_steps):
     for fault in fault_situation_list:
         start, end, failed_generators, failed_branches = fault
 
-        for (gg, amount) in failed_generators:
+        for gg, amount in failed_generators:
             off_states[gg, start:end] = amount
     # TODO: failed_branches
     return off_states
