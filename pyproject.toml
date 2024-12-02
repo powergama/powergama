@@ -19,38 +19,27 @@ classifiers=[
 ]
 
 [tool.poetry.dependencies]
-python = ">=3.9,<3.12"
-numpy = "^1.23.0"
-pandas = "^1.5.0"
-"ruamel.yaml" = "^0.17.21"
-pyomo = "^6.4.2"
-scipy = "^1.9.1"
-ipywidgets = "^8"
-pydantic = "^1.10.0"
-jupyterlab = "^3.4.7"
-scikit-learn = "^1.1.2"
-matplotlib = "^3.6.0"
-plotly = "^5.10.0"
-seaborn = "^0.12.0"
+python = ">=3.9,<3.14"
+numpy = "^2"
+pandas = "^2.2"
+pyomo = "^6.8"
+scipy = "^1.14"
+matplotlib = "^3.9"
 branca = "^0.5"
 folium = "^0.12"
 jinja2 = "^3.1"
-openpyxl = "^3.0.10"
-geopandas = "^0.12.1"
-cloudpickle = "^2.2.0"
+cloudpickle = "^3.1"
 networkx = "^3.0"
-gurobipy = "^10.0.1"
 
 [tool.poetry.dev-dependencies]
-pytest = "^7"
-mypy = ">=0.96"
-pylint = "^2"
-black = "22.08.0"
-nbmake = "^1"
-bandit = "^1.7.4"
+pytest = "^8"
+mypy = "^1.13"
+pylint = "^3.3"
+black = "^24.10"
+nbmake = "^1.5"
+bandit = "^1.8"
 flake8 = "^5.0.4"
-setuptools = "^65.6.3"
-pre-commit = "^2.20.0"
+pre-commit = "^4.0"
 
 [tool.poetry.extras]
 
@@ -58,4 +47,28 @@ pre-commit = "^2.20.0"
 requires = ["poetry-core>=1.0.0"]
 build-backend = "poetry.core.masonry.api"
 
+[tool.black]
+line-length = 120
+include = '\.pyi?$'
+exclude = '''
+/(
+    \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | _build
+  | buck-out
+  | build
+  | dist
+)/
+'''
 
+[tool.isort]
+line_length = 120
+use_parentheses = true
+include_trailing_comma = true
+multi_line_output = 3
+
+[tool.bandit]
+exclude_dirs = ["tests", "__pycache__", ".pytest_cache"]
