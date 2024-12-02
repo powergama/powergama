@@ -19,7 +19,7 @@ classifiers=[
 ]
 
 [tool.poetry.dependencies]
-python = ">=3.9,<3.14"
+python = ">=3.10,<3.14"
 numpy = "^2"
 pandas = "^2.2"
 pyomo = "^6.8"
