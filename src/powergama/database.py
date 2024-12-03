@@ -516,7 +516,7 @@ class Database(DatabaseBaseClass):
 
     def getResultBranchSens(self, branchindx, timeMaxMin, acdc="ac"):
         """Get branch capacity sensitivity at specified branch"""
-        valid_tables = {"ac": "Res_Branches", "dc": "Res_DcBranches"}
+        valid_tables = {"ac": "Res_BranchesSens", "dc": "Res_DcBranches"}
         if acdc not in valid_tables:
             raise Exception('branch type must be "ac" or "dc"')
         branch_table = valid_tables[acdc]
@@ -545,7 +545,7 @@ class Database(DatabaseBaseClass):
         """Get average sensitivity of all  branches
         acdc = 'ac' or 'dc'
         """
-        valid_tables = {"ac": "Res_Branches", "dc": "Res_DcBranches"}
+        valid_tables = {"ac": "Res_BranchesSens", "dc": "Res_DcBranches"}
         if acdc not in valid_tables:
             raise Exception('branch type must be "ac" or "dc"')
         branch_table = valid_tables[acdc]
@@ -780,7 +780,7 @@ class Database(DatabaseBaseClass):
                 f"""SELECT SUM(storage) FROM Res_Storage
                 WHERE timestep>=? AND timestep<? AND indx IN ({str_bind})
                 GROUP BY timestep ORDER BY timestep""",  # nosec B608 - is safe even if bandit says no
-                (timeMaxMin[0], timeMaxMin[-1]),
+                (timeMaxMin[0], timeMaxMin[-1]) + tuple(genindx),
             )
             rows = cur.fetchall()
             if capacity:
