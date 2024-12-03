@@ -421,8 +421,8 @@ class Database(DatabaseBaseClass):
             else:
                 table = "Res_DcBranches"
             cur.execute(
-                "SELECT flow FROM ? WHERE timestep>=? AND timestep<? AND indx=? ORDER BY timestep",
-                (table, timeMaxMin[0], timeMaxMin[-1], branchindx),
+                f"SELECT flow FROM {table} WHERE timestep>=? AND timestep<? AND indx=? ORDER BY timestep",  # nosec B608 - is safe even if bandit says no
+                (timeMaxMin[0], timeMaxMin[-1], branchindx),
             )
             rows = cur.fetchall()
         values = [row[0] for row in rows]
@@ -438,17 +438,17 @@ class Database(DatabaseBaseClass):
         (timestep, branch index, flow)
 
         """
-        if acdc == "ac":
-            table = "Res_Branches"
-        elif acdc == "dc":
-            table = "Res_DcBranches"
+        valid_tables = {"ac": "Res_Branches", "dc": "Res_DcBranches"}
+        if acdc not in valid_tables:
+            raise Exception('branch type must be "ac" or "dc"')
+        table = valid_tables[acdc]
 
         con = db.connect(self.filename)
         with con:
             cur = con.cursor()
             cur.execute(
-                "SELECT timestep,indx,flow FROM ?" " WHERE timestep>=? AND timestep<?" " ORDER BY indx,timestep",
-                (table, timeMaxMin[0], timeMaxMin[-1]),
+                f"SELECT timestep,indx,flow FROM {table} WHERE timestep>=? AND timestep<? ORDER BY indx,timestep",  # nosec B608 - is safe even if bandit says no
+                (timeMaxMin[0], timeMaxMin[-1]),
             )
             rows = cur.fetchall()
         return rows
@@ -477,20 +477,20 @@ class Database(DatabaseBaseClass):
         with con:
             cur = con.cursor()
             cur.execute(
-                "SELECT indx,TOTAL(flow) FROM ? "
-                " WHERE timestep>=? AND timestep<? AND flow>=0"
-                " GROUP BY indx ORDER BY indx",
-                (table, timeMaxMin[0], timeMaxMin[-1]),
+                f"""SELECT indx,TOTAL(flow) FROM {table}
+                WHERE timestep>=? AND timestep<? AND flow>=0
+                GROUP BY indx ORDER BY indx""",  # nosec B608 - is safe even if bandit says no
+                (timeMaxMin[0], timeMaxMin[-1]),
             )
             rows1 = cur.fetchall()
             cur.execute(
-                "SELECT indx,TOTAL(flow) FROM ?"
-                " WHERE timestep>=? AND timestep<? AND flow<0"
-                " GROUP BY indx ORDER BY indx",
-                (table, timeMaxMin[0], timeMaxMin[-1]),
+                f"""SELECT indx,TOTAL(flow) FROM {table}
+                WHERE timestep>=? AND timestep<? AND flow<0
+                GROUP BY indx ORDER BY indx""",  # nosec B608 - is safe even if bandit says no
+                (timeMaxMin[0], timeMaxMin[-1]),
             )
             rows2 = cur.fetchall()
-            cur.execute("SELECT MAX(indx) FROM ?", table)
+            cur.execute(f"SELECT MAX(indx) FROM {table}")  # nosec B608 - is safe even if bandit says no
             numBranches = 1 + cur.fetchone()[0]
             # Calculate average flow for each direction
             numTimeSteps = timeMaxMin[-1] - timeMaxMin[0]
@@ -516,18 +516,16 @@ class Database(DatabaseBaseClass):
 
     def getResultBranchSens(self, branchindx, timeMaxMin, acdc="ac"):
         """Get branch capacity sensitivity at specified branch"""
-        if acdc == "ac":
-            branch_table = "Res_BranchesSens"
-        elif acdc == "dc":
-            branch_table = "Res_DcBranches"
-        else:
+        valid_tables = {"ac": "Res_Branches", "dc": "Res_DcBranches"}
+        if acdc not in valid_tables:
             raise Exception('branch type must be "ac" or "dc"')
+        branch_table = valid_tables[acdc]
         con = db.connect(self.filename)
         with con:
             cur = con.cursor()
             cur.execute(
-                "SELECT cap_sensitivity FROM ? WHERE timestep>=? AND timestep<? AND indx=? ORDER BY timestep",
-                (branch_table, timeMaxMin[0], timeMaxMin[-1], branchindx),
+                f"SELECT cap_sensitivity FROM {branch_table} WHERE timestep>=? AND timestep<? AND indx=? ORDER BY timestep",  # nosec B608 - is safe even if bandit says no
+                (timeMaxMin[0], timeMaxMin[-1], branchindx),
             )
             rows = cur.fetchall()
         values = [row[0] for row in rows]
@@ -547,21 +545,19 @@ class Database(DatabaseBaseClass):
         """Get average sensitivity of all  branches
         acdc = 'ac' or 'dc'
         """
-        if acdc == "ac":
-            branch_table = "Res_BranchesSens"
-        elif acdc == "dc":
-            branch_table = "Res_DcBranches"
-        else:
+        valid_tables = {"ac": "Res_Branches", "dc": "Res_DcBranches"}
+        if acdc not in valid_tables:
             raise Exception('branch type must be "ac" or "dc"')
+        branch_table = valid_tables[acdc]
         con = db.connect(self.filename)
         with con:
             cur = con.cursor()
             cur.execute(
-                "SELECT indx,AVG(cap_sensitivity)"
-                " FROM ?"
-                " WHERE timestep>=? AND timestep<?"
-                " GROUP BY indx ORDER BY indx",
-                (branch_table, timeMaxMin[0], timeMaxMin[-1]),
+                f"""SELECT indx,AVG(cap_sensitivity)
+                FROM {branch_table}
+                WHERE timestep>=? AND timestep<?
+                GROUP BY indx ORDER BY indx""",  # nosec B608 - is safe even if bandit says no
+                (timeMaxMin[0], timeMaxMin[-1]),
             )
             rows = cur.fetchall()
         values = [row[1] for row in rows]
@@ -721,7 +717,7 @@ class Database(DatabaseBaseClass):
             # con.row_factory = db.Row
             cur = con.cursor()
             cur.execute(
-                "SELECT output FROM Res_Pumping " " WHERE timestep>=? AND timestep<? AND indx=?" " ORDER BY timestep",
+                "SELECT output FROM Res_Pumping WHERE timestep>=? AND timestep<? AND indx=? ORDER BY timestep",
                 (timeMaxMin[0], timeMaxMin[-1], genindx),
             )
             rows = cur.fetchall()
@@ -756,7 +752,7 @@ class Database(DatabaseBaseClass):
             # con.row_factory = db.Row
             cur = con.cursor()
             cur.execute(
-                "SELECT storage FROM Res_Storage " " WHERE timestep>=? AND timestep<? AND indx=?" " ORDER BY timestep",
+                "SELECT storage FROM Res_Storage WHERE timestep>=? AND timestep<? AND indx=? ORDER BY timestep",
                 (timeMaxMin[0], timeMaxMin[-1], genindx),
             )
             rows = cur.fetchall()
@@ -1049,15 +1045,15 @@ class Database(DatabaseBaseClass):
         br_indx : list (optional)
             list of branches to consider, None=include all
         """
-        if acdc == "ac":
-            table = "Res_Branches"
-        elif acdc == "dc":
-            table = "Res_DcBranches"
+        valid_tables = {"ac": "Res_Branches", "dc": "Res_DcBranches"}
+        if acdc not in valid_tables:
+            raise Exception('branch type must be "ac" or "dc"')
+        table = valid_tables[acdc]
         con = db.connect(self.filename)
         with con:
             if br_indx is None:
-                query = "SELECT * FROM ? WHERE timestep>=? AND timestep<? GROUP BY indx,timestep"
-                df = pd.read_sql_query(query, con, params=(table, timeMaxMin[0], timeMaxMin[-1]))
+                query = f"SELECT * FROM {table} WHERE timestep>=? AND timestep<? GROUP BY indx,timestep"  # nosec B608 - is safe even if bandit says no
+                df = pd.read_sql_query(query, con, params=(timeMaxMin[0], timeMaxMin[-1]))
             elif len(br_indx) == 0:
                 # Empty dataframe
                 df = pd.DataFrame()
