@@ -17,14 +17,6 @@ PowerGAMA
    code_database
    code_constants
 
-PowerGIM
-=========
-.. toctree::
-   :maxdepth: 2
-   
-   code_powergim
-   code_sampling
-   code_costbenefit
   
 Indices
 =======

@@ -1,6 +1,11 @@
 # Changes
 
+## v1.3.0
+2024-12-02
+- added feature for fault scenario analysis
+
 ## v1.2.0
+2024-06-12
 - update user documentation
 - speedup of model creation
 - add option to use persistent solver

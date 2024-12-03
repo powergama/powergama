@@ -67,5 +67,4 @@ Plot results
 
 from .GridData import GridData
 from .LpProblemPyomo import LpProblem
-from .Results import Results
-
+from .Results import Results, ResultsBaseClass

@@ -15,9 +15,10 @@ import pandas as pd
 import powergama.database as db
 
 
-class Results(object):
+class ResultsBaseClass(object):
     """
     Class for storing and analysing/presenting results from PowerGAMA
+    Base version without plotting or results extraction
 
     Parameters
     ----------
@@ -47,7 +48,7 @@ class Results(object):
         self.flex_idx_consumers = grid.getIdxConsumersWithFlexibleLoad()
         self.idxConstrainedBranchCapacity = grid.getIdxBranchesWithFlowConstraints()
 
-        self.db = db.Database(databasefile)
+        self._init_database(databasefile)
         if replace:
             self.db.createTables(grid)
         else:
@@ -72,6 +73,9 @@ class Results(object):
         self.loadshed=[]
         """
 
+    def _init_database(self, databasefile):
+        self.db = db.Database(databasefile)
+
     def addResultsFromTimestep(
         self,
         timestep,
@@ -93,6 +97,7 @@ class Results(object):
         flexload_storagevalue,
         branch_ac_losses=None,
         branch_dc_losses=None,
+        fault_start=None,
     ):
         """Store results from optimal power flow for a new timestep
 
@@ -134,8 +139,9 @@ class Results(object):
             ac branch losses
         branch_dc_losses : list
             dc branch losses
-
-
+        fault_start  (int)
+            extra identifier for when simulations are run for several timesteps
+            from multiple starting timepoints
         """
         # Use zero if no branch power losses given:
         if branch_ac_losses is None:
@@ -167,6 +173,7 @@ class Results(object):
             idx_flexload=self.flex_idx_consumers,
             branch_ac_losses=branch_ac_losses,
             branch_dc_losses=branch_dc_losses,
+            fault_start=fault_start,
         )
 
         """
@@ -183,6 +190,23 @@ class Results(object):
         self.marginalprice.append(marginalprice)
         """
         # self.storageGeneratorsIdx.append(idx_generatorsWithStorage)
+
+
+class Results(ResultsBaseClass):
+    """
+    Class for storing and analysing/presenting results from PowerGAMA
+
+    Parameters
+    ----------
+    grid : GridData
+        PowerGAMA GridData object
+    databasefile : string
+        name of sqlite3 file for storage of results
+    replace : boolean
+        whether to replace existing sqlite file (default=true).
+        replace=false is useful to analyse previously
+        generated results
+    """
 
     def getAverageBranchFlows(self, timeMaxMin=None, branchtype="ac"):
         """
