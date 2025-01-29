@@ -263,6 +263,7 @@ class LpProblem(pyo.ConcreteModel):
 
     def _create_constraint_powerflow_equation(self, grid_data):
         """Constraint: Power balance (power flow vs voltage angle)"""
+
         # 1.
         def flowangle_rule(model, b):
             lhs = model.varAcBranchFlow[b]
@@ -785,6 +786,13 @@ class LpProblem(pyo.ConcreteModel):
                 symbolic_solver_labels = solve_args["symbolic_solver_labels"]
                 solve_args.pop("symbolic_solver_labels")
             opt.set_instance(self, symbolic_solver_labels=symbolic_solver_labels)
+        elif solver == "appsi_highs":
+            opt = pyo.SolverFactory(solver)
+            if opt.available():
+                print(":) Found solver")
+            else:
+                print(":( Could not find solver {}. Returning.".format(solver))
+                raise Exception("Could not find LP solver {}".format(solver))
         else:
             solver_io = None
             # if solver=="cbc":

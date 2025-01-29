@@ -1,5 +1,9 @@
 # Changes
 
+## v1.4.0
+2025-01-29
+- added support for Highs solver
+
 ## v1.3.0
 2024-12-02
 - added feature for fault scenario analysis
