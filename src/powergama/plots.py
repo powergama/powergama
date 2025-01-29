@@ -7,6 +7,7 @@ import math
 
 import branca.colormap
 import folium
+import folium.plugins
 import folium.utilities
 import geopandas
 import numpy as np
@@ -105,7 +106,7 @@ def plotMap(
         branch_gen["lon_y"] = latlon_from_node["lon"]
         # keep only those where generator lat/lon have been specified, and differs from node
         m_remove = (branch_gen.isna().any(axis=1)) | (
-            (branch_gen["lat_x"] == branch_gen["lat_y"]) & (branch_gen["lat_x"] == branch_gen["lat_y"])
+            (branch_gen["lat_x"] == branch_gen["lat_y"]) & (branch_gen["lon_x"] == branch_gen["lon_y"])
         )
         branch_gen = branch_gen[~m_remove]
     else:
@@ -338,11 +339,12 @@ def plotMap(
     map_generators = geopandas.GeoDataFrame(
         generator, geometry=geopandas.points_from_xy(generator["lon"], generator["lat"]), crs="EPSG:4326"
     )
-    genline_geometry = [
-        shapely.LineString([(z[0], z[1]), (z[2], z[3])])
-        for z in zip(branch_gen["lon_x"], branch_gen["lat_x"], branch_gen["lon_y"], branch_gen["lat_y"])
-    ]
-    map_genbranches = geopandas.GeoDataFrame(branch_gen, geometry=genline_geometry, crs="EPSG:4326")
+    if branch_gen.shape[0] > 0:
+        genline_geometry = [
+            shapely.LineString([(z[0], z[1]), (z[2], z[3])])
+            for z in zip(branch_gen["lon_x"], branch_gen["lat_x"], branch_gen["lon_y"], branch_gen["lat_y"])
+        ]
+        map_genbranches = geopandas.GeoDataFrame(branch_gen, geometry=genline_geometry, crs="EPSG:4326")
     m_generators = {}
     for gentype in gentypes_all:
         m_generators[gentype] = folium.FeatureGroup(name=gentype).add_to(m)
@@ -354,14 +356,15 @@ def plotMap(
             # popup=folium.GeoJsonPopup(fields=["node", "desc", "type","pmax","inflow_ref"]),
             name=gentype,
         ).add_to(m_generators[gentype])
-        genbranch_indices = [
-            i for i in map_generators[map_generators["type"] == gentype].index if i in map_genbranches.index
-        ]
-        folium.GeoJson(
-            map_genbranches.loc[genbranch_indices],
-            style_function=style_genbranch,
-            name=f"{gentype}:connection",
-        ).add_to(m_generators[gentype])
+        if branch_gen.shape[0] > 0:
+            genbranch_indices = [
+                i for i in map_generators[map_generators["type"] == gentype].index if i in map_genbranches.index
+            ]
+            folium.GeoJson(
+                map_genbranches.loc[genbranch_indices],
+                style_function=style_genbranch,
+                name=f"{gentype}:connection",
+            ).add_to(m_generators[gentype])
 
     # Consumers:
     map_consumers = geopandas.GeoDataFrame(

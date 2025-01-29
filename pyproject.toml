@@ -26,9 +26,10 @@ pyomo = "^6.8"
 scipy = "^1.14"
 matplotlib = "^3.9"
 branca = ">=0.5"
-folium = ">=0.12"
+folium = ">=0.19.4"
 cloudpickle = "^3.1"
 networkx = "^3.0"
+geopandas = "^1.0.1"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8"
