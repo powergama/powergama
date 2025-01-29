@@ -12,3 +12,4 @@ powergama/examples/powergim_doggerbank/.ipynb_checkpoints/
 lpsolver_log.txt
 poetry.lock
 tests/tmp_files/*
+.coverage
