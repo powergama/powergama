@@ -30,6 +30,7 @@ def plotMap(
     spread_nodes_r=None,
     layer_control=True,
     fit_bound=True,
+    scale_radius=1,
     **kwargs,
 ):
     """
@@ -129,8 +130,8 @@ def plotMap(
 
     if pg_res is not None:
         node_fields.append("nodalprice")
-        nodalprices = pg_res.getAverageNodalPrices(timeMaxMin)
-        node["nodalprice"] = nodalprices
+        node["nodalprice"] = pg_res.getAverageNodalPrices(timeMaxMin)
+        node["loadshedding"] = pg_res.getLoadsheddingPerNode(average=True)
 
         branch_sensitivity = pg_res.getAverageBranchSensitivity(timeMaxMin)
         branch_utilisation = pg_res.getAverageUtilisation(timeMaxMin)
@@ -166,6 +167,13 @@ def plotMap(
             filter_node = [node[node_value_col].min(), node[node_value_col].max()]
         cm_node = branca.colormap.LinearColormap(["green", "yellow", "red"], vmin=filter_node[0], vmax=filter_node[1])
         cm_node.caption = "Nodal price"
+        m.add_child(cm_node)
+    elif nodetype == "loadshedding":
+        node_value_col = "loadshedding"
+        if filter_node is None:
+            filter_node = [node[node_value_col].min(), node[node_value_col].max()]
+        cm_node = branca.colormap.LinearColormap(["green", "yellow", "red"], vmin=filter_node[0], vmax=filter_node[1])
+        cm_node.caption = "Load shedding"
         m.add_child(cm_node)
     elif nodetype == "area":
         node_value_col = "area_ind"
@@ -258,7 +266,9 @@ def plotMap(
         style = {
             "color": "green",
             # "fillColor": "green",
-            "radius": np.clip(feature["properties"]["pmax"] / cap_scale, a_min=radius_min, a_max=radius_max),
+            "radius": np.clip(
+                feature["properties"]["pmax"] / cap_scale * scale_radius, a_min=radius_min, a_max=radius_max
+            ),
         }
         return style
 
@@ -270,7 +280,11 @@ def plotMap(
         return style
 
     def style_consumers(feature):
-        style = {"radius": np.clip(feature["properties"]["demand_avg"] / cap_scale, a_min=radius_min, a_max=radius_max)}
+        style = {
+            "radius": np.clip(
+                feature["properties"]["demand_avg"] / cap_scale * scale_radius, a_min=radius_min, a_max=radius_max
+            )
+        }
         return style
 
     # Nodes:
@@ -383,6 +397,12 @@ def plotMap(
         ne = node[["lat", "lon"]].max().values.tolist()
         m.fit_bounds([sw, ne])
     if layer_control:
+        branch_children = [
+            {"label": "AC", "layer": m_acbranches},
+            {"label": "DC", "layer": m_dcbranches},
+        ]
+        if pg_res:
+            branch_children.append({"label": "flow markers", "layer": m_flowmarker})
         overlay_tree = {
             "label": "powergama",
             "select_all_checkbox": True,
@@ -391,11 +411,7 @@ def plotMap(
                 {
                     "label": "Branches",
                     "select_all_checkbox": True,
-                    "children": [
-                        {"label": "AC", "layer": m_acbranches},
-                        {"label": "DC", "layer": m_dcbranches},
-                        {"label": "flow markers", "layer": m_flowmarker},
-                    ],
+                    "children": branch_children,
                 },
                 {"label": "Consumers", "layer": m_consumers},
                 {
@@ -405,6 +421,7 @@ def plotMap(
                 },
             ],
         }
+
         TreeLayerControl(overlay_tree=overlay_tree).add_to(m)
 
     # TODO: This does not seem to work with GeoJson data markers

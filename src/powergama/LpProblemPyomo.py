@@ -25,6 +25,7 @@ import numpy as np
 import pandas as pd
 import pyomo.environ as pyo
 import pyomo.opt
+from tqdm.auto import tqdm
 
 from . import constants as const
 
@@ -373,7 +374,7 @@ class LpProblem(pyo.ConcreteModel):
         self._idx_generatorsWithStorage = grid.getIdxGeneratorsWithStorage()
         self._idx_consumersWithFlexLoad = grid.getIdxConsumersWithFlexibleLoad()
         self._idx_branchesWithConstraints = grid.getIdxBranchesWithFlowConstraints()
-        self._fancy_progressbar = False
+        # self._fancy_progressbar = False
 
         # Initial values of marginal costs, storage and storage values
         self._storage = (grid.generator["storage_ini"] * grid.generator["storage_cap"]).fillna(0)
@@ -816,10 +817,11 @@ class LpProblem(pyo.ConcreteModel):
             # power losses can be computed.
 
         print("Solving...")
-        numTimesteps = len(self._get_timesteps_to_solve())
+        # numTimesteps = len(self._get_timesteps_to_solve())
         count = 0
         warmstart_now = False
-        for timestep in self._get_timesteps_to_solve():
+        for timestep in tqdm(self._get_timesteps_to_solve()):
+            # for timestep in self._get_timesteps_to_solve():
             # update LP problem (inflow, storage, profiles)
             self._updateLpProblem(timestep)
             self._updatePowerLosses(aclossmultiplier, dclossmultiplier)
@@ -868,7 +870,7 @@ class LpProblem(pyo.ConcreteModel):
                 except NotImplementedError:
                     raise Exception("t={}: No feasible solution found.".format(timestep))
 
-            self._update_progress(timestep, numTimesteps)
+            # self._update_progress(timestep, numTimesteps)
 
             # store results and update storage levels
             self._storeResultsAndUpdateStorage(timestep, results)

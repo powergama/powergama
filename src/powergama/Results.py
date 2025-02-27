@@ -337,19 +337,19 @@ class Results(ResultsBaseClass):
         loadshed = np.asarray(loadshed, dtype=float)
         return loadshed
 
-    def getLoadsheddingPerNode(self, timeMaxMin=None):
+    def getLoadsheddingPerNode(self, timeMaxMin=None, average=False):
         """get loadshedding sum per node"""
         timeMaxMin = [self.timerange[0], self.timerange[-1] + 1]
 
-        loadshed_per_node = self.db.getResultLoadheddingSum(timeMaxMin)
+        loadshed_per_node = self.db.getResultLoadheddingSum(timeMaxMin, average=average)
         return loadshed_per_node
 
-    def getLoadheddingSums(self, timeMaxMin=None):
+    def getLoadheddingSums(self, timeMaxMin=None, average=False):
         """get loadshedding sum per area"""
         if timeMaxMin is None:
             timeMaxMin = [self.timerange[0], self.timerange[-1] + 1]
 
-        loadshed_per_node = self.db.getResultLoadheddingSum(timeMaxMin)
+        loadshed_per_node = self.db.getResultLoadheddingSum(timeMaxMin, average=average)
         areas = self.grid.node.area
         allareas = self.grid.getAllAreas()
         loadshed_sum = dict()
