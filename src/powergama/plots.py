@@ -59,6 +59,10 @@ def plotMap(
     spread_nodes_r : float (degrees)
         radius (degrees) of circle on which overlapping nodes are
         spread (use eg 0.04)
+    fit_bound : boolean
+        whether to adjust bounds to fit the grid
+    scale_radius : float
+        scaling factor to adjust size of loads and generators
     kwargs : arguments passed on to folium.Map(...)
     """
 
@@ -267,7 +271,7 @@ def plotMap(
             "color": "green",
             # "fillColor": "green",
             "radius": np.clip(
-                feature["properties"]["pmax"] / cap_scale * scale_radius, a_min=radius_min, a_max=radius_max
+                np.sqrt(feature["properties"]["pmax"] / cap_scale) * scale_radius, a_min=radius_min, a_max=radius_max
             ),
         }
         return style
@@ -282,7 +286,9 @@ def plotMap(
     def style_consumers(feature):
         style = {
             "radius": np.clip(
-                feature["properties"]["demand_avg"] / cap_scale * scale_radius, a_min=radius_min, a_max=radius_max
+                np.sqrt(feature["properties"]["demand_avg"] / cap_scale) * scale_radius,
+                a_min=radius_min,
+                a_max=radius_max,
             )
         }
         return style

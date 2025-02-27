@@ -1006,19 +1006,23 @@ class Database(DatabaseBaseClass):
     def getResultLoadheddingSum(self, timeMaxMin, average=False):
         """Sum of loadshedding timeseries per node"""
         if average:
-            func = "AVG"
+            query = (
+                "SELECT indx,AVG(loadshed) FROM Res_Nodes "
+                " WHERE timestep>=? AND timestep<?"
+                " GROUP BY indx"
+                " ORDER BY indx"
+            )
         else:
-            func = "SUM"
+            query = (
+                "SELECT indx,SUM(loadshed) FROM Res_Nodes "
+                " WHERE timestep>=? AND timestep<?"
+                " GROUP BY indx"
+                " ORDER BY indx"
+            )
         con = db.connect(self.filename)
         with con:
             cur = con.cursor()
-            cur.execute(
-                "SELECT indx,?(loadshed) FROM Res_Nodes "
-                " WHERE timestep>=? AND timestep<?"
-                " GROUP BY indx"
-                " ORDER BY indx",
-                (func, timeMaxMin[0], timeMaxMin[-1]),
-            )
+            cur.execute(query, (timeMaxMin[0], timeMaxMin[-1]))
             rows = cur.fetchall()
             values = [row[1] for row in rows]
         return values
