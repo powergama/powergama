@@ -44,7 +44,7 @@ def plotMap(
         powergama results object
     filename : str
         name of output file (html)
-    nodetype : str ('nodalprice','area') or None (default)
+    nodetype : str ('nodalprice','loadshedding','area') or None (default)
         how to colour nodes
     branchtype : str ('utilisation','sensitivity','flow','capacity','type') or None (default)
         how to colour branches

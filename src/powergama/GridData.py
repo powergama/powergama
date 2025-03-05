@@ -688,6 +688,20 @@ class GridData(object):
                     generators[areaName] = [pumpIdx]
         return generators
 
+    def getGeneratorAvailablePower(self, gen_index, timestep=None):
+        """Available power for generator, considering variable inflow
+
+        If timestep is None, then return for entire profile
+        """
+        inflow_factor = self.generator.loc[gen_index, "inflow_fac"]
+        capacity = self.generator.loc[gen_index, "pmax"]
+        inflow_profile = self.generator.loc[gen_index, "inflow_ref"]
+        if timestep is None:
+            P_inflow = capacity * inflow_factor * self.profiles.loc[:, inflow_profile]
+        else:
+            P_inflow = capacity * inflow_factor * self.profiles.loc[timestep, inflow_profile]
+        return P_inflow
+
     def getBranchAreas(self):
         br_witharea = pd.DataFrame()
         br_witharea["area_from"] = self.branch.merge(

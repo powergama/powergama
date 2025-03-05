@@ -208,6 +208,15 @@ class Results(ResultsBaseClass):
         generated results
     """
 
+    def get_last_timestep_in_results(self):
+        """Get last timestep for which results are stored."""
+        time_last = None
+        timerange = self.db.getTimerange()
+        if timerange:
+            # list is non-empty, get the last value:
+            time_last = timerange[-1]
+        return time_last
+
     def getAverageBranchFlows(self, timeMaxMin=None, branchtype="ac"):
         """
         Average flow on branches over a given time period

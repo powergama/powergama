@@ -25,6 +25,7 @@ import numpy as np
 import pandas as pd
 import pyomo.environ as pyo
 import pyomo.opt
+from pyomo.contrib import appsi
 from tqdm.auto import tqdm
 
 from . import constants as const
@@ -413,9 +414,15 @@ class LpProblem(pyo.ConcreteModel):
         self._create_constraint_powerbalance(grid)
         self._create_constraint_powerflow_equation(grid)
 
-    def _get_timesteps_to_solve(self):
+    def _get_timesteps_to_solve(self, continue_from_last=False, results=None):
         numTimesteps = len(self._grid.timerange)
-        return range(numTimesteps)
+        time_steps = range(numTimesteps)
+        if continue_from_last:
+            timestep_last = results.get_last_timestep_in_results()
+            # first step is last plus one
+            time_steps = range(timestep_last + 1, numTimesteps)
+            print(f"Continue from timestep {timestep_last}.")
+        return time_steps
 
     def _relax_and_retry(self, opt, warmstart, count, solve_args):
         raise NotImplementedError
@@ -434,10 +441,11 @@ class LpProblem(pyo.ConcreteModel):
         P_max = self._grid.generator["pmax"]
         P_min = self._grid.generator["pmin"]
         for i in self.s_gen:
-            inflow_factor = self._grid.generator.loc[i, "inflow_fac"]
-            capacity = self._grid.generator.loc[i, "pmax"]
-            inflow_profile = self._grid.generator.loc[i, "inflow_ref"]
-            P_inflow = capacity * inflow_factor * self._grid.profiles.loc[timestep, inflow_profile]
+            # inflow_factor = self._grid.generator.loc[i, "inflow_fac"]
+            # capacity = self._grid.generator.loc[i, "pmax"]
+            # inflow_profile = self._grid.generator.loc[i, "inflow_ref"]
+            # P_inflow = capacity * inflow_factor * self._grid.profiles.loc[timestep, inflow_profile]
+            P_inflow = self._grid.getGeneratorAvailablePower(i, timestep)
             if i not in self._idx_generatorsWithStorage:
                 """
                 Don't let P_max limit the output (e.g. solar PV)
@@ -728,6 +736,7 @@ class LpProblem(pyo.ConcreteModel):
         aclossmultiplier=1,
         dclossmultiplier=1,
         solve_args=None,
+        continue_from_last=False,
     ):
         """
         Solve LP problem for each time step in the time range
@@ -754,6 +763,9 @@ class LpProblem(pyo.ConcreteModel):
             Name of log file for LP solver. Will keep only last iteration
         solve_args : dict
             Arguments passed on to pyomo.solve(...) in each iteration
+        continue_from_last : bool
+            Whether to continue from last saved result (useful if simulation
+            was interrupted)
 
         Returns
         -------
@@ -788,7 +800,8 @@ class LpProblem(pyo.ConcreteModel):
                 solve_args.pop("symbolic_solver_labels")
             opt.set_instance(self, symbolic_solver_labels=symbolic_solver_labels)
         elif solver == "appsi_highs":
-            opt = pyo.SolverFactory(solver)
+            # opt = pyo.SolverFactory(solver)
+            opt = appsi.solvers.Highs()
             if opt.available():
                 print(":) Found solver")
             else:
@@ -807,7 +820,8 @@ class LpProblem(pyo.ConcreteModel):
                 raise Exception("Could not find LP solver {}".format(solver))
 
         # Enable access to dual values
-        self.dual = pyo.Suffix(direction=pyo.Suffix.IMPORT)
+        if not isinstance(opt, appsi.solvers.highs.Highs):
+            self.dual = pyo.Suffix(direction=pyo.Suffix.IMPORT)
 
         if self._lossmethod == 2:
             print("Computing losses in first timestep")
@@ -817,11 +831,10 @@ class LpProblem(pyo.ConcreteModel):
             # power losses can be computed.
 
         print("Solving...")
-        # numTimesteps = len(self._get_timesteps_to_solve())
         count = 0
         warmstart_now = False
-        for timestep in tqdm(self._get_timesteps_to_solve()):
-            # for timestep in self._get_timesteps_to_solve():
+        timesteps_to_solve = self._get_timesteps_to_solve(continue_from_last=continue_from_last, results=results)
+        for timestep in tqdm(timesteps_to_solve):
             # update LP problem (inflow, storage, profiles)
             self._updateLpProblem(timestep)
             self._updatePowerLosses(aclossmultiplier, dclossmultiplier)
@@ -834,17 +847,26 @@ class LpProblem(pyo.ConcreteModel):
                 self.write("LPproblem_{}.mps".format(timestep), io_options={"symbolic_solver_labels": True})
                 # self.concretemodel.write("LPproblem_{}.nl".format(timestep))
 
-            if warmstart and opt.warm_start_capable():
-                # warmstart available (does not work with cbc)
-                if count > 0:
-                    warmstart_now = warmstart
-                count = count + 1
-                res = opt.solve(self, warmstart=warmstart_now, **solve_args)
-            elif not warmstart:
-                # no warmstart option
+            if warmstart:
+                if opt.warm_start_capable():
+                    # warmstart available (does not work with cbc)
+                    if count > 0:
+                        warmstart_now = warmstart
+                    count = count + 1
+                    solve_args["warmstart"] = warmstart_now
+                else:
+                    raise Exception("Solver ({}) is not capable of warm start".format(opt.name))
+
+            try:
                 res = opt.solve(self, **solve_args)
-            else:
-                raise Exception("Solver ({}) is not capable of warm start".format(opt.name))
+            except Exception as ex:
+                # do something ()
+                print(f"SOLVE ERROR at timestep={timestep}. Tries to solve again")
+                try:
+                    res = opt.solve(self, **solve_args)
+                except Exception:
+                    # re-raise exception:
+                    raise ex
 
             # store result for inspection if necessary
             self.solver_res = res
@@ -857,7 +879,11 @@ class LpProblem(pyo.ConcreteModel):
                     )
                 )
 
-            if res.solver.status != pyomo.opt.SolverStatus.ok:
+            if isinstance(res, appsi.solvers.highs.HighsResults):
+                if res.termination_condition != appsi.base.TerminationCondition.optimal:
+                    print("APPSI HIGHS: Non-optimal solution")
+                self.dual = opt.get_duals()
+            elif res.solver.status != pyomo.opt.SolverStatus.ok:
                 warnings.warn("Something went wrong with LP solver: {}".format(res.solver.status))
                 try:
                     self._relax_and_retry(opt, warmstart, count, solve_args)
