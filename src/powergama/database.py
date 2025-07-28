@@ -339,7 +339,7 @@ class Database(DatabaseBaseClass):
         with con:
             cur = con.cursor()
             cur.execute(
-                "SELECT nodalprice FROM Res_Nodes " "WHERE timestep>=? AND timestep<? AND indx=?" " ORDER BY timestep",
+                "SELECT nodalprice FROM Res_Nodes WHERE timestep>=? AND timestep<? AND indx=? ORDER BY timestep",
                 (timeMaxMin[0], timeMaxMin[-1], nodeindx),
             )
             rows = cur.fetchall()
@@ -795,9 +795,7 @@ class Database(DatabaseBaseClass):
         with con:
             cur = con.cursor()
             cur.execute(
-                "SELECT marginalprice FROM Res_Storage "
-                " WHERE timestep>=? AND timestep<? AND indx=?"
-                " ORDER BY timestep",
+                "SELECT marginalprice FROM Res_Storage  WHERE timestep>=? AND timestep<? AND indx=? ORDER BY timestep",
                 (timeMaxMin[0], timeMaxMin[-1], storageindx),
             )
             rows = cur.fetchall()
@@ -897,10 +895,7 @@ class Database(DatabaseBaseClass):
         with con:
             # cur = con.cursor()
             query = (
-                "SELECT indx,SUM(?) FROM Res_Pumping "
-                " WHERE timestep>=? AND timestep<?"
-                " GROUP BY indx"
-                " ORDER BY indx",
+                "SELECT indx,SUM(?) FROM Res_Pumping  WHERE timestep>=? AND timestep<? GROUP BY indx ORDER BY indx",
                 (variable, timeMaxMin[0], timeMaxMin[-1]),
             )
             df = pd.read_sql_query(query, con)
@@ -946,9 +941,7 @@ class Database(DatabaseBaseClass):
             # con.row_factory = db.Row
             cur = con.cursor()
             cur.execute(
-                "SELECT demand FROM Res_FlexibleLoad "
-                " WHERE timestep>=? AND timestep<? AND indx=?"
-                " ORDER BY timestep",
+                "SELECT demand FROM Res_FlexibleLoad  WHERE timestep>=? AND timestep<? AND indx=? ORDER BY timestep",
                 (timeMaxMin[0], timeMaxMin[-1], consumerindx),
             )
             rows = cur.fetchall()
@@ -962,13 +955,21 @@ class Database(DatabaseBaseClass):
             # con.row_factory = db.Row
             cur = con.cursor()
             cur.execute(
-                "SELECT storage FROM Res_FlexibleLoad "
-                " WHERE timestep>=? AND timestep<? AND indx=?"
-                " ORDER BY timestep",
+                "SELECT storage FROM Res_FlexibleLoad  WHERE timestep>=? AND timestep<? AND indx=? ORDER BY timestep",
                 (timeMaxMin[0], timeMaxMin[-1], consumerindx),
             )
             rows = cur.fetchall()
             values = [row[0] for row in rows]
+        return values
+
+    def getResultFlexloadStorageFillingAll(self, timestep):
+        """Get storage filling level for all flexible loads"""
+        con = db.connect(self.filename)
+        with con:
+            cur = con.cursor()
+            cur.execute("SELECT indx,storage FROM Res_FlexibleLoad WHERE timestep=?  ORDER BY indx", (timestep,))
+            rows = cur.fetchall()
+            values = [row[1] for row in rows]
         return values
 
     def getResultFlexloadStorageValue(self, consumerindx, timeMaxMin):
@@ -977,9 +978,7 @@ class Database(DatabaseBaseClass):
         with con:
             cur = con.cursor()
             cur.execute(
-                "SELECT value FROM Res_FlexibleLoad "
-                " WHERE timestep>=? AND timestep<? AND indx=?"
-                " ORDER BY timestep",
+                "SELECT value FROM Res_FlexibleLoad  WHERE timestep>=? AND timestep<? AND indx=? ORDER BY timestep",
                 (timeMaxMin[0], timeMaxMin[-1], consumerindx),
             )
             rows = cur.fetchall()
@@ -1007,17 +1006,11 @@ class Database(DatabaseBaseClass):
         """Sum of loadshedding timeseries per node"""
         if average:
             query = (
-                "SELECT indx,AVG(loadshed) FROM Res_Nodes "
-                " WHERE timestep>=? AND timestep<?"
-                " GROUP BY indx"
-                " ORDER BY indx"
+                "SELECT indx,AVG(loadshed) FROM Res_Nodes  WHERE timestep>=? AND timestep<? GROUP BY indx ORDER BY indx"
             )
         else:
             query = (
-                "SELECT indx,SUM(loadshed) FROM Res_Nodes "
-                " WHERE timestep>=? AND timestep<?"
-                " GROUP BY indx"
-                " ORDER BY indx"
+                "SELECT indx,SUM(loadshed) FROM Res_Nodes  WHERE timestep>=? AND timestep<? GROUP BY indx ORDER BY indx"
             )
         con = db.connect(self.filename)
         with con:
@@ -1036,7 +1029,7 @@ class Database(DatabaseBaseClass):
         with con:
             cur = con.cursor()
             cur.execute(
-                "SELECT indx,SUM(loss) FROM ?" " WHERE timestep>=? AND timestep<?" " GROUP BY timestep",
+                "SELECT indx,SUM(loss) FROM ? WHERE timestep>=? AND timestep<? GROUP BY timestep",
                 (sqlTable, timeMaxMin[0], timeMaxMin[-1]),
             )
             rows = cur.fetchall()

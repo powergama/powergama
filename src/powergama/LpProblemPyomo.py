@@ -52,13 +52,25 @@ class LpProblem(pyo.ConcreteModel):
         # Mutable parameters
         # Quantities that change from timestep to the next:
         self.p_gen_pmin = pyo.Param(
-            self.s_gen, within=pyo.Reals, default=0, mutable=True, initialize=grid_data.generator["pmin"].values
+            self.s_gen,
+            within=pyo.Reals,
+            default=0,
+            mutable=True,
+            initialize=grid_data.generator["pmin"].values,
         )
         self.p_gen_pmax = pyo.Param(
-            self.s_gen, within=pyo.Reals, default=0, mutable=True, initialize=grid_data.generator["pmax"].values
+            self.s_gen,
+            within=pyo.Reals,
+            default=0,
+            mutable=True,
+            initialize=grid_data.generator["pmax"].values,
         )
         self.p_gen_cost = pyo.Param(
-            self.s_gen, within=pyo.Reals, default=0, mutable=True, initialize=grid_data.generator["fuelcost"].values
+            self.s_gen,
+            within=pyo.Reals,
+            default=0,
+            mutable=True,
+            initialize=grid_data.generator["fuelcost"].values,
         )
         self.p_genpump_cost = pyo.Param(self.s_gen, within=pyo.Reals, default=0, mutable=True)
         self.p_demand = pyo.Param(self.s_load, within=pyo.Reals, default=0, mutable=True)
@@ -823,9 +835,21 @@ class LpProblem(pyo.ConcreteModel):
         if not isinstance(opt, appsi.solvers.highs.Highs):
             self.dual = pyo.Suffix(direction=pyo.Suffix.IMPORT)
 
+        timesteps_to_solve = self._get_timesteps_to_solve(continue_from_last=continue_from_last, results=results)
+        if continue_from_last:
+            # TODO update self._storage with value from database (and similar for flex load)
+            # this must be done before updateLpProblem below
+            self._storage.loc[self._idx_generatorsWithStorage] = results.db.getResultStorageFillingAll(
+                timestep=timesteps_to_solve[0]
+            )
+            self._storage_flexload.loc[self._idx_consumersWithFlexLoad] = results.db.getResultFlexloadStorageFillingAll(
+                timestep=timesteps_to_solve[0]
+            )
+            raise NotImplementedError("CHECK THIS FIRST - and add test case")
+
         if self._lossmethod == 2:
             print("Computing losses in first timestep")
-            self._updateLpProblem(timestep=0)
+            self._updateLpProblem(timestep=timesteps_to_solve[0])
             res = opt.solve(self)
             # Now, power flow values are computed for the first timestep, and
             # power losses can be computed.
@@ -833,7 +857,6 @@ class LpProblem(pyo.ConcreteModel):
         print("Solving...")
         count = 0
         warmstart_now = False
-        timesteps_to_solve = self._get_timesteps_to_solve(continue_from_last=continue_from_last, results=results)
         for timestep in tqdm(timesteps_to_solve):
             # update LP problem (inflow, storage, profiles)
             self._updateLpProblem(timestep)
@@ -844,7 +867,10 @@ class LpProblem(pyo.ConcreteModel):
             # solve the LP problem
             if savefiles:
                 # self.concretemodel.pprint('concretemodel_{}.txt'.format(timestep))
-                self.write("LPproblem_{}.mps".format(timestep), io_options={"symbolic_solver_labels": True})
+                self.write(
+                    "LPproblem_{}.mps".format(timestep),
+                    io_options={"symbolic_solver_labels": True},
+                )
                 # self.concretemodel.write("LPproblem_{}.nl".format(timestep))
 
             if warmstart:

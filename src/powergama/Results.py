@@ -56,8 +56,8 @@ class ResultsBaseClass(object):
             # database
             timerange_db = self.db.getTimerange()
             if timerange_db != list(self.timerange):
-                print("Database time range = [%d,%d]\n" % (timerange_db[0], timerange_db[-1]))
-                raise Exception("Database time range mismatch")
+                print(f"OBS: Database time range = [{timerange_db[0],timerange_db[-1]}]\n")
+                # raise Exception("Database time range mismatch")
 
         """
         self.objectiveFunctionValue=[]
@@ -1948,6 +1948,7 @@ class Results(ResultsBaseClass):
             nrows=num_areas,
             ncols=1,
             figsize=((min(max(6, (len(self.grid.timerange) / 100)), 20)), (max(5, 1.5 * len(areas)))),
+            sharex=True,
         )
 
         for n in range(num_areas):
@@ -1959,7 +1960,7 @@ class Results(ResultsBaseClass):
         cbar_ax = fig.add_axes([0.92, 0.15, 0.02, 0.7])
         # fig.colorbar(im,cax=cbar_ax)
         plt.colorbar(cax=cbar_ax)
-        plt.show()
+        # plt.show()
 
     def plotRelativeLoadDistribution(
         self, show_node_labels=False, latlon=None, dotsize=40, draw_par_mer=False, colours=True, showTitle=True
