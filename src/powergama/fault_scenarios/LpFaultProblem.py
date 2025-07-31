@@ -45,7 +45,7 @@ class LpFaultProblem(powergama.LpProblem):
         else:
             return self._timesteps
 
-    def _get_timesteps_to_solve(self, continue_from_last=False):
+    def _get_timesteps_to_solve(self, continue_from_last=False, results=None):
         if continue_from_last:
             raise ValueError("continue from last is not allowed with fault scenario simulation")
         starting_timesteps = self._starting_timesteps_to_solve()
