@@ -17,7 +17,6 @@ Module containing PowerGAMA LpProblem class
            A = Mx(N-1) node-branch incidence (adjacency) matrix
 """
 
-import sys
 import warnings
 
 import networkx as nx
@@ -922,39 +921,13 @@ class LpProblem(pyo.ConcreteModel):
                 except NotImplementedError:
                     raise Exception("t={}: No feasible solution found.".format(timestep))
 
-            # self._update_progress(timestep, numTimesteps)
+            # This call is required for fault scenario simulation. Does nothing here.
+            self._update_progress(timestep, len(timesteps_to_solve))
 
             # store results and update storage levels
             self._storeResultsAndUpdateStorage(timestep, results)
 
         return results
 
-    def _update_progress(self, n, maxn):
-        if self._fancy_progressbar:
-            barLength = 20
-            progress = float(n + 1) / maxn
-            block = int(round(barLength * progress))
-            text = "\rProgress: [{0}] {1} ({2}%)  ".format(
-                "=" * block + " " * (barLength - block), n, int(progress * 100)
-            )
-            sys.stdout.write(text)
-            sys.stdout.flush()
-        else:
-            if int(100 * (n + 1) / maxn) > int(100 * n / maxn):
-                sys.stdout.write("%d%% " % (int(100 * (n + 1) / maxn)))
-                sys.stdout.flush()
-
-    def setProgressBar(self, value):
-        """Specify how to show simulation progress
-
-        Parameters
-        ----------
-        value : string
-            'fancy' or 'default'
-        """
-        if value == "fancy":
-            self._fancy_progressbar = True
-        elif value == "default":
-            self._fancy_progressbar = False
-        else:
-            raise Exception('Progress bar bust be either "default" or "fancy"')
+    def _update_progress(self, n=None, maxn=None):
+        return
