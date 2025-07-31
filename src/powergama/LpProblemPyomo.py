@@ -17,7 +17,6 @@ Module containing PowerGAMA LpProblem class
            A = Mx(N-1) node-branch incidence (adjacency) matrix
 """
 
-import sys
 import warnings
 
 import networkx as nx
@@ -25,6 +24,8 @@ import numpy as np
 import pandas as pd
 import pyomo.environ as pyo
 import pyomo.opt
+from pyomo.contrib import appsi
+from tqdm.auto import tqdm
 
 from . import constants as const
 
@@ -50,13 +51,25 @@ class LpProblem(pyo.ConcreteModel):
         # Mutable parameters
         # Quantities that change from timestep to the next:
         self.p_gen_pmin = pyo.Param(
-            self.s_gen, within=pyo.Reals, default=0, mutable=True, initialize=grid_data.generator["pmin"].values
+            self.s_gen,
+            within=pyo.Reals,
+            default=0,
+            mutable=True,
+            initialize=grid_data.generator["pmin"].values,
         )
         self.p_gen_pmax = pyo.Param(
-            self.s_gen, within=pyo.Reals, default=0, mutable=True, initialize=grid_data.generator["pmax"].values
+            self.s_gen,
+            within=pyo.Reals,
+            default=0,
+            mutable=True,
+            initialize=grid_data.generator["pmax"].values,
         )
         self.p_gen_cost = pyo.Param(
-            self.s_gen, within=pyo.Reals, default=0, mutable=True, initialize=grid_data.generator["fuelcost"].values
+            self.s_gen,
+            within=pyo.Reals,
+            default=0,
+            mutable=True,
+            initialize=grid_data.generator["fuelcost"].values,
         )
         self.p_genpump_cost = pyo.Param(self.s_gen, within=pyo.Reals, default=0, mutable=True)
         self.p_demand = pyo.Param(self.s_load, within=pyo.Reals, default=0, mutable=True)
@@ -373,7 +386,7 @@ class LpProblem(pyo.ConcreteModel):
         self._idx_generatorsWithStorage = grid.getIdxGeneratorsWithStorage()
         self._idx_consumersWithFlexLoad = grid.getIdxConsumersWithFlexibleLoad()
         self._idx_branchesWithConstraints = grid.getIdxBranchesWithFlowConstraints()
-        self._fancy_progressbar = False
+        # self._fancy_progressbar = False
 
         # Initial values of marginal costs, storage and storage values
         self._storage = (grid.generator["storage_ini"] * grid.generator["storage_cap"]).fillna(0)
@@ -412,9 +425,15 @@ class LpProblem(pyo.ConcreteModel):
         self._create_constraint_powerbalance(grid)
         self._create_constraint_powerflow_equation(grid)
 
-    def _get_timesteps_to_solve(self):
+    def _get_timesteps_to_solve(self, continue_from_last=False, results=None):
         numTimesteps = len(self._grid.timerange)
-        return range(numTimesteps)
+        time_steps = range(numTimesteps)
+        if continue_from_last:
+            timestep_last = results.get_last_timestep_in_results()
+            # first step is last plus one
+            time_steps = range(timestep_last + 1, numTimesteps)
+            print(f"Continue from timestep {timestep_last}.")
+        return time_steps
 
     def _relax_and_retry(self, opt, warmstart, count, solve_args):
         raise NotImplementedError
@@ -433,10 +452,11 @@ class LpProblem(pyo.ConcreteModel):
         P_max = self._grid.generator["pmax"]
         P_min = self._grid.generator["pmin"]
         for i in self.s_gen:
-            inflow_factor = self._grid.generator.loc[i, "inflow_fac"]
-            capacity = self._grid.generator.loc[i, "pmax"]
-            inflow_profile = self._grid.generator.loc[i, "inflow_ref"]
-            P_inflow = capacity * inflow_factor * self._grid.profiles.loc[timestep, inflow_profile]
+            # inflow_factor = self._grid.generator.loc[i, "inflow_fac"]
+            # capacity = self._grid.generator.loc[i, "pmax"]
+            # inflow_profile = self._grid.generator.loc[i, "inflow_ref"]
+            # P_inflow = capacity * inflow_factor * self._grid.profiles.loc[timestep, inflow_profile]
+            P_inflow = self._grid.getGeneratorAvailablePower(i, timestep)
             if i not in self._idx_generatorsWithStorage:
                 """
                 Don't let P_max limit the output (e.g. solar PV)
@@ -727,6 +747,7 @@ class LpProblem(pyo.ConcreteModel):
         aclossmultiplier=1,
         dclossmultiplier=1,
         solve_args=None,
+        continue_from_last=False,
     ):
         """
         Solve LP problem for each time step in the time range
@@ -753,6 +774,9 @@ class LpProblem(pyo.ConcreteModel):
             Name of log file for LP solver. Will keep only last iteration
         solve_args : dict
             Arguments passed on to pyomo.solve(...) in each iteration
+        continue_from_last : bool
+            Whether to continue from last saved result (useful if simulation
+            was interrupted)
 
         Returns
         -------
@@ -787,7 +811,8 @@ class LpProblem(pyo.ConcreteModel):
                 solve_args.pop("symbolic_solver_labels")
             opt.set_instance(self, symbolic_solver_labels=symbolic_solver_labels)
         elif solver == "appsi_highs":
-            opt = pyo.SolverFactory(solver)
+            # opt = pyo.SolverFactory(solver)
+            opt = appsi.solvers.Highs()
             if opt.available():
                 print(":) Found solver")
             else:
@@ -806,20 +831,32 @@ class LpProblem(pyo.ConcreteModel):
                 raise Exception("Could not find LP solver {}".format(solver))
 
         # Enable access to dual values
-        self.dual = pyo.Suffix(direction=pyo.Suffix.IMPORT)
+        if not isinstance(opt, appsi.solvers.highs.Highs):
+            self.dual = pyo.Suffix(direction=pyo.Suffix.IMPORT)
+
+        timesteps_to_solve = self._get_timesteps_to_solve(continue_from_last=continue_from_last, results=results)
+        if continue_from_last:
+            # TODO update self._storage with value from database (and similar for flex load)
+            # this must be done before updateLpProblem below
+            self._storage.loc[self._idx_generatorsWithStorage] = results.db.getResultStorageFillingAll(
+                timestep=timesteps_to_solve[0]
+            )
+            self._storage_flexload.loc[self._idx_consumersWithFlexLoad] = results.db.getResultFlexloadStorageFillingAll(
+                timestep=timesteps_to_solve[0]
+            )
+            raise NotImplementedError("CHECK THIS FIRST - and add test case")
 
         if self._lossmethod == 2:
             print("Computing losses in first timestep")
-            self._updateLpProblem(timestep=0)
+            self._updateLpProblem(timestep=timesteps_to_solve[0])
             res = opt.solve(self)
             # Now, power flow values are computed for the first timestep, and
             # power losses can be computed.
 
         print("Solving...")
-        numTimesteps = len(self._get_timesteps_to_solve())
         count = 0
         warmstart_now = False
-        for timestep in self._get_timesteps_to_solve():
+        for timestep in tqdm(timesteps_to_solve):
             # update LP problem (inflow, storage, profiles)
             self._updateLpProblem(timestep)
             self._updatePowerLosses(aclossmultiplier, dclossmultiplier)
@@ -829,20 +866,32 @@ class LpProblem(pyo.ConcreteModel):
             # solve the LP problem
             if savefiles:
                 # self.concretemodel.pprint('concretemodel_{}.txt'.format(timestep))
-                self.write("LPproblem_{}.mps".format(timestep), io_options={"symbolic_solver_labels": True})
+                self.write(
+                    "LPproblem_{}.mps".format(timestep),
+                    io_options={"symbolic_solver_labels": True},
+                )
                 # self.concretemodel.write("LPproblem_{}.nl".format(timestep))
 
-            if warmstart and opt.warm_start_capable():
-                # warmstart available (does not work with cbc)
-                if count > 0:
-                    warmstart_now = warmstart
-                count = count + 1
-                res = opt.solve(self, warmstart=warmstart_now, **solve_args)
-            elif not warmstart:
-                # no warmstart option
+            if warmstart:
+                if opt.warm_start_capable():
+                    # warmstart available (does not work with cbc)
+                    if count > 0:
+                        warmstart_now = warmstart
+                    count = count + 1
+                    solve_args["warmstart"] = warmstart_now
+                else:
+                    raise Exception("Solver ({}) is not capable of warm start".format(opt.name))
+
+            try:
                 res = opt.solve(self, **solve_args)
-            else:
-                raise Exception("Solver ({}) is not capable of warm start".format(opt.name))
+            except Exception as ex:
+                # do something ()
+                print(f"SOLVE ERROR at timestep={timestep}. Tries to solve again")
+                try:
+                    res = opt.solve(self, **solve_args)
+                except Exception:
+                    # re-raise exception:
+                    raise ex
 
             # store result for inspection if necessary
             self.solver_res = res
@@ -855,7 +904,11 @@ class LpProblem(pyo.ConcreteModel):
                     )
                 )
 
-            if res.solver.status != pyomo.opt.SolverStatus.ok:
+            if isinstance(res, appsi.solvers.highs.HighsResults):
+                if res.termination_condition != appsi.base.TerminationCondition.optimal:
+                    print("APPSI HIGHS: Non-optimal solution")
+                self.dual = opt.get_duals()
+            elif res.solver.status != pyomo.opt.SolverStatus.ok:
                 warnings.warn("Something went wrong with LP solver: {}".format(res.solver.status))
                 try:
                     self._relax_and_retry(opt, warmstart, count, solve_args)
@@ -868,39 +921,13 @@ class LpProblem(pyo.ConcreteModel):
                 except NotImplementedError:
                     raise Exception("t={}: No feasible solution found.".format(timestep))
 
-            self._update_progress(timestep, numTimesteps)
+            # This call is required for fault scenario simulation. Does nothing here.
+            self._update_progress(timestep, len(timesteps_to_solve))
 
             # store results and update storage levels
             self._storeResultsAndUpdateStorage(timestep, results)
 
         return results
 
-    def _update_progress(self, n, maxn):
-        if self._fancy_progressbar:
-            barLength = 20
-            progress = float(n + 1) / maxn
-            block = int(round(barLength * progress))
-            text = "\rProgress: [{0}] {1} ({2}%)  ".format(
-                "=" * block + " " * (barLength - block), n, int(progress * 100)
-            )
-            sys.stdout.write(text)
-            sys.stdout.flush()
-        else:
-            if int(100 * (n + 1) / maxn) > int(100 * n / maxn):
-                sys.stdout.write("%d%% " % (int(100 * (n + 1) / maxn)))
-                sys.stdout.flush()
-
-    def setProgressBar(self, value):
-        """Specify how to show simulation progress
-
-        Parameters
-        ----------
-        value : string
-            'fancy' or 'default'
-        """
-        if value == "fancy":
-            self._fancy_progressbar = True
-        elif value == "default":
-            self._fancy_progressbar = False
-        else:
-            raise Exception('Progress bar bust be either "default" or "fancy"')
+    def _update_progress(self, n=None, maxn=None):
+        return

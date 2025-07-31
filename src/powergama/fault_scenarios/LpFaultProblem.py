@@ -45,7 +45,9 @@ class LpFaultProblem(powergama.LpProblem):
         else:
             return self._timesteps
 
-    def _get_timesteps_to_solve(self):
+    def _get_timesteps_to_solve(self, continue_from_last=False, results=None):
+        if continue_from_last:
+            raise ValueError("continue from last is not allowed with fault scenario simulation")
         starting_timesteps = self._starting_timesteps_to_solve()
         max_ts = self._grid.timerange[-1] + 1
         return [st + delay for st in starting_timesteps for delay in range(self._fault_duration) if st + delay < max_ts]
@@ -81,7 +83,6 @@ class LpFaultProblem(powergama.LpProblem):
         super()._updateLpProblem(timestep)
 
     def _update_progress(self, cur_step, num_steps):
-
         self._dur_counter += 1
         self._prev_ts = cur_step
         self._counter += 1

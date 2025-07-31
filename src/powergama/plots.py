@@ -30,6 +30,8 @@ def plotMap(
     spread_nodes_r=None,
     layer_control=True,
     fit_bound=True,
+    scale_radius=1,
+    res_types=None,
     **kwargs,
 ):
     """
@@ -43,7 +45,7 @@ def plotMap(
         powergama results object
     filename : str
         name of output file (html)
-    nodetype : str ('nodalprice','area') or None (default)
+    nodetype : str ('nodalprice','loadshedding','area','curtailed_res') or None (default)
         how to colour nodes
     branchtype : str ('utilisation','sensitivity','flow','capacity','type') or None (default)
         how to colour branches
@@ -58,8 +60,19 @@ def plotMap(
     spread_nodes_r : float (degrees)
         radius (degrees) of circle on which overlapping nodes are
         spread (use eg 0.04)
+    fit_bound : boolean
+        whether to adjust bounds to fit the grid
+    scale_radius : float
+        scaling factor to adjust size of loads and generators
+    res_types : list or None
+        list of generator types considered RES
     kwargs : arguments passed on to folium.Map(...)
     """
+
+    if nodetype not in [None, "area", "type", "nodalprice", "loadshedding", "curtailed_res"]:
+        raise ValueError(f"Unknown nodetype: {nodetype}")
+    if branchtype not in [None, "type", "capacity", "flow", "utilisation", "sensitivity"]:
+        raise ValueError(f"Unknown branchtype: {branchtype}")
 
     cmSet1 = branca.colormap.linear.Set1_03
 
@@ -129,8 +142,30 @@ def plotMap(
 
     if pg_res is not None:
         node_fields.append("nodalprice")
-        nodalprices = pg_res.getAverageNodalPrices(timeMaxMin)
-        node["nodalprice"] = nodalprices
+        node["nodalprice"] = pg_res.getAverageNodalPrices(timeMaxMin)
+        node["loadshedding"] = pg_res.getLoadsheddingPerNode(average=True)
+        node_fields.append("loadshedding")
+        if nodetype == "curtailed_res":
+            if res_types is None:
+                raise ValueError("You must specify parameter 'res_types'")
+            df_spill = pd.DataFrame()
+            df_spill["node"] = pg_data.generator["node"]
+            df_spill["type"] = pg_data.generator["type"]
+            df_spill["curtailed_abs"] = pg_res.db.getResultGeneratorSpilledSums(timeMaxMin)
+            df_spill["output"] = pg_res.db.getResultGeneratorPowerSum(timeMaxMin)
+            # TODO replace hardcoded generator type by something better. This will nto always work:
+            df_spill = df_spill[df_spill["type"].isin(res_types)].groupby("node").sum()
+            df_spill["curtailed"] = df_spill["curtailed_abs"] / (df_spill["curtailed_abs"] + df_spill["output"])
+            df_spill = pg_data.node.merge(df_spill, left_on="id", right_index=True, how="left")
+
+            # gen_spilled = pg_res.db.getResultGeneratorSpilledSums(timeMaxMin)
+            # gen_output = pg_res.db.getResultGeneratorPowerSum(timeMaxMin)
+            # df_spill = pd.DataFrame(index=pg_data.generator["node"], data={"curtailed_abs":gen_spilled,"output":gen_output})
+            # df_spill = df_spill.groupby("node").sum()
+            # df_spill["curtailed"] = df_spill["curtailed_abs"]/(df_spill["curtailed_abs"]+df_spill["output"])
+            # df_spill = pg_data.node.merge(df_spill,left_on="id",right_index=True,how="left")
+            node["curtailed_res"] = df_spill["curtailed"].fillna(0)
+            node_fields.append("curtailed_res")
 
         branch_sensitivity = pg_res.getAverageBranchSensitivity(timeMaxMin)
         branch_utilisation = pg_res.getAverageUtilisation(timeMaxMin)
@@ -158,14 +193,15 @@ def plotMap(
     m = folium.Map(location=[node["lat"].median(), node["lon"].median()], **kwargs)
 
     # Node colouring
+    node_cbar_caption = {"nodalprice": "Nodal price", "loadshedding": "Load shedding", "curtailed_res": "Curtailed RES"}
     if nodetype is None:
         pass
-    elif nodetype == "nodalprice":
-        node_value_col = "nodalprice"
+    elif nodetype in ["nodalprice", "loadshedding", "curtailed_res"]:
+        node_value_col = nodetype
         if filter_node is None:
             filter_node = [node[node_value_col].min(), node[node_value_col].max()]
         cm_node = branca.colormap.LinearColormap(["green", "yellow", "red"], vmin=filter_node[0], vmax=filter_node[1])
-        cm_node.caption = "Nodal price"
+        cm_node.caption = node_cbar_caption[nodetype]
         m.add_child(cm_node)
     elif nodetype == "area":
         node_value_col = "area_ind"
@@ -173,6 +209,8 @@ def plotMap(
         cm_node = cmSet1.scale(0, val_max).to_step(10)
     elif nodetype == "type":
         pass
+    else:
+        raise ValueError(f"Unknown nodetype parameter: {nodetype}")
 
     # Branch colouring
     if branchtype is None:
@@ -258,7 +296,9 @@ def plotMap(
         style = {
             "color": "green",
             # "fillColor": "green",
-            "radius": np.clip(feature["properties"]["pmax"] / cap_scale, a_min=radius_min, a_max=radius_max),
+            "radius": np.clip(
+                np.sqrt(feature["properties"]["pmax"] / cap_scale) * scale_radius, a_min=radius_min, a_max=radius_max
+            ),
         }
         return style
 
@@ -270,7 +310,13 @@ def plotMap(
         return style
 
     def style_consumers(feature):
-        style = {"radius": np.clip(feature["properties"]["demand_avg"] / cap_scale, a_min=radius_min, a_max=radius_max)}
+        style = {
+            "radius": np.clip(
+                np.sqrt(feature["properties"]["demand_avg"] / cap_scale) * scale_radius,
+                a_min=radius_min,
+                a_max=radius_max,
+            )
+        }
         return style
 
     # Nodes:
@@ -383,6 +429,12 @@ def plotMap(
         ne = node[["lat", "lon"]].max().values.tolist()
         m.fit_bounds([sw, ne])
     if layer_control:
+        branch_children = [
+            {"label": "AC", "layer": m_acbranches},
+            {"label": "DC", "layer": m_dcbranches},
+        ]
+        if pg_res:
+            branch_children.append({"label": "flow markers", "layer": m_flowmarker})
         overlay_tree = {
             "label": "powergama",
             "select_all_checkbox": True,
@@ -391,11 +443,7 @@ def plotMap(
                 {
                     "label": "Branches",
                     "select_all_checkbox": True,
-                    "children": [
-                        {"label": "AC", "layer": m_acbranches},
-                        {"label": "DC", "layer": m_dcbranches},
-                        {"label": "flow markers", "layer": m_flowmarker},
-                    ],
+                    "children": branch_children,
                 },
                 {"label": "Consumers", "layer": m_consumers},
                 {
@@ -405,6 +453,7 @@ def plotMap(
                 },
             ],
         }
+
         TreeLayerControl(overlay_tree=overlay_tree).add_to(m)
 
     # TODO: This does not seem to work with GeoJson data markers

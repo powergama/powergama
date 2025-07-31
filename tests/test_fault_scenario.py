@@ -1,6 +1,7 @@
 """
 A set of tests for fault scenario analysis.
 """
+
 import copy
 import pathlib
 

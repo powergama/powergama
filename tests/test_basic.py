@@ -65,7 +65,7 @@ def test_plots(testcase_9bus_data, testcase_9bus_res):
     area = data.getAllAreas()[0]
 
     # Try plots. Success if no errors are raised
-    powergama.plots.plotMap(data, res, nodetype="nodeprice", branchtype="utilisation")
+    powergama.plots.plotMap(data, res, nodetype="nodalprice", branchtype="utilisation")
 
     res.plotNodalPrice(0)
     res.plotAreaPrice([area])
