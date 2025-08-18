@@ -6,6 +6,7 @@ Grid data and time-dependent profiles
 """
 
 import math  # Used in myround
+import pathlib
 import warnings
 
 import networkx as nx
@@ -135,17 +136,50 @@ class GridData(object):
         else:
             raise Exception("Rounding error")
 
-    def readGridData(self, nodes, ac_branches, dc_branches, generators, consumers, remove_extra_columns=False):
-        """Read grid data from files into data variables"""
-
-        self.node = pd.read_csv(nodes, dtype={"id": str, "area": str})
-        self.branch = pd.read_csv(ac_branches, dtype={"node_from": str, "node_to": str, "capacity": float})
-        if dc_branches is not None:
-            self.dcbranch = pd.read_csv(dc_branches, dtype={"node_from": str, "node_to": str, "capacity": float})
+    def read_csv_files(self, file_input, dataset):
+        if dataset == "node":
+            dtype = {"id": str, "area": str}
+        elif dataset == "branch":
+            dtype = {"node_from": str, "node_to": str, "capacity": float}
+        elif dataset == "dcbranch":
+            dtype = {"node_from": str, "node_to": str, "capacity": float}
+        elif dataset == "generator":
+            dtype = {"node": str, "type": str}
+        elif dataset == "consumer":
+            dtype = {"node": str}
         else:
-            self.dcbranch = pd.DataFrame(columns=self.keys_powergama["dcbranch"].keys())
-        self.generator = pd.read_csv(generators, dtype={"node": str, "type": str})
-        self.consumer = pd.read_csv(consumers, dtype={"node": str})
+            raise ValueError("Unknown dataset")
+
+        if isinstance(file_input, str) or isinstance(file_input, pathlib.Path):
+            # Single file
+            df = pd.read_csv(file_input, dtype=dtype)
+        elif isinstance(file_input, list):
+            # Multiple files
+            df_list = [pd.read_csv(file, dtype=dtype) for file in file_input]
+            df = pd.concat(df_list, ignore_index=True)
+        elif file_input is None:
+            df = pd.DataFrame(columns=self.keys_powergama[dataset].keys())
+        else:
+            raise ValueError("Input must be a file name (str) or a list of file names (list of str)")
+        return df
+
+    def readGridData(self, nodes, ac_branches, dc_branches, generators, consumers, remove_extra_columns=False):
+        """Read grid data from files into data variables
+
+        nodes: filename or list of filenames or None
+        ac_branches: filename or list of filenames or None
+        dc_branches: filename or list of filenames or None
+        generators: filename or list of filenames or None
+        consumers: filename or list of filenames or Non
+        """
+
+        self.node = self.read_csv_files(nodes, dataset="node")
+        self.branch = self.read_csv_files(ac_branches, dataset="branch")
+        self.dcbranch = self.read_csv_files(dc_branches, dataset="dcbranch")
+        # else:
+        #    self.dcbranch = pd.DataFrame(columns=self.keys_powergama["dcbranch"].keys())
+        self.generator = self.read_csv_files(generators, dataset="generator")
+        self.consumer = self.read_csv_files(consumers, dataset="consumer")
 
         self._checkGridDataFields(self.keys_powergama)
 
