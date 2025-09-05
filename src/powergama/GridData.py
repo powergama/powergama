@@ -23,7 +23,7 @@ class GridData(object):
     # Headers and default values in input files:
     # default=None: column _must_ be present in input file
     keys_powergama = {
-        "node": {"id": None, "area": None, "lat": None, "lon": None},
+        "node": {"id": None, "area": None, "zone": "", "lat": None, "lon": None},
         "branch": {"node_from": None, "node_to": None, "reactance": None, "capacity": None, "resistance": 0},
         "dcbranch": {"node_from": None, "node_to": None, "capacity": None, "resistance": 0},
         "generator": {
@@ -56,53 +56,6 @@ class GridData(object):
             "flex_storval_time": "",
             "flex_storagelevel_init": 0.5,
         },
-    }
-
-    # Required fields for investment analysis input data
-    # Default value = -1 means that it should be computed by the program
-    keys_sipdata = {
-        "node": {
-            "id": None,
-            "area": None,
-            "lat": None,
-            "lon": None,
-            "offshore": None,
-            "type": None,
-            "existing": None,
-            "cost_scaling": None,
-        },
-        "branch": {
-            "node_from": None,
-            "node_to": None,
-            "capacity": None,
-            "capacity2": 0,
-            "reactance": 0,
-            "expand": None,
-            "expand2": None,
-            "max_newCap": -1,
-            "distance": -1,
-            "cost_scaling": None,
-            "type": None,
-        },
-        "dcbranch": {"node_from": "", "node_to": "", "capacity": 0, "resistance": 0},
-        "generator": {
-            "type": None,
-            "node": None,
-            "desc": "",
-            "pmax": None,
-            "pmax2": 0,
-            "pmin": None,
-            "expand": None,
-            "expand2": None,
-            "p_maxNew": -1,
-            "cost_scaling": 1,
-            "fuelcost": None,
-            "fuelcost_ref": None,
-            "pavg": 0,
-            "inflow_fac": None,
-            "inflow_ref": None,
-        },
-        "consumer": {"node": None, "demand_avg": None, "emission_cap": -1, "demand_ref": None},
     }
 
     def __init__(self):
@@ -182,58 +135,10 @@ class GridData(object):
         self.consumer = self.read_csv_files(consumers, dataset="consumer")
 
         self._checkGridDataFields(self.keys_powergama)
-
-        # TODO: fix difference in node index between powergama and powergim
-        # numerical index is needed in method computePowerFlowMatrices
-        # (and maybe elsewhere). This does _not_ work with powergama:
-        # self.node.set_index('id',inplace=True,append=False)
-        # self.node['id']=self.node.index
         self._checkGridData()
         self._addDefaultColumns(keys=self.keys_powergama, remove_extra_columns=remove_extra_columns)
         self._fillEmptyCells(keys=self.keys_powergama)
         self._checkConsistency()
-
-    def readSipData(self, nodes, branches, generators, consumers):
-        """Read grid data for investment analysis from files (PowerGIM)
-
-        This is used with the grid investment module (PowerGIM)
-
-        time-series data may be used for
-        consumer demand
-        generator inflow (e.g. solar and wind)
-        generator fuelcost (e.g. one generator with fuelcost = power price)
-        """
-        self.node = pd.read_csv(
-            nodes,
-            # usecols=self.keys_sipdata['node'],
-            dtype={"id": str, "area": str},
-        )
-        # TODO use integer range index instead of id string, cf powergama
-        self.node.set_index("id", inplace=True)
-        self.node["id"] = self.node.index
-        self.node.index.name = "index"
-        self.branch = pd.read_csv(
-            branches,
-            # usecols=self.keys_sipdata['branch'],
-            dtype={"node_from": str, "node_to": str},
-        )
-        # dcbranch variable only needed for powergama.plotMapGrid
-        self.dcbranch = pd.DataFrame()
-        self.generator = pd.read_csv(
-            generators,
-            # usecols=self.keys_sipdata['generator'],
-            dtype={"node": str, "type": str},
-        )
-        self.consumer = pd.read_csv(
-            consumers,
-            # usecols=self.keys_sipdata['consumer'],
-            dtype={"node": str},
-        )
-
-        self._checkGridDataFields(self.keys_sipdata)
-        self._addDefaultColumns(keys=self.keys_sipdata)
-        self._fillEmptyCells(keys=self.keys_sipdata)
-        self._checkGridData()
 
     def _fillEmptyCells(self, keys):
         """Use default data where none is given"""
@@ -266,6 +171,9 @@ class GridData(object):
         for k in keys["dcbranch"]:
             if k not in self.dcbranch.keys():
                 self.dcbranch[k] = keys["dcbranch"][k]
+        for k in keys["node"]:
+            if k not in self.node.keys():
+                self.node[k] = keys["node"][k]
 
         # Discard extra columns (comments etc)
         if remove_extra_columns:
