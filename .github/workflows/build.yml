@@ -25,6 +25,8 @@ jobs:
         python-version:
           - "3.10"
           - "3.13"
+    env:
+      last_python_version: "3.13"
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -73,7 +75,7 @@ jobs:
         run: poetry run pytest -v
 
       - name: Run notebook tests (ubuntu latest only)
-        if: (matrix.os == 'ubuntu-latest') && (matrix.python-version =='3.11')
+        if: (matrix.os == 'ubuntu-latest') && (matrix.python-version ==env.last_python_version)
         run: poetry run pytest -v --nbmake -k ipynb
 
       - name: Build artifacts
