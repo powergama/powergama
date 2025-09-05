@@ -349,16 +349,19 @@ def plotMap(
         shapely.LineString([(z[0], z[1]), (z[2], z[3])])
         for z in zip(dcbranch["lon_x"], dcbranch["lat_x"], dcbranch["lon_y"], dcbranch["lat_y"])
     ]
-    map_dcbranches = geopandas.GeoDataFrame(dcbranch, geometry=dcline_geometry, crs="EPSG:4326")
-    m_dcbranches = folium.GeoJson(
-        map_dcbranches,
-        style_function=style_dcbranch,
-        tooltip=folium.GeoJsonTooltip(fields=["node_from", "node_to", "capacity"] + branch_fields),
-        name="DC branches",
-    ).add_to(m)
-
-    # branch flow direction marker:
-    br_all = pd.concat([branch, dcbranch], axis=0, ignore_index=True)
+    if dcbranch.empty:
+        m_dcbranches = None
+        br_all = branch
+    else:
+        map_dcbranches = geopandas.GeoDataFrame(dcbranch, geometry=dcline_geometry, crs="EPSG:4326")
+        m_dcbranches = folium.GeoJson(
+            map_dcbranches,
+            style_function=style_dcbranch,
+            tooltip=folium.GeoJsonTooltip(fields=["node_from", "node_to", "capacity"] + branch_fields),
+            name="DC branches",
+        ).add_to(m)
+        # branch flow direction marker:
+        br_all = pd.concat([branch, dcbranch], axis=0, ignore_index=True)
     branch_flowmarker = pd.DataFrame(index=br_all.index)
     if pg_res is not None:
         for ind, n in br_all.iterrows():
@@ -380,7 +383,6 @@ def plotMap(
             marker=folium.CircleMarker(fill=True, fill_opacity=0.5, radius=radius_default, weight=1, color="gray"),
             name="Flow marker",
         ).add_to(m)
-
     # Generators:
     map_generators = geopandas.GeoDataFrame(
         generator, geometry=geopandas.points_from_xy(generator["lon"], generator["lat"]), crs="EPSG:4326"
@@ -411,7 +413,6 @@ def plotMap(
                 style_function=style_genbranch,
                 name=f"{gentype}:connection",
             ).add_to(m_generators[gentype])
-
     # Consumers:
     map_consumers = geopandas.GeoDataFrame(
         consumer, geometry=geopandas.points_from_xy(consumer["lon"], consumer["lat"]), crs="EPSG:4326"
