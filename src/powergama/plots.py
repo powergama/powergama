@@ -7,8 +7,6 @@ import math
 
 import branca.colormap
 import folium
-import folium.plugins
-import folium.utilities
 import geopandas
 import numpy as np
 import pandas as pd
@@ -76,9 +74,6 @@ def plotMap(
 
     cmSet1 = branca.colormap.linear.Set1_03
 
-    if timeMaxMin is None:
-        timeMaxMin = [pg_data.timerange[0], pg_data.timerange[-1] + 1]
-
     # Add geographic information to branches and generators/consumers
     branch = pg_data.branch.copy()
     dcbranch = pg_data.dcbranch.copy()
@@ -141,6 +136,10 @@ def plotMap(
     branch_fields = []
 
     if pg_res is not None:
+        # if not specified, use entire time range
+        if timeMaxMin is None:
+            timeMaxMin = [pg_data.timerange[0], pg_data.timerange[-1] + 1]
+
         node_fields.append("nodalprice")
         node["nodalprice"] = pg_res.getAverageNodalPrices(timeMaxMin)
         node["loadshedding"] = pg_res.getLoadsheddingPerNode(average=True)
