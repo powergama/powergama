@@ -23,12 +23,13 @@ for scenario generation (preprocessing), and for plotting and
 presentation of results. Latitude and longitude information is only used
 for plotting the grid on a map.
 
-  column key  | description              |  type  |   units
-  ------------|--------------------------|--------|---------
-  "id"       | Unique string identifier |  string|   
-  "lat"      | Latitude                 |  float |   degrees
-  "lon"      | Longitude                |  float |   degrees
-  "area"     | Area/country code        |  string|   
+  column key  | description                   |  type  |   units
+  ------------|-------------------------------|--------|---------
+  "id"       | Unique string identifier       |  string|   
+  "lat"      | Latitude                       |  float |   degrees
+  "lon"      | Longitude                      |  float |   degrees
+  "area"     | Area/country code              |  string|   
+  "zone"     | Zone (level below area) (OPT)  |  string|   
 
 ### AC Branches
 
