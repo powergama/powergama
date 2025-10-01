@@ -231,8 +231,8 @@ The main parameters specifying a flexible load are:
 -   The flexibility on/off ratio, i.e. ratio of average load relative to
     the maximum load
     ($x_\text{flex} = P_\text{flex}^\text{avg} / P_\text{flex}^\text{max}$)
--   The maximum energy flexibility/storage ($E_\text{flex}^\text{max}$),
-    given in MWh
+-   The maximum energy flexibility/storage ($T_\text{flex}^\text{max}$),
+    given in hours. This translates to an energy amount (in MWh) according to ($E_\text{flex}^\text{max}=T_\text{flex}^\text{max}\cdot P_\text{flex}^\text{avg}$)
 -   The storage value curve (normalised shape)
 -   The storage base value (absolute value), given in €/MWh
 
@@ -286,10 +286,12 @@ between node $i$ and $j$ is thus written $z_{ij} = r_{ij} + j x_{ij}$,
 where $i,j \in \{1,2,\dots, N\}$. From these impedances, the bus
 admittance matrix $Y$ may be constructed:
 
-$$Y_{ij} = G_{ij}+jB_{ij} = \bigg\{ \begin{array}{ll} 
+$$
+Y_{ij} = G_{ij}+jB_{ij} = \biggl\{ \begin{array}{ll} 
         y_{ii} + \sum_{n\neq i} y_{ni}  & i=j, \\
         -y_{ij}                 & i\neq j,
-    \end{array}$$ 
+    \end{array} \biggr.
+$$ 
 
 where $y_{ij} = g_{ij} + j b_{ij} = \frac{1}{z_{ij}}$
 is the admittance of the branch between $i$ and $j$.

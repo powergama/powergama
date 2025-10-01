@@ -73,7 +73,7 @@ normalised and have an annual average of 1.
   "demand_ref\"           |  Profile reference                                    | string  | 
   "flex_fraction\"        |  Fraction of demand which is flexible (OPT)           | float   | 
   "flex_on_off\"          |  Flexibility on/off ratio (OPT)                       | float   | 
-  "flex_storage\"         |  Maximum flexibility (OPT)                            | float   | MWh
+  "flex_storage\"         |  Maximum flexibility (OPT)                            | float   | hours
   "flex_storval_filling\" |  Profile ref, storage value filling dependence (OPT)  | string  | 
   "flex_storval_time\"    |  Profile ref, storage value time dependence (OPT)     | string  | 
   "flex_basevalue\"       |  Base storage value (OPT)                             | float   | €/MWh
