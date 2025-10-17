@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "powergama"
-version = "1.4.3"
+version = "1.4.4a4"
 description = "PowerGAMA - Power Grid And Market Analysis tool)"
 authors = ["Harald G Svendsen <harald.svendsen@sintef.no>"]
 license = "MIT License (http://opensource.org/licenses/MIT)"
@@ -35,12 +35,10 @@ tqdm = "^4.67.1"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8"
+ruff = "^0.14"
 mypy = "^1.13"
-pylint = "^3.3"
-black = "^24.10"
 nbmake = "^1.5"
 bandit = "^1.8"
-flake8 = "^5.0.4"
 pre-commit = "^4.0"
 coverage = "^7.6.8"
 
@@ -49,29 +47,6 @@ coverage = "^7.6.8"
 [build-system]
 requires = ["poetry-core>=1.0.0"]
 build-backend = "poetry.core.masonry.api"
-
-[tool.black]
-line-length = 120
-include = '\.pyi?$'
-exclude = '''
-/(
-    \.git
-  | \.hg
-  | \.mypy_cache
-  | \.tox
-  | \.venv
-  | _build
-  | buck-out
-  | build
-  | dist
-)/
-'''
-
-[tool.isort]
-line_length = 120
-use_parentheses = true
-include_trailing_comma = true
-multi_line_output = 3
 
 [tool.bandit]
 exclude_dirs = ["tests", "__pycache__", ".pytest_cache"]
@@ -84,3 +59,16 @@ show_missing = true
 
 [tool.ruff]
 line-length = 120
+indent-width = 4
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
+ignore = []
+fixable = ["ALL"]
+unfixable = []
+# Allow unused variables when underscore-prefixed.
+dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+
+[tool.ruff.format]
+# Like Black, use double quotes for strings.
+quote-style = "double"

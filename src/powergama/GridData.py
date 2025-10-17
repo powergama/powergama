@@ -1,11 +1,10 @@
-# -*- coding: utf-8 -*-
 """
 Module containing PowerGAMA GridData class and sub-classes
 
 Grid data and time-dependent profiles
 """
 
-import math  # Used in myround
+import math
 import pathlib
 import warnings
 
@@ -57,6 +56,13 @@ class GridData(object):
             "flex_storagelevel_init": 0.5,
         },
     }
+    dtypes = {
+        "node": {"id": str, "area": str},
+        "branch": {"node_from": str, "node_to": str, "capacity": float},
+        "dcbranch": {"node_from": str, "node_to": str, "capacity": float},
+        "generator": {"node": str, "type": str},
+        "consumer": {"node": str},
+    }
 
     def __init__(self):
         """
@@ -68,8 +74,6 @@ class GridData(object):
         self.dcbranch = None
         self.generator = None
         self.consumer = None
-        # self.inflowProfiles = None
-        # self.demandProfiles = None
         self.profiles = None
         self.storagevalue_filling = None
         self.storagevalue_time = None
@@ -90,19 +94,7 @@ class GridData(object):
             raise Exception("Rounding error")
 
     def read_csv_files(self, file_input, dataset):
-        if dataset == "node":
-            dtype = {"id": str, "area": str}
-        elif dataset == "branch":
-            dtype = {"node_from": str, "node_to": str, "capacity": float}
-        elif dataset == "dcbranch":
-            dtype = {"node_from": str, "node_to": str, "capacity": float}
-        elif dataset == "generator":
-            dtype = {"node": str, "type": str}
-        elif dataset == "consumer":
-            dtype = {"node": str}
-        else:
-            raise ValueError("Unknown dataset")
-
+        dtype = self.dtypes[dataset]
         if isinstance(file_input, str) or isinstance(file_input, pathlib.Path):
             # Single file
             df = pd.read_csv(file_input, dtype=dtype)
@@ -111,10 +103,28 @@ class GridData(object):
             df_list = [pd.read_csv(file, dtype=dtype) for file in file_input]
             df = pd.concat(df_list, ignore_index=True)
         elif file_input is None:
+            # Empty dataframe with the right columns
             df = pd.DataFrame(columns=self.keys_powergama[dataset].keys())
         else:
             raise ValueError("Input must be a file name (str) or a list of file names (list of str)")
         return df
+
+    def from_dict(self, data_dict, timedelta):
+        """Get grid data from a dictionary of pandas dataframes
+
+        dictionary must contain dataframes for keys:
+        node, branch, dcbranch, generator, consumer, profiles, storval_time, storval_filling
+        """
+        self.node = data_dict["node"].astype(self.dtypes["node"])
+        self.branch = data_dict["branch"].astype(self.dtypes["branch"])
+        self.dcbranch = data_dict["dcbranch"].astype(self.dtypes["dcbranch"])
+        self.generator = data_dict["generator"].astype(self.dtypes["generator"])
+        self.consumer = data_dict["consumer"].astype(self.dtypes["consumer"])
+        self.profiles = data_dict["profiles"]
+        self.storagevalue_time = data_dict["storval_time"]
+        self.storagevalue_filling = data_dict["storval_filling"]
+        self.timedelta = timedelta
+        self.timerange = list(self.profiles.index)
 
     def readGridData(self, nodes, ac_branches, dc_branches, generators, consumers, remove_extra_columns=False):
         """Read grid data from files into data variables
@@ -129,8 +139,6 @@ class GridData(object):
         self.node = self.read_csv_files(nodes, dataset="node")
         self.branch = self.read_csv_files(ac_branches, dataset="branch")
         self.dcbranch = self.read_csv_files(dc_branches, dataset="dcbranch")
-        # else:
-        #    self.dcbranch = pd.DataFrame(columns=self.keys_powergama["dcbranch"].keys())
         self.generator = self.read_csv_files(generators, dataset="generator")
         self.consumer = self.read_csv_files(consumers, dataset="consumer")
 
@@ -261,20 +269,15 @@ class GridData(object):
         return profiles
 
     def readProfileData(self, filename, timerange, storagevalue_filling=None, storagevalue_time=None, timedelta=1.0):
-        """Read profile (timeseries) into numpy arrays"""
+        """Read profile (timeseries) into numpy arrays
 
-        # self.inflowProfiles = self._readProfileFromFile(inflow,timerange)
-        # self.demandProfiles = self._readProfileFromFile(demand,timerange)
+        Storage values have both time dependence and filling level dependence
+        The dependence on filling level (0-100%), is given as an array with 101 elements
+        """
+
         self.profiles = self._readProfileFromFile(filename, timerange)
         self.timerange = timerange
         self.timeDelta = timedelta
-
-        """
-        Storage values have both time dependence and filling level dependence
-
-       The dependence is on filling level (0-100%), is given as an array
-        with 101 elements
-        """
         if storagevalue_filling is not None:
             self.storagevalue_time = self._readProfileFromFile(storagevalue_time, timerange)
             self.storagevalue_filling = self._readStoragevaluesFromFile(storagevalue_filling)
@@ -366,19 +369,11 @@ class GridData(object):
 
     def getLoadsAtNode(self, nodeIdx):
         """Indices of all loads (consumers) attached to a particular node"""
-        # indices = [i for i, x in enumerate(self.consumer['node'])
-        #            if x == self.node['id'][nodeIdx]]:
-        # 25 times faster:
         indices = self.consumer["node"][self.consumer.loc[:, "node"] == self.node["id"][nodeIdx]].index.tolist()
         return indices
 
     def getLoadsFlexibleAtNode(self, nodeIdx):
         """Indices of all flexible nodes attached to a particular node"""
-        # indices = [i for i, x in enumerate(self.consumer['node'])
-        #            if x == self.node['id'][nodeIdx]
-        #            and self.consumer['flex_fraction'][i]>0
-        #            and self.consumer['demand_avg'][i]>0]
-        # faster:
         indices = self.consumer["node"][
             (self.consumer.loc[:, "node"] == self.node["id"][nodeIdx])
             & (self.consumer.loc[:, "flex_fraction"] > 0)
@@ -550,15 +545,6 @@ class GridData(object):
             generators = self.getGeneratorsPerType()
             avg = {ge_k: numpy.mean(self.generator.fuelcost[ge_v]) for ge_k, ge_v in generators.items()}
             sorted_list = [k for k in sorted(avg, key=avg.get, reverse=False)]
-
-            #            gentypes = generators.keys()
-            #            fuelcosts = []
-            #            for ge in gentypes:
-            #                gen_this_type = generators[ge]
-            #                fuelcosts.append(numpy.mean([self.generator.fuelcost[i]
-            #                                         for i in gen_this_type]) )
-            #            sorted_list = [x for (y,x) in
-            #                           sorted(zip(fuelcosts,gentypes))]
             return sorted_list
         else:
             raise Exception("sort must be None or 'fuelcost'")
@@ -693,54 +679,8 @@ class GridData(object):
             else:
                 mask_pos = mask_pos2
                 mask_neg = mask_neg2
-
         branches_pos = list(br_witharea.index[mask_pos])
         branches_neg = list(br_witharea.index[mask_neg])
-
-        #        # indices of from and to nodes of all branches:
-        #        if acdc=='ac':
-        #            br_from_nodes = self.branchFromNodeIdx()
-        #            br_to_nodes = self.branchToNodeIdx()
-        #        elif acdc=='dc':
-        #            br_from_nodes = self.dcBranchFromNodeIdx()
-        #            br_to_nodes = self.dcBranchToNodeIdx()
-        #        else:
-        #            raise Exception('Branch type must be "ac" or "dc"')
-        #
-        #
-        #        br_from_area = [self.node.area[i] for i in br_from_nodes]
-        #        br_to_area = [self.node.area[i] for i in br_to_nodes]
-        #
-        #        # indices of all inter-area branches (from area != to area)
-        #        br_is_interarea = [i for i in range(len(br_from_area))
-        #                                if br_from_area[i] != br_to_area[i]]
-        #
-        #        # branches connected to area_from
-        #        fromArea_branches_pos = [i for i in br_is_interarea
-        #                                 if br_from_area[i]==area_from]
-        #        fromArea_branches_neg = [i for i in br_is_interarea
-        #                                 if br_to_area[i]==area_from]
-        #
-        #        # branches connected to area_to
-        #        toArea_branches_pos = [i for i in br_is_interarea
-        #                                 if br_to_area[i]==area_to]
-        #        toArea_branches_neg = [i for i in br_is_interarea
-        #                                 if br_from_area[i]==area_to]
-        #
-        #        if area_from is None:
-        #            # Only to node has been specified
-        #            branches_pos = toArea_branches_pos
-        #            branches_neg = toArea_branches_neg
-        #        elif area_to is None:
-        #            # Only from node has been specified
-        #            branches_pos = fromArea_branches_pos
-        #            branches_neg = fromArea_branches_neg
-        #        else:
-        #            # Both to and from area has been specified
-        #            branches_pos = [b for b in fromArea_branches_pos
-        #                                    if b in toArea_branches_neg ]
-        #            branches_neg = [b for b in fromArea_branches_neg
-        #                                    if b in toArea_branches_pos ]
         return dict(branches_pos=branches_pos, branches_neg=branches_neg)
 
     def branchDistances(self, R=6373.0):

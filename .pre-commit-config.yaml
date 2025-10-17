@@ -1,21 +1,12 @@
 repos:
-  - repo: https://github.com/psf/black
-    rev: "24.10.0"
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.14.1  # Use the latest stable tag from Ruff's repo
     hooks:
-      - id: black
-        #args: ['--config=.black.ini']
-        language_version: python3
-  - repo: https://github.com/PyCQA/flake8
-    rev: "5.0.4"
-    hooks:
-      - id: flake8
-  - repo: https://github.com/timothycrosley/isort
-    rev: "5.11.5"
-    hooks:
-      - id: isort
-        #args: ['--settings-path=.isort.cfg']
+      - id: ruff-check
+        args: [--fix]  # Optional: auto-fix issues
+      - id: ruff-format
   - repo: https://github.com/PyCQA/bandit
-    rev: "1.8.0"
+    rev: "1.8.6"
     hooks:
       - id: bandit
         args: ["--configfile=pyproject.toml", "--recursive", "-a=file"]

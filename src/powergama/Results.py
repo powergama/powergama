@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Module containing the PowerGAMA Results class
 """
@@ -13,6 +12,7 @@ import numpy as np
 import pandas as pd
 
 import powergama.database as db
+import powergama.GridData
 
 
 class ResultsBaseClass(object):
@@ -32,17 +32,13 @@ class ResultsBaseClass(object):
         generated results
     """
 
-    def __init__(self, grid, databasefile, replace=True, sip=False):
+    def __init__(self, grid, databasefile, replace=True):
         """
         Create a PowerGAMA Results object
-
-
 
         """
         self.grid = grid
         self.timerange = grid.timerange
-        if sip:
-            return
         self.storage_idx_generators = grid.getIdxGeneratorsWithStorage()
         self.pump_idx_generators = grid.getIdxGeneratorsWithPumping()
         self.flex_idx_consumers = grid.getIdxConsumersWithFlexibleLoad()
@@ -55,26 +51,24 @@ class ResultsBaseClass(object):
             # check that the length of the specified timerange matches the
             # database
             timerange_db = self.db.getTimerange()
-            if timerange_db != list(self.timerange):
-                print(f"OBS: Database time range = [{timerange_db[0],timerange_db[-1]}]\n")
+            if not timerange_db:
+                print(f"OBS: Empty database time range (no simulation run) = {timerange_db}")
+            elif timerange_db != list(self.timerange):
+                print(f"OBS: Database time range = [{timerange_db[0], timerange_db[-1]}]\n")
                 # raise Exception("Database time range mismatch")
-
-        """
-        self.objectiveFunctionValue=[]
-        self.generatorOutput=[]
-        self.branchFlow=[]
-        self.nodeAngle=[]
-        self.sensitivityBranchCapacity=[]
-        self.sensitivityDcBranchCapacity=[]
-        self.sensitivityNodePower=[]
-        self.storage=[]
-        self.marginalprice=[]
-        self.inflowSpilled=[]
-        self.loadshed=[]
-        """
 
     def _init_database(self, databasefile):
         self.db = db.Database(databasefile)
+
+    @classmethod
+    def from_existing(cls, databasefile, timedelta):
+        """Get PowerGAMA Result object from existing sqlite database file"""
+        res_db = db.Database(databasefile)
+        data_dict = res_db.get_grid_data()
+        grid_data = powergama.GridData()
+        grid_data.from_dict(data_dict, timedelta=timedelta)
+        res = cls(grid_data, databasefile, replace=False)
+        return res
 
     def addResultsFromTimestep(
         self,
@@ -454,36 +448,6 @@ class Results(ResultsBaseClass):
         utilisation = [avgflow[i] / cap.iloc[i] for i in range(len(cap))]
         utilisation = np.asarray(utilisation)
         return utilisation
-
-    def getSystemCostOBSOLETE(self, timeMaxMin=None):
-        """
-        Calculates system cost for energy produced by using generator fuel cost.
-
-        Parameters
-        ----------
-        timeMaxMin (list) (default = None)
-            [min, max] - lower and upper time interval
-
-        Returns
-        =======
-        array of tuples of total cost of energy per area for all areas
-        [(area, costs), ...]
-        """
-
-        if timeMaxMin is None:
-            timeMaxMin = [self.timerange[0], self.timerange[-1] + 1]
-
-        systemcost = []
-        # for each area
-        for area in self.grid.getAllAreas():
-            areacost = 0
-            # for each generator
-            for gen in self.db.getGridGeneratorFromArea(area):
-                # sum generator output and multiply by fuel cost
-                for power in self.db.getResultGeneratorPower(gen[0], timeMaxMin):
-                    areacost += power * self.grid.generator.fuelcost[gen[0]]
-            systemcost.append(tuple([area, areacost]))
-        return systemcost
 
     def getSystemCost(self, timeMaxMin=None):
         """
@@ -2136,7 +2100,7 @@ class Results(ResultsBaseClass):
         genTypes = data.getAllGeneratorTypes()
         if tech not in genTypes:
             raise Exception(
-                "No generators classified as " + tech + ".\n" "Generator classifications: " + str(genTypes)[1:-1]
+                "No generators classified as " + tech + ".\nGenerator classifications: " + str(genTypes)[1:-1]
             )
 
         if latlon is None:

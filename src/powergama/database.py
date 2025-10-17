@@ -63,11 +63,22 @@ class DatabaseBaseClass(object):
             # raise IOError('Cannot append existing file. Choose new file name.')
         con = db.connect(self.filename)
         with con:
+            # Write grid_data dataframes to database:
+            data.node.to_sql("data_node", con, if_exists="replace", index=True)
+            data.branch.to_sql("data_branch", con, if_exists="replace", index=True)
+            data.dcbranch.to_sql("data_dcbranch", con, if_exists="replace", index=True)
+            data.generator.to_sql("data_generator", con, if_exists="replace", index=True)
+            data.consumer.to_sql("data_consumer", con, if_exists="replace", index=True)
+            data.profiles.to_sql("data_profiles", con, if_exists="replace", index=True)
+            if data.storagevalue_filling is not None:
+                data.storagevalue_filling.to_sql("data_storval_filling", con, if_exists="replace", index=True)
+                data.storagevalue_time.to_sql("data_storval_time", con, if_exists="replace", index=True)
+
             cur = con.cursor()
             cur.execute("CREATE TABLE Grid_Nodes(indx INT, id TEXT, area TEXT," + "lat DOUBLE, lon DOUBLE)")
             cur.executemany("INSERT INTO Grid_Nodes VALUES(?,?,?,?,?)", nodes)
-            cur.execute("CREATE TABLE Grid_Generators(indx INT, node TEXT," + "type TEXT)")
-            cur.executemany("INSERT INTO Grid_Generators VALUES(?,?,?)", generators)
+            cur.execute("CREATE TABLE Grid_Generators(indx INT, node TEXT," + "type TEXT)")  # TODO: Remove? obsolete
+            cur.executemany("INSERT INTO Grid_Generators VALUES(?,?,?)", generators)  # TODO: Remove? obsolete
             cur.execute(
                 "CREATE TABLE Grid_Branches(indx INT, fromIndx INT,"
                 + "toIndx INT, capacity DOUBLE, reactance DOUBLE,"
@@ -99,6 +110,25 @@ class DatabaseBaseClass(object):
             )
 
         return nodes
+
+    def get_grid_data(self):
+        """Extract grid data from database, as dictionary"""
+        con = db.connect(self.filename)
+        data = {}
+        with con:
+            for k in ["node", "branch", "dcbranch", "generator", "consumer", "profiles"]:
+                data[k] = pd.read_sql(f"SELECT * FROM data_{k}", con, index_col="index")  # nosec B608
+                data[k].index.name = None
+
+            # Query to check if storage value tables exist
+            df = pd.read_sql("SELECT name FROM sqlite_master WHERE type='table' AND name='data_storval_time'", con)
+            if not df.empty:
+                data["storval_time"] = pd.read_sql("SELECT * FROM data_storval_time", con, index_col="index")
+                data["storval_filling"] = pd.read_sql("SELECT * FROM data_storval_filling", con, index_col="index")
+            else:
+                data["storval_time"] = None
+                data["storval_filling"] = None
+        return data
 
     def getTimerange(self):
         """
@@ -288,7 +318,7 @@ class Database(DatabaseBaseClass):
             }
         return values
 
-    def getGridInterareaBranches(self):
+    def OBSOLETE_getGridInterareaBranches(self):
         """
         Get indices of branches between different areas as a list
 
@@ -310,7 +340,7 @@ class Database(DatabaseBaseClass):
             output = cur.fetchall()
         return output
 
-    def getGridGeneratorFromArea(self, area):
+    def OBSOLETE_getGridGeneratorFromArea(self, area):
         """
         Get indices of generators  in given area as a list
 
@@ -917,7 +947,7 @@ class Database(DatabaseBaseClass):
             values = [row[1] for row in rows]
         return values
 
-    def getResultGeneratorPowerInArea(self, area, timeMaxMin):
+    def NEVER_USED_getResultGeneratorPowerInArea(self, area, timeMaxMin):
         """Get accumulated generation per type in given area"""
         con = db.connect(self.filename)
         with con:
