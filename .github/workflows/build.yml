@@ -76,7 +76,21 @@ jobs:
 
       - name: Run notebook tests (ubuntu latest only)
         if: (matrix.os == 'ubuntu-latest') && (matrix.python-version ==env.last_python_version)
-        run: poetry run pytest -v --nbmake -k ipynb
+        run: |
+            poetry run coverage run -m pytest -v --nbmake -k ipynb
+            poetry run coverage xml
+
+      - name: create coverage report (ubuntu latest only)
+        if: (matrix.os == 'ubuntu-latest') && (matrix.python-version ==env.last_python_version)
+        run: |
+            poetry run coverage run -m pytest
+            poetry run coverage xml
+
+      - name: Upload coverage reports to Codecov (ubuntu latest only)
+        if: (matrix.os == 'ubuntu-latest') && (matrix.python-version ==env.last_python_version)
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
 
       - name: Build artifacts
         run: poetry build

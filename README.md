@@ -5,6 +5,8 @@
 [![build](https://github.com/powergama/powergama/actions/workflows/build.yml/badge.svg)](https://github.com/powergama/powergama/actions/workflows/build.yml)
 [![GitHub version](https://badge.fury.io/gh/powergama%2Fpowergama.svg)](https://badge.fury.io/gh/powergama%2Fpowergama)
 [![PyPI version](https://img.shields.io/pypi/v/powergama.svg)](https://pypi.python.org/pypi/powergama)
+[![codecov](https://codecov.io/gh/powergama/powergama/graph/badge.svg?token=EHHS8UO7H1)](https://codecov.io/gh/powergama/powergama)
+
 # PowerGAMA - Power Grid And Market Analysis
 
 ## Introduction
