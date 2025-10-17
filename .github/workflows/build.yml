@@ -25,9 +25,6 @@ jobs:
         python-version:
           - "3.10"
           - "3.13"
-        exclude:
-          - os: windows-latest
-            python-version: "3.13"
     env:
       last_python_version: "3.13"
     steps:
@@ -54,8 +51,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .venv
-          key: ${{ matrix.os }}-${{ hashFiles('**/poetry.lock') }}
-          restore-keys: ${{ matrix.os }}-
+          key: ${{ matrix.os }}-${{ matrix.python-version }}-${{ hashFiles('**/poetry.lock') }}
+          restore-keys: ${{ matrix.os }}-${{ matrix.python-version }}-
+
 
       - name: Setup GLPK on ubuntu
         if: matrix.os == 'ubuntu-latest'
