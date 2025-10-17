@@ -676,7 +676,7 @@ class Results(ResultsBaseClass):
 
     def getAverageInterareaBranchFlow(self, filename=None, timeMaxMin=None):
         """Calculate average flow in each direction and total flow for
-        inter-area branches. Requires sqlite version newer than 3.6
+        inter-area branches.
 
         Parameters
         ----------
@@ -690,17 +690,6 @@ class Results(ResultsBaseClass):
         List with values for each inter-area branch:
         [flow from 1 to 2, flow from 2 to 1, average absolute flow]
         """
-
-        #        # Version control of database module. Must be 3.7.x or newer
-        #        major = int(list(self.db.sqlite_version)[0])
-        #        minor = int(list(self.db.sqlite_version)[1])
-        #        version = major + minor / 10.0
-        #        # print version
-        #        if ((major < 4) and (minor < 7)):
-        #            print('current SQLite version: {} ({})'
-        #                  .format(self.db.sqlite_version,version))
-        #            print('getAverageInterareaBranchFlow() requires 3.7.x or newer')
-        #            return
 
         if timeMaxMin is None:
             timeMaxMin = [self.timerange[0], self.timerange[-1] + 1]
@@ -718,9 +707,6 @@ class Results(ResultsBaseClass):
                 writer.writerow(headers)
                 for row in results:
                     writer.writerow(row)
-        # else:
-        #    for x in results:
-        #        print(x)
 
         return results
 
@@ -988,15 +974,11 @@ class Results(ResultsBaseClass):
             timeMaxMin = [self.timerange[0], self.timerange[-1] + 1]
         timerange = range(timeMaxMin[0], timeMaxMin[-1])
 
-        if nodeIndx in self.db.getGridNodeIndices():
-            nodalprice = self.db.getResultNodalPrice(nodeIndx, timeMaxMin)
-            plt.figure()
-            plt.plot(timerange, nodalprice)
-            if showTitle:
-                plt.title("Nodal price for node %d" % (nodeIndx))
-            plt.show()
-        else:
-            print("Node not found")
+        nodalprice = self.db.getResultNodalPrice(nodeIndx, timeMaxMin)
+        plt.figure()
+        plt.plot(timerange, nodalprice)
+        if showTitle:
+            plt.title("Nodal price for node %d" % (nodeIndx))
         return
 
     def plotAreaPrice(self, areas, timeMaxMin=None, showTitle=True):
@@ -1022,7 +1004,6 @@ class Results(ResultsBaseClass):
                 plt.title("Area price")
 
         plt.legend()
-        plt.show()
         return
 
     def plotStorageFilling(self, generatorIndx, timeMaxMin=None, showTitle=True):
@@ -1046,7 +1027,6 @@ class Results(ResultsBaseClass):
             plt.plot(timerange, storagefilling)
             if showTitle:
                 plt.title("Storage filling level for generator %d" % (generatorIndx))
-            plt.show()
         else:
             print("These are the generators with storage:")
             print(self.storage_idx_generators)
@@ -1126,7 +1106,6 @@ class Results(ResultsBaseClass):
                     self.grid.generator["node"][generator_index],
                 )
             )
-        plt.show()
         return
 
     def plotDemandAtLoad(self, consumer_index, timeMaxMin=None, relativestorage=True, showTitle=True):
@@ -1185,7 +1164,6 @@ class Results(ResultsBaseClass):
             plt.title(
                 "Consumer %d at node %d (%s)" % (consumer_index, nodeidx, self.grid.consumer.node[consumer_index])
             )
-        plt.show()
         return
 
     def plotStoragePerArea(self, area, absolute=False, timeMaxMin=None, showTitle=True):
@@ -1236,7 +1214,6 @@ class Results(ResultsBaseClass):
         plt.legend(loc="upper right")
         if showTitle:
             plt.title("Total storage level in %s" % (area))
-        plt.show()
 
         return
 
@@ -1318,7 +1295,6 @@ class Results(ResultsBaseClass):
 
         if showTitle:
             plt.title("Generation in %s" % (area))
-        plt.show()
         return
 
     def plotDemandPerArea(self, areas, timeMaxMin=None, showTitle=True):
@@ -1365,7 +1341,6 @@ class Results(ResultsBaseClass):
         plt.legend(loc="upper right")
         if showTitle:
             plt.title("Power demand")
-        plt.show()
         return
 
     def plotStorageValues(self, genindx, timeMaxMin=None, showTitle=True):
@@ -1402,7 +1377,6 @@ class Results(ResultsBaseClass):
                     "Storage value  for generator %d (%s) in %s"
                     % (genindx, self.grid.generator.type[genindx], self.grid.generator.node[genindx])
                 )
-            plt.show()
         else:
             print("These are the generators with storage:")
             print(self.storage_idx_generators)
@@ -1435,7 +1409,6 @@ class Results(ResultsBaseClass):
                 plt.title(
                     "Storage value  for consumer %d at %s" % (consumerindx, self.grid.consumer.node[consumerindx])
                 )
-            plt.show()
         else:
             print("These are the consumers with flexible load:")
             print(self.flex_idx_consumers)
@@ -1773,10 +1746,7 @@ class Results(ResultsBaseClass):
 
         if showTitle:
             plt.title("Nodes %s and branches %s" % (nodetype, branchtype))
-        plt.show()
-
         return
-        # End plotGridMap
 
     def getEnergyMix(self, timeMaxMin=None, relative=False, showTitle=True, variable="energy"):
         """
@@ -1859,7 +1829,6 @@ class Results(ResultsBaseClass):
 
         if showTitle:
             plt.title(title)
-        plt.show()
         return dfplot
 
     def plotTimeseriesColour(self, areas, value="nodalprice", filter_values=None):
@@ -1924,7 +1893,6 @@ class Results(ResultsBaseClass):
         cbar_ax = fig.add_axes([0.92, 0.15, 0.02, 0.7])
         # fig.colorbar(im,cax=cbar_ax)
         plt.colorbar(cax=cbar_ax)
-        # plt.show()
 
     def plotRelativeLoadDistribution(
         self, show_node_labels=False, latlon=None, dotsize=40, draw_par_mer=False, colours=True, showTitle=True

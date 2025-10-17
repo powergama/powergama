@@ -61,9 +61,9 @@ def get_gridmodel_failure(full_profiles, gridmodel_base, timerange, failed_gener
     # Set failed generators to zero
     for gg in failed_generators:
         # if gg is an int, set that generator to zero
-        if type(gg) == int:
-            gridmodel.generator.at[gg, "pmax"] = 0
-        elif type(gg) == tuple:
+        if isinstance(gg, int):
+            gridmodel.generator.at[gg, "pmax"] = 0.0
+        elif isinstance(gg, tuple):
             # otherwise we've specified both the generator and the fraction that goes offline
             g_idx, g_down = gg
             gridmodel.generator.at[g_idx, "pmax"] *= 1 - g_down

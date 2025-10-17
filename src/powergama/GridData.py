@@ -60,7 +60,7 @@ class GridData(object):
         "node": {"id": str, "area": str},
         "branch": {"node_from": str, "node_to": str, "capacity": float},
         "dcbranch": {"node_from": str, "node_to": str, "capacity": float},
-        "generator": {"node": str, "type": str},
+        "generator": {"node": str, "type": str, "pmax": float},
         "consumer": {"node": str},
     }
 

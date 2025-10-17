@@ -25,7 +25,7 @@ import pandas as pd
 import pyomo.environ as pyo
 import pyomo.opt
 from pyomo.contrib import appsi
-from tqdm.auto import tqdm
+from tqdm import tqdm
 
 from . import constants as const
 
