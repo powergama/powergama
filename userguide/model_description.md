@@ -287,10 +287,10 @@ where $i,j \in \{1,2,\dots, N\}$. From these impedances, the bus
 admittance matrix $Y$ may be constructed:
 
 $$
-Y_{ij} = G_{ij}+jB_{ij} = \biggl\{ \begin{array}{ll} 
+Y_{ij} = G_{ij}+jB_{ij} = \left\{ \begin{array}{ll} 
         y_{ii} + \sum_{n\neq i} y_{ni}  & i=j, \\
         -y_{ij}                 & i\neq j,
-    \end{array} \biggr.
+    \end{array} \right.
 $$ 
 
 where $y_{ij} = g_{ij} + j b_{ij} = \frac{1}{z_{ij}}$

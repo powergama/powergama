@@ -1,5 +1,13 @@
 # Output data and results analysis
 
+## Re-open previously simulated system
+To re-open and analyse a system previously simulated and stored in a sqlite database file, you can use (where you put in the correct sqlite filename and timedelta used for the simulation):
+```python
+> pg_res = powergama.Results.from_existing("results.sqlite3",timedelta=1.0)
+> pg_data = pg_res.grid
+```
+And then use the analysis
+
 ## Output data format
 The results of the simulation is saved in a sqlite3 database file
 

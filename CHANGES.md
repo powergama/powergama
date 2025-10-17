@@ -1,5 +1,13 @@
 # Changes
 
+## v1.5.0
+2025-10-17
+- add option to read model, including grid data, from sqlite file
+- improved map plot
+- add possibility to read grid data from multiple files (v1.4.2)
+- add possibility to extend previous simulation (v1.4.1)
+
+
 ## v1.4.0
 2025-01-29
 - added support for Highs solver

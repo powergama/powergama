@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "powergama"
-version = "1.4.4a4"
+version = "1.5.0"
 description = "PowerGAMA - Power Grid And Market Analysis tool)"
 authors = ["Harald G Svendsen <harald.svendsen@sintef.no>"]
 license = "MIT License (http://opensource.org/licenses/MIT)"
