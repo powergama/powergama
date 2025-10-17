@@ -51,8 +51,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .venv
-          key: ${{ matrix.os }}-${{ hashFiles('**/poetry.lock') }}
-          restore-keys: ${{ matrix.os }}-
+          key: ${{ matrix.os }}-${{ matrix.python-version }}-${{ hashFiles('**/poetry.lock') }}
+          restore-keys: ${{ matrix.os }}-${{ matrix.python-version }}-
+
 
       - name: Setup GLPK on ubuntu
         if: matrix.os == 'ubuntu-latest'
@@ -76,7 +77,20 @@ jobs:
 
       - name: Run notebook tests (ubuntu latest only)
         if: (matrix.os == 'ubuntu-latest') && (matrix.python-version ==env.last_python_version)
-        run: poetry run pytest -v --nbmake -k ipynb
+        run: |
+            poetry run pytest -v --nbmake -k ipynb
+
+      - name: create coverage report (ubuntu latest only)
+        if: (matrix.os == 'ubuntu-latest') && (matrix.python-version ==env.last_python_version)
+        run: |
+            poetry run coverage run -m pytest
+            poetry run coverage xml
+
+      - name: Upload coverage reports to Codecov (ubuntu latest only)
+        if: (matrix.os == 'ubuntu-latest') && (matrix.python-version ==env.last_python_version)
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
 
       - name: Build artifacts
         run: poetry build

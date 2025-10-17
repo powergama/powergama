@@ -25,35 +25,13 @@ class DatabaseBaseClass(object):
         """
         Create database for PowerGAMA results
         """
-        num_nodes = data.numNodes()
-        num_branches = data.numBranches()
-        num_generators = data.numGenerators()
-        # convert from lists to tuple of tuples
-        nodes = tuple(
-            (i, data.node["id"][i], data.node["area"][i], 1.0 * data.node["lat"][i], 1.0 * data.node["lon"][i])
-            for i in range(num_nodes)
-        )
-        generators = tuple(
-            (
-                i,
-                data.generator["node"][i],
-                data.generator["type"][i],
-            )
-            for i in range(num_generators)
-        )
+
+        nodes = pd.DataFrame(data=data.node[["id", "area", "zone"]])
         br_from = data.branchFromNodeIdx()
         br_to = data.branchToNodeIdx()
-        branches = tuple(
-            (
-                i,
-                int(br_from[i]),
-                int(br_to[i]),
-                1.0 * data.branch["capacity"][i],
-                1.0 * data.branch["reactance"][i],
-                1.0 * data.branch["resistance"][i],
-            )
-            for i in range(num_branches)
-        )
+        branches = pd.DataFrame()
+        branches["fromIndx"] = br_from
+        branches["toIndx"] = br_to
 
         if os.path.isfile(self.filename):
             # delete existing file
@@ -63,18 +41,21 @@ class DatabaseBaseClass(object):
             # raise IOError('Cannot append existing file. Choose new file name.')
         con = db.connect(self.filename)
         with con:
-            cur = con.cursor()
-            cur.execute("CREATE TABLE Grid_Nodes(indx INT, id TEXT, area TEXT," + "lat DOUBLE, lon DOUBLE)")
-            cur.executemany("INSERT INTO Grid_Nodes VALUES(?,?,?,?,?)", nodes)
-            cur.execute("CREATE TABLE Grid_Generators(indx INT, node TEXT," + "type TEXT)")
-            cur.executemany("INSERT INTO Grid_Generators VALUES(?,?,?)", generators)
-            cur.execute(
-                "CREATE TABLE Grid_Branches(indx INT, fromIndx INT,"
-                + "toIndx INT, capacity DOUBLE, reactance DOUBLE,"
-                + "resistance DOUBLE)"
-            )
-            cur.executemany("INSERT INTO Grid_Branches VALUES(?,?,?,?,?,?)", branches)
+            # Write grid_data dataframes to database:
+            data.node.to_sql("data_node", con, if_exists="replace", index=True)
+            data.branch.to_sql("data_branch", con, if_exists="replace", index=True)
+            data.dcbranch.to_sql("data_dcbranch", con, if_exists="replace", index=True)
+            data.generator.to_sql("data_generator", con, if_exists="replace", index=True)
+            data.consumer.to_sql("data_consumer", con, if_exists="replace", index=True)
+            data.profiles.to_sql("data_profiles", con, if_exists="replace", index=True)
+            if data.storagevalue_filling is not None:
+                data.storagevalue_filling.to_sql("data_storval_filling", con, if_exists="replace", index=True)
+                data.storagevalue_time.to_sql("data_storval_time", con, if_exists="replace", index=True)
+            # tables with integer indices - keep for backwards compatibility
+            nodes.to_sql("Grid_Nodes", con, if_exists="replace", index=True, index_label="indx")
+            branches.to_sql("Grid_Branches", con, if_exists="replace", index=True, index_label="indx")
 
+            cur = con.cursor()
             cur.execute(f"CREATE TABLE Res_ObjFunc({self.timestep_str}, value DOUBLE)")
             cur.execute(f"CREATE TABLE Res_Branches({self.timestep_str}, indx INT," + "flow DOUBLE, loss DOUBLE)")
             cur.execute(f"CREATE TABLE Res_BranchesSens({self.timestep_str}, indx INT," + "cap_sensitivity DOUBLE)")
@@ -99,6 +80,25 @@ class DatabaseBaseClass(object):
             )
 
         return nodes
+
+    def get_grid_data(self):
+        """Extract grid data from database, as dictionary"""
+        con = db.connect(self.filename)
+        data = {}
+        with con:
+            for k in ["node", "branch", "dcbranch", "generator", "consumer", "profiles"]:
+                data[k] = pd.read_sql(f"SELECT * FROM data_{k}", con, index_col="index")  # nosec B608
+                data[k].index.name = None
+
+            # Query to check if storage value tables exist
+            df = pd.read_sql("SELECT name FROM sqlite_master WHERE type='table' AND name='data_storval_time'", con)
+            if not df.empty:
+                data["storval_time"] = pd.read_sql("SELECT * FROM data_storval_time", con, index_col="index")
+                data["storval_filling"] = pd.read_sql("SELECT * FROM data_storval_filling", con, index_col="index")
+            else:
+                data["storval_time"] = None
+                data["storval_filling"] = None
+        return data
 
     def getTimerange(self):
         """
@@ -261,77 +261,20 @@ class Database(DatabaseBaseClass):
     Class for storing results from PowerGAMA in sqlite databse
     """
 
-    def getGridNodeIndices(self):
-        """Get node indices as a list"""
-        con = db.connect(self.filename)
-        with con:
-            cur = con.cursor()
-            cur.execute("SELECT indx FROM Grid_Nodes ")
-            rows = cur.fetchall()
-            values = [row[0] for row in rows]
-        return values
-
     def getGridBranches(self):
         """Get branch indices as a list"""
         con = db.connect(self.filename)
         with con:
             # con.row_factory = db.Row
             cur = con.cursor()
-            cur.execute("SELECT indx,fromIndx,toIndx,capacity,reactance " + " FROM Grid_Branches ")
+            cur.execute("SELECT indx,fromIndx,toIndx FROM Grid_Branches ")
             rows = cur.fetchall()
             values = {
                 "indx": [row[0] for row in rows],
                 "fromIndx": [row[1] for row in rows],
                 "toIndx": [row[2] for row in rows],
-                "capacity": [row[3] for row in rows],
-                "reactance": [row[4] for row in rows],
             }
         return values
-
-    def getGridInterareaBranches(self):
-        """
-        Get indices of branches between different areas as a list
-
-        Returns
-        =======
-
-        (indice, fromArea, toArea)
-        """
-        con = db.connect(self.filename)
-        with con:
-            cur = con.cursor()
-            cur.execute(
-                "SELECT b.indx, fromNode.area, toNode.area"
-                + " FROM Grid_Branches b"
-                + " INNER JOIN Grid_Nodes fromNode ON b.fromIndx = fromNode.indx"
-                + " INNER JOIN Grid_Nodes toNode ON b.toIndx = toNode.indx"
-                + " WHERE fromNode.area != toNode.area"
-            )
-            output = cur.fetchall()
-        return output
-
-    def getGridGeneratorFromArea(self, area):
-        """
-        Get indices of generators  in given area as a list
-
-        Returns
-        =======
-
-        (indice)
-        """
-        con = db.connect(self.filename)
-        with con:
-            cur = con.cursor()
-            cur.execute(
-                "SELECT g.indx FROM Res_Generators g"
-                " INNER JOIN Grid_Generators gg ON g.indx = gg.indx"
-                " INNER JOIN Grid_Nodes gn ON gg.node = gn.id"
-                " WHERE gn.area=?"
-                " GROUP BY g.indx",
-                (area),
-            )
-            output = cur.fetchall()
-        return output
 
     def getResultNodalPrice(self, nodeindx, timeMaxMin):
         """Get nodal price at specified node"""
@@ -916,23 +859,6 @@ class Database(DatabaseBaseClass):
             rows = cur.fetchall()
             values = [row[1] for row in rows]
         return values
-
-    def getResultGeneratorPowerInArea(self, area, timeMaxMin):
-        """Get accumulated generation per type in given area"""
-        con = db.connect(self.filename)
-        with con:
-            cur = con.cursor()
-            cur.execute(
-                "SELECT output FROM Res_Generators "
-                " WHERE timestep>=? AND timestep<? AND indx IN "
-                " (SELECT indx FROM Grid_Generators WHERE node IN "
-                " (SELECT id FROM Grid_Nodes WHERE area IN (?)))"
-                " ORDER BY timestep",
-                (timeMaxMin[0], timeMaxMin[-1], area),
-            )
-            rows = cur.fetchall()
-            output = [row[0] for row in rows]
-        return output
 
     def getResultFlexloadPower(self, consumerindx, timeMaxMin):
         """Get flexible load for consumer with flexible load"""

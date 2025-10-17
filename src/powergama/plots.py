@@ -467,7 +467,7 @@ def plotMap(
     return m
 
 
-def _pointBetween(nodeA, nodeB, weight):
+def _pointBetween(nodeA, nodeB, weight, mercator=True):
     """computes coords on the line between two points
 
      (lat,lon) = pointBetween(self,lat1,lon1,lat2,lon2,d)
@@ -480,6 +480,8 @@ def _pointBetween(nodeA, nodeB, weight):
             latitude/longitude of nodeB (degrees)
         weight: double
             weight=0 is node A, 0.5 is halfway between, and 1 is node B
+        mercator: boolean
+            True if getting point that looks right in mercator projection
 
     Returns
     -------
@@ -493,6 +495,13 @@ def _pointBetween(nodeA, nodeB, weight):
     lon1 = nodeA[1]
     lat2 = nodeB[0]
     lon2 = nodeB[1]
+    if mercator:
+        return mercator_interpolate(lat1, lon1, lat2, lon2, weight)
+    else:
+        return greatcircle_interpolate(lat1, lon1, lat2, lon2, weight)
+
+
+def greatcircle_interpolate(lat1, lon1, lat2, lon2, weight):
     if (lat1 == lat2) and (lon1 == lon2):
         lat = lat1
         lon = lon1
@@ -520,4 +529,32 @@ def _pointBetween(nodeA, nodeB, weight):
         # tansform to degrees
         lat = lat * 180 / math.pi
         lon = lon * 180 / math.pi
+    return (lat, lon)
+
+
+def mercator_projection(lat, lon):
+    """Convert latitude and longitude to Mercator x, y coordinates."""
+    R = 6378137  # Earth's radius in meters (WGS84)
+    x = R * math.radians(lon)
+    y = R * math.log(math.tan(math.pi / 4 + math.radians(lat) / 2))
+    return x, y
+
+
+def inverse_mercator_projection(x, y):
+    """Convert Mercator x, y coordinates back to latitude and longitude."""
+    R = 6378137
+    lon = math.degrees(x / R)
+    lat = math.degrees(2 * math.atan(math.exp(y / R)) - math.pi / 2)
+    return lat, lon
+
+
+def mercator_interpolate(lat1, lon1, lat2, lon2, fraction):
+    """Find the point that lies 'fraction' along the straight line in Mercator projection."""
+    x1, y1 = mercator_projection(lat1, lon1)
+    x2, y2 = mercator_projection(lat2, lon2)
+
+    x_interp = x1 + (x2 - x1) * fraction
+    y_interp = y1 + (y2 - y1) * fraction
+
+    (lat, lon) = inverse_mercator_projection(x_interp, y_interp)
     return (lat, lon)

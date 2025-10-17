@@ -1,9 +1,12 @@
 [![GitHub license](https://img.shields.io/github/license/powergama/powergama)](https://github.com/powergama/powergama/blob/main/LICENSE)
-[![Python](https://img.shields.io/badge/python-3-blue.svg)](https://python.org)
-[![Code style](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+[![Python](https://img.shields.io/pypi/pyversions/powergama.svg)](https://python.org)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 [![pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit&logoColor=white)](https://github.com/pre-commit/pre-commit)
 [![build](https://github.com/powergama/powergama/actions/workflows/build.yml/badge.svg)](https://github.com/powergama/powergama/actions/workflows/build.yml)
 [![GitHub version](https://badge.fury.io/gh/powergama%2Fpowergama.svg)](https://badge.fury.io/gh/powergama%2Fpowergama)
+[![PyPI version](https://img.shields.io/pypi/v/powergama.svg)](https://pypi.python.org/pypi/powergama)
+[![codecov](https://codecov.io/gh/powergama/powergama/graph/badge.svg?token=EHHS8UO7H1)](https://codecov.io/gh/powergama/powergama)
+
 # PowerGAMA - Power Grid And Market Analysis
 
 ## Introduction

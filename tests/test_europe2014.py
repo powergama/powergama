@@ -8,13 +8,12 @@ import powergama.scenarios
 datapath = Path(__file__).parent / "test_data/data_europe2014/"
 
 
-def test_integration_europe2014():
+def test_integration_europe2014(tmp_path):
     timerange = range(0, 6)
 
     data = powergama.GridData()
     solver = "glpk"
 
-    resultpath = ""
     rerun = True
     sqlfile = "example_europe2014.sqlite3"
 
@@ -35,13 +34,13 @@ def test_integration_europe2014():
 
     lp = powergama.LpProblem(data)
     if rerun:
-        res = powergama.Results(data, resultpath + sqlfile, replace=True)
+        res = powergama.Results(data, tmp_path / sqlfile, replace=True)
         start_time = time.time()
         lp.solve(res, solver=solver)
         end_time = time.time()
         print("\nExecution time = " + str(end_time - start_time) + "seconds")
     else:
-        res = powergama.Results(data, resultpath + sqlfile, replace=False)
+        res = powergama.Results(data, tmp_path / sqlfile, replace=False)
 
     # Total system cost
     # this does not seem entirely stable, so skip it for now
