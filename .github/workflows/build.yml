@@ -77,7 +77,7 @@ jobs:
       - name: Run notebook tests (ubuntu latest only)
         if: (matrix.os == 'ubuntu-latest') && (matrix.python-version ==env.last_python_version)
         run: |
-            poetry run -m pytest -v --nbmake -k ipynb
+            poetry run pytest -v --nbmake -k ipynb
 
       - name: create coverage report (ubuntu latest only)
         if: (matrix.os == 'ubuntu-latest') && (matrix.python-version ==env.last_python_version)
