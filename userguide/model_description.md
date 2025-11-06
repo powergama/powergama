@@ -287,11 +287,12 @@ where $i,j \in \{1,2,\dots, N\}$. From these impedances, the bus
 admittance matrix $Y$ may be constructed:
 
 $$
-Y_{ij} = G_{ij}+jB_{ij} = \left\{ \begin{array}{ll} 
-        y_{ii} + \sum_{n\neq i} y_{ni}  & i=j, \\
-        -y_{ij}                 & i\neq j,
-    \end{array} \right.
-$$ 
+Y_{ij} = G_{ij}+jB_{ij} = 
+\begin{cases}
+y_{ii} + \sum_{n\neq i} y_{ni} & i = j, \\
+-y_{ij} & i \neq j,
+\end{cases}
+$$
 
 where $y_{ij} = g_{ij} + j b_{ij} = \frac{1}{z_{ij}}$
 is the admittance of the branch between $i$ and $j$.
@@ -486,9 +487,13 @@ where $j$ refers to AC and DC branches with limited capacity.
 The *second* set of constraints states that the power generation at
 generators is limited by lower and upper bounds, most notably the
 generation capacity and available power as described in the 
-[\[section on power generation\]](#power-generation): $$C_2:\quad 
-    P_g^\text{min} \le P^\text{gen}_g \le P_g^\text{limit},$$ where $g$
-refers to all generators.
+[\[section on power generation\]](#power-generation): 
+
+$$
+C_2:\quad P_g^\text{min} \le P^\text{gen}_g \le P_g^\text{limit},
+$$ 
+
+where $g$ refers to all generators.
 
 The *third* set of constraints states that the pumping is limited by the
 pump capacity 
