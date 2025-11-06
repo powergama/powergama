@@ -23,8 +23,8 @@ class GridData(object):
     # default=None: column _must_ be present in input file
     keys_powergama = {
         "node": {"id": None, "area": None, "zone": "", "lat": None, "lon": None},
-        "branch": {"node_from": None, "node_to": None, "reactance": None, "capacity": None, "resistance": 0},
-        "dcbranch": {"node_from": None, "node_to": None, "capacity": None, "resistance": 0},
+        "branch": {"node_from": None, "node_to": None, "reactance": None, "capacity": None, "resistance": 0.0},
+        "dcbranch": {"node_from": None, "node_to": None, "capacity": None, "resistance": 0.0},
         "generator": {
             "type": None,
             "desc": "",
@@ -34,23 +34,23 @@ class GridData(object):
             "fuelcost": None,
             "inflow_fac": None,
             "inflow_ref": None,
-            "storage_cap": 0,
-            "storage_price": 0,
-            "storage_ini": 0,
+            "storage_cap": 0.0,
+            "storage_price": 0.0,
+            "storage_ini": 0.0,
             "storval_filling_ref": "",
             "storval_time_ref": "",
-            "pump_cap": 0,
-            "pump_efficiency": 0,
-            "pump_deadband": 0,
+            "pump_cap": 0.0,
+            "pump_efficiency": 0.0,
+            "pump_deadband": 0.0,
         },
         "consumer": {
             "node": None,
             "demand_avg": None,
             "demand_ref": None,
-            "flex_fraction": 0,
-            "flex_on_off": 0,
-            "flex_basevalue": 0,
-            "flex_storage": 0,
+            "flex_fraction": 0.0,
+            "flex_on_off": 0.0,
+            "flex_basevalue": 0.0,
+            "flex_storage": 0.0,
             "flex_storval_filling": "",
             "flex_storval_time": "",
             "flex_storagelevel_init": 0.5,
@@ -123,7 +123,7 @@ class GridData(object):
         self.profiles = data_dict["profiles"]
         self.storagevalue_time = data_dict["storval_time"]
         self.storagevalue_filling = data_dict["storval_filling"]
-        self.timedelta = timedelta
+        self.timeDelta = timedelta
         self.timerange = list(self.profiles.index)
 
     def readGridData(self, nodes, ac_branches, dc_branches, generators, consumers, remove_extra_columns=False):
