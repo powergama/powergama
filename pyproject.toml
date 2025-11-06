@@ -1,12 +1,10 @@
-[tool.poetry]
+[project]
 name = "powergama"
-version = "1.5.0"
+version = "1.5.1a"
 description = "PowerGAMA - Power Grid And Market Analysis tool)"
-authors = ["Harald G Svendsen <harald.svendsen@sintef.no>"]
-license = "MIT License (http://opensource.org/licenses/MIT)"
+authors = [{name="Harald G Svendsen", email="harald.svendsen@sintef.no"}]
+license = {text="MIT"}
 readme = "README.md"
-homepage = "https://github.com/powergama/powergama"
-repository = "https://github.com/powergama/powergama"
 classifiers=[
     "Development Status :: 4 - Beta",
     "Topic :: Scientific/Engineering",
@@ -17,32 +15,36 @@ classifiers=[
     "Natural Language :: English",
     "License :: OSI Approved :: MIT License",
 ]
+requires-python = ">=3.11"
+dependencies = [
+    "numpy >=2.3",
+    "pandas >=2.3",
+    "pyomo >=6.9",
+    "scipy >=1.16",
+    "matplotlib >=3.10",
+    "branca >=0.8",
+    "folium >=0.20",
+    "cloudpickle >=3.1",
+    "networkx >=3.5",
+    "geopandas >=1.1",
+    "highspy >=1.12",
+    "tqdm >=4.67",
+]
+
+[project.urls]
+homepage = "https://github.com/powergama/powergama"
 
 [tool.poetry.dependencies]
-python = ">=3.10,<3.14"
-numpy = "^2"
-pandas = "^2.2"
-pyomo = "^6.8"
-scipy = "^1.14"
-matplotlib = "^3.9"
-branca = ">=0.5"
-folium = ">=0.19.4"
-cloudpickle = "^3.1"
-networkx = "^3.0"
-geopandas = "^1.0.1"
-highspy = "^1.9.0"
-tqdm = "^4.67.1"
+python = ">=3.11,<3.14"
 
 [tool.poetry.group.dev.dependencies]
-pytest = "^8"
-ruff = "^0.14"
-mypy = "^1.13"
-nbmake = "^1.5"
-bandit = "^1.8"
-pre-commit = "^4.0"
-coverage = "^7.6.8"
-
-[tool.poetry.extras]
+pytest = ">=8.4"
+ruff = ">=0.14"
+mypy = ">=1.18"
+nbmake = ">=1.5"
+bandit = ">=1.8.6"
+pre-commit = ">=4.3"
+coverage = ">=7.11"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]

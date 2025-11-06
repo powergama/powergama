@@ -31,11 +31,94 @@ from . import constants as const
 
 
 class LpProblem(pyo.ConcreteModel):
-    """
-    Class containing problem definition as a LP problem, and function calls
-    to solve the problem
+    """LP problem formulation
 
+    Parameters
+    ==========
+    grid : GridData
+        grid data object
+    lossmethod : int
+        loss method; 0=no losses, 1=linearised losses, 2=added as load
     """
+
+    def __init__(self, grid, lossmethod=0):
+        # 1.
+        super().__init__()
+
+        # 2. Compute matrices used in power flow equaions
+        print("Computing B and DA matrices...")
+        self._Bbus, self._DA = grid.compute_power_flow_matrices()
+
+        print("Initialising LP problem...")
+
+        # Helpers
+        self._lossmethod = lossmethod
+        self._grid = grid
+        self.timeDelta = grid.timeDelta
+        self._solver_persistent = False
+        self._generators_at_node = grid.generator.groupby("node").groups
+        self._loads_at_node = grid.consumer.groupby("node").groups
+        self._branch_from_node = grid.branch.groupby("node_from").groups
+        self._branch_to_node = grid.branch.groupby("node_to").groups
+        self._dcbranch_from_node = grid.dcbranch.groupby("node_from").groups
+        self._dcbranch_to_node = grid.dcbranch.groupby("node_to").groups
+        for n in grid.node["id"]:
+            # fill in so dict is defined for all nodes:
+            if n not in self._generators_at_node:
+                self._generators_at_node[n] = []
+            if n not in self._loads_at_node:
+                self._loads_at_node[n] = []
+            if n not in self._branch_from_node:
+                self._branch_from_node[n] = []
+            if n not in self._branch_to_node:
+                self._branch_to_node[n] = []
+            if n not in self._dcbranch_from_node:
+                self._dcbranch_from_node[n] = []
+            if n not in self._dcbranch_to_node:
+                self._dcbranch_to_node[n] = []
+
+        self._idx_generatorsWithPumping = grid.getIdxGeneratorsWithPumping()
+        self._idx_generatorsWithStorage = grid.getIdxGeneratorsWithStorage()
+        self._idx_consumersWithFlexLoad = grid.getIdxConsumersWithFlexibleLoad()
+        self._idx_branchesWithConstraints = grid.getIdxBranchesWithFlowConstraints()
+        # self._fancy_progressbar = False
+
+        # Initial values of marginal costs, storage and storage values
+        self._storage = (grid.generator["storage_ini"] * grid.generator["storage_cap"]).fillna(0)
+        self._storage_flexload = (
+            grid.consumer["flex_storagelevel_init"]
+            * grid.consumer["flex_storage"]
+            * grid.consumer["flex_fraction"]
+            * grid.consumer["demand_avg"]
+        ).fillna(0)
+        self._energyspilled = grid.generator["storage_cap"].copy(deep=True)
+        self._energyspilled[:] = 0
+
+        # Find synchronous areas and specify reference node in each area
+        G = nx.Graph()
+        G.add_nodes_from(grid.node["id"])
+        G.add_edges_from(zip(grid.branch["node_from"], grid.branch["node_to"]))
+        G_subs = (G.subgraph(c) for c in nx.connected_components(G))
+        self.refnodes = []
+        for gr in G_subs:
+            refnode = list(gr.nodes)[0]
+            self.refnodes.append(refnode)
+            print("Found synchronous area (size = {}), using ref node = {}".format(gr.order(), refnode))
+        # use first node as voltage angle reference
+
+        # 3. Create pyomo model
+        self._create_sets_and_parameters(grid)
+        self._create_variables()
+        self._create_objective(grid)
+        self._powerbalance_rhs = self._get_powerbalance_rhs()
+        # 3b. Constraints:
+        self._create_constraint_powerflow_limit(grid)
+        self._create_constraint_powerloss(grid)
+        self._create_constraint_generator_output()
+        self._create_constraint_generator_pump(grid)
+        self._create_constraint_load_flex(grid)
+        self._create_constraint_powerbalance(grid)
+        self._create_constraint_powerflow_equation(grid)
 
     def _create_sets_and_parameters(self, grid_data):
         """Create pyomo model sets"""
@@ -81,13 +164,20 @@ class LpProblem(pyo.ConcreteModel):
             # initialize=grid_data.consumer.loc[self.s_load_flex, "flex_basevalue"].values,
         )
         if self._lossmethod == 2:
+            # for storing power losses until next timestep
             self.p_branch_ac_power_loss = pyo.Param(self.s_branch_ac, within=pyo.Reals, default=0, mutable=True)
-            self.p_branch_dc_power_loss = pyo.Param(self.s_branch_ac, within=pyo.Reals, default=0, mutable=True)
+            self.p_branch_dc_power_loss = pyo.Param(self.s_branch_dc, within=pyo.Reals, default=0, mutable=True)
+        elif self._lossmethod == 1:
+            # for storing power flow from previous timestep
+            self.p_branch_ac_powerflow12 = pyo.Param(self.s_branch_ac, within=pyo.Reals, initialize=0, mutable=True)
+            self.p_branch_ac_powerflow21 = pyo.Param(self.s_branch_ac, within=pyo.Reals, initialize=0, mutable=True)
+            self.p_branch_dc_powerflow12 = pyo.Param(self.s_branch_dc, within=pyo.Reals, initialize=0, mutable=True)
+            self.p_branch_dc_powerflow21 = pyo.Param(self.s_branch_dc, within=pyo.Reals, initialize=0, mutable=True)
 
     def _create_variables(self):
         """Create pyomo model variables"""
         self.varAcBranchFlow = pyo.Var(self.s_branch_ac, within=pyo.Reals)
-        self.varDcBranchFlow = pyo.Var(self.s_branch_ac, within=pyo.Reals)
+        self.varDcBranchFlow = pyo.Var(self.s_branch_dc, within=pyo.Reals)
         if self._lossmethod == 1:
             self.varAcBranchFlow12 = pyo.Var(self.s_branch_ac, within=pyo.NonNegativeReals)
             self.varAcBranchFlow21 = pyo.Var(self.s_branch_ac, within=pyo.NonNegativeReals)
@@ -126,6 +216,107 @@ class LpProblem(pyo.ConcreteModel):
         self.cMaxFlowAc = pyo.Constraint(self.s_branch_ac, rule=maxflowAc_rule)
         self.cMaxFlowDc = pyo.Constraint(self.s_branch_dc, rule=maxflowDc_rule)
 
+    def _powerloss_rules1_linearisation_PROBLEMATIC(self, grid_data):
+        # linarisation based on power flow in previous timestep (see user guide/model desription)
+
+        # Some problems with this:
+        # loss is nonzero even if flow is zero, because of the B constant
+        # loss may be negative
+        # -> does it help to split p_branch_ac/dc_powerflow in pos and neg direction?
+
+        def make_lossAc_rule12(br):
+            def rule(model, j):
+                loss_A = 2 * br.loc[j, "resistance"] * model.p_branch_ac_powerflow[j]
+                loss_B = -br.loc[j, "resistance"] * model.p_branch_ac_powerflow[j] ** 2
+                expr = model.varLossAc12[j] == model.varAcBranchFlow12[j] * loss_A + loss_B
+                return expr
+
+            return rule
+
+        def make_lossAc_rule21(br):
+            def rule(model, j):
+                loss_A = 2 * br.loc[j, "resistance"] * model.p_branch_ac_powerflow[j]
+                loss_B = -br.loc[j, "resistance"] * model.p_branch_ac_powerflow[j] ** 2
+                expr = model.varLossAc21[j] == model.varAcBranchFlow21[j] * loss_A + loss_B
+                return expr
+
+            return rule
+
+        def make_lossDc_rule12(br):
+            def rule(model, j):
+                loss_A = 2 * br.loc[j, "resistance"] * model.p_branch_dc_powerflow[j]
+                loss_B = -br.loc[j, "resistance"] * model.p_branch_dc_powerflow[j] ** 2
+                expr = model.varLossDc12[j] == model.varDcBranchFlow12[j] * loss_A + loss_B
+                return expr
+
+            return rule
+
+        def make_lossDc_rule21(br):
+            def rule(model, j):
+                loss_A = 2 * br.loc[j, "resistance"] * model.p_branch_dc_powerflow[j]
+                loss_B = -br.loc[j, "resistance"] * model.p_branch_dc_powerflow[j] ** 2
+                expr = model.varLossDc21[j] == model.varDcBranchFlow21[j] * loss_A + loss_B
+                return expr
+
+            return rule
+
+        self.cLossAc12 = pyo.Constraint(self.s_branch_ac, rule=make_lossAc_rule12(grid_data.branch))
+        self.cLossAc21 = pyo.Constraint(self.s_branch_ac, rule=make_lossAc_rule21(grid_data.branch))
+        self.cLossDc12 = pyo.Constraint(self.s_branch_dc, rule=make_lossDc_rule12(grid_data.dcbranch))
+        self.cLossDc21 = pyo.Constraint(self.s_branch_dc, rule=make_lossDc_rule21(grid_data.dcbranch))
+
+    def _powerloss_rules1(self, grid_data):
+        """Power loss proportional to flow, proportionality factor given by previous timestep
+
+        P_loss = alpha P
+        alpha = P_loss0/P0 (straight line from origo to operating point)
+                r_pu = self._grid.dcbranch.loc[b, "resistance"]
+                p_pu = self.varDcBranchFlow[b] / const.baseMVA
+                loss_pu = r_pu * p_pu**2
+                lossMVA = loss_pu * const.baseMVA * dclossmultiplier
+        """
+
+        def make_lossAc_rule12(br):
+            def rule(model, j):
+                flow_abs = model.p_branch_ac_powerflow12[j] + model.p_branch_ac_powerflow21[j]
+                alpha = br.loc[j, "resistance"] * flow_abs / const.baseMVA
+                expr = model.varLossAc12[j] == alpha * model.varAcBranchFlow12[j]
+                return expr
+
+            self.cLossAc12 = pyo.Constraint(self.s_branch_ac, rule=rule)
+
+        def make_lossAc_rule21(br):
+            def rule(model, j):
+                flow_abs = model.p_branch_ac_powerflow12[j] + model.p_branch_ac_powerflow21[j]
+                alpha = br.loc[j, "resistance"] * flow_abs / const.baseMVA
+                expr = model.varLossAc21[j] == alpha * model.varAcBranchFlow21[j]
+                return expr
+
+            self.cLossAc21 = pyo.Constraint(self.s_branch_ac, rule=rule)
+
+        def make_lossDc_rule12(br):
+            def rule(model, j):
+                flow_abs = model.p_branch_dc_powerflow12[j] + model.p_branch_dc_powerflow21[j]
+                alpha = br.loc[j, "resistance"] * flow_abs / const.baseMVA
+                expr = model.varLossDc12[j] == alpha * model.varDcBranchFlow12[j]
+                return expr
+
+            self.cLossDc12 = pyo.Constraint(self.s_branch_dc, rule=rule)
+
+        def make_lossDc_rule21(br):
+            def rule(model, j):
+                flow_abs = model.p_branch_dc_powerflow12[j] + model.p_branch_dc_powerflow21[j]
+                alpha = br.loc[j, "resistance"] * flow_abs / const.baseMVA
+                expr = model.varLossDc21[j] == alpha * model.varDcBranchFlow21[j]
+                return expr
+
+            self.cLossDc21 = pyo.Constraint(self.s_branch_dc, rule=rule)
+
+        make_lossAc_rule12(grid_data.branch)
+        make_lossAc_rule21(grid_data.branch)
+        make_lossDc_rule12(grid_data.dcbranch)
+        make_lossDc_rule21(grid_data.dcbranch)
+
     def _create_constraint_powerloss(self, grid_data):
         """Constraint: flow = flow12-flow21 & powerloss"""
         if self._lossmethod == 1:
@@ -143,36 +334,8 @@ class LpProblem(pyo.ConcreteModel):
 
         # 1b Losses vs flow
         if self._lossmethod == 1:
-            # Upper capacity limit, since capacity may be infinit
-            clip_mw = 500
-            br = grid_data.branch
-            lossAcA = br["resistance"] * br["capacity"].clip(upper=clip_mw) / const.baseMVA
-            lossAcB = 0
-
-            br = grid_data.dcbranch
-            lossDcA = br["resistance"] * br["capacity"].clip(upper=clip_mw) / const.baseMVA
-            lossDcB = 0
-
-            def lossAc_rule12(model, j):
-                expr = model.varLossAc12[j] == model.varAcBranchFlow12[j] * lossAcA[j] + lossAcB
-                return expr
-
-            def lossAc_rule21(model, j):
-                expr = model.varLossAc21[j] == model.varAcBranchFlow21[j] * lossAcA[j] + lossAcB
-                return expr
-
-            def lossDc_rule12(model, j):
-                expr = model.varLossDc12[j] == model.varDcBranchFlow12[j] * lossDcA[j] + lossDcB
-                return expr
-
-            def lossDc_rule21(model, j):
-                expr = model.varLossDc21[j] == model.varDcBranchFlow21[j] * lossDcA[j] + lossDcB
-                return expr
-
-            self.cLossAc12 = pyo.Constraint(self.s_branch_ac, rule=lossAc_rule12)
-            self.cLossAc21 = pyo.Constraint(self.s_branch_ac, rule=lossAc_rule21)
-            self.cLossDc12 = pyo.Constraint(self.s_branch_dc, rule=lossDc_rule12)
-            self.cLossDc21 = pyo.Constraint(self.s_branch_dc, rule=lossDc_rule21)
+            # self._powerloss_rules1_linearisation_PROBLEMATIC(grid_data) # problematic linearisation with loss=A*flow + B
+            self._powerloss_rules1(grid_data)
 
     def _create_constraint_generator_output(self):
         """Constraint: Generator output limit"""
@@ -336,95 +499,6 @@ class LpProblem(pyo.ConcreteModel):
                 rhs[n] -= B_element * self.varVoltageAngle[n2] * const.baseAngle
         return rhs
 
-    def __init__(self, grid, lossmethod=0):
-        """LP problem formulation
-
-        Parameters
-        ==========
-        grid : GridData
-            grid data object
-        lossmethod : int
-            loss method; 0=no losses, 1=linearised losses, 2=added as load
-        """
-
-        # 1.
-        super().__init__()
-
-        # 2. Compute matrices used in power flow equaions
-        print("Computing B and DA matrices...")
-        self._Bbus, self._DA = grid.compute_power_flow_matrices()
-
-        print("Initialising LP problem...")
-
-        # Helpers
-        self._lossmethod = lossmethod
-        self._grid = grid
-        self.timeDelta = grid.timeDelta
-        self._solver_persistent = False
-        self._generators_at_node = grid.generator.groupby("node").groups
-        self._loads_at_node = grid.consumer.groupby("node").groups
-        self._branch_from_node = grid.branch.groupby("node_from").groups
-        self._branch_to_node = grid.branch.groupby("node_to").groups
-        self._dcbranch_from_node = grid.dcbranch.groupby("node_from").groups
-        self._dcbranch_to_node = grid.dcbranch.groupby("node_to").groups
-        for n in grid.node["id"]:
-            # fill in so dict is defined for all nodes:
-            if n not in self._generators_at_node:
-                self._generators_at_node[n] = []
-            if n not in self._loads_at_node:
-                self._loads_at_node[n] = []
-            if n not in self._branch_from_node:
-                self._branch_from_node[n] = []
-            if n not in self._branch_to_node:
-                self._branch_to_node[n] = []
-            if n not in self._dcbranch_from_node:
-                self._dcbranch_from_node[n] = []
-            if n not in self._dcbranch_to_node:
-                self._dcbranch_to_node[n] = []
-
-        self._idx_generatorsWithPumping = grid.getIdxGeneratorsWithPumping()
-        self._idx_generatorsWithStorage = grid.getIdxGeneratorsWithStorage()
-        self._idx_consumersWithFlexLoad = grid.getIdxConsumersWithFlexibleLoad()
-        self._idx_branchesWithConstraints = grid.getIdxBranchesWithFlowConstraints()
-        # self._fancy_progressbar = False
-
-        # Initial values of marginal costs, storage and storage values
-        self._storage = (grid.generator["storage_ini"] * grid.generator["storage_cap"]).fillna(0)
-        self._storage_flexload = (
-            grid.consumer["flex_storagelevel_init"]
-            * grid.consumer["flex_storage"]
-            * grid.consumer["flex_fraction"]
-            * grid.consumer["demand_avg"]
-        ).fillna(0)
-        self._energyspilled = grid.generator["storage_cap"].copy(deep=True)
-        self._energyspilled[:] = 0
-
-        # Find synchronous areas and specify reference node in each area
-        G = nx.Graph()
-        G.add_nodes_from(grid.node["id"])
-        G.add_edges_from(zip(grid.branch["node_from"], grid.branch["node_to"]))
-        G_subs = (G.subgraph(c) for c in nx.connected_components(G))
-        self.refnodes = []
-        for gr in G_subs:
-            refnode = list(gr.nodes)[0]
-            self.refnodes.append(refnode)
-            print("Found synchronous area (size = {}), using ref node = {}".format(gr.order(), refnode))
-        # use first node as voltage angle reference
-
-        # 3. Create pyomo model
-        self._create_sets_and_parameters(grid)
-        self._create_variables()
-        self._create_objective(grid)
-        self._powerbalance_rhs = self._get_powerbalance_rhs()
-        # 3b. Constraints:
-        self._create_constraint_powerflow_limit(grid)
-        self._create_constraint_powerloss(grid)
-        self._create_constraint_generator_output()
-        self._create_constraint_generator_pump(grid)
-        self._create_constraint_load_flex(grid)
-        self._create_constraint_powerbalance(grid)
-        self._create_constraint_powerflow_equation(grid)
-
     def _get_timesteps_to_solve(self, continue_from_last=False, results=None):
         numTimesteps = len(self._grid.timerange)
         time_steps = range(numTimesteps)
@@ -583,39 +657,39 @@ class LpProblem(pyo.ConcreteModel):
         # self._create_objective(self._grid)
         opt.set_objective(self.OBJ)
 
-    def _updatePowerLosses(self, aclossmultiplier=1, dclossmultiplier=1):
-        """Compute power losses from OPF solution and update parameters"""
-        if self._lossmethod == 0:
-            pass
-        elif self._lossmethod == 1:
-            # Use constant loss parameters
-            # If loss parameters should change, they need to be declared
-            # mutable=True
-            pass
-        elif self._lossmethod == 2:
-            # Losses from previous timestep added as load
+    # def _compute_transmission_loss(self, branch_flows, aclossmultiplier=1):
+    #    """Compute power losses based on power flow"""
+    #    for b in self.s_branch_ac:
+    #        r = self._grid.branch.loc[b, "resistance"]
+    #        branch_flows = self.p_branch_ac_powerflow[b]
+    #        lossMVA = r * branch_flows[b] ** 2 / const.baseMVA
+    #        # A multiplication factor to account for reactive current losses
+    #        lossMVA = lossMVA * aclossmultiplier
+
+    def _update_params_powerlosses(self, aclossmultiplier=1, dclossmultiplier=1):
+        """Compute/update parameters used for transmission loss calculations"""
+        if self._lossmethod == 1:
+            # store power flows for next timestep (used for loss calculation)
             for b in self.s_branch_ac:
-                #                # r and x are given in pu; theta
-                #                loss_pu = r * ((theta_to-theta_from)*const.baseAngle/x)**2
-                #                # convert from p.u. to physical unit
-                #                lossMVA = loss_pu*const.baseMVA
-                # TODO: simpler (check and replace):
+                self.p_branch_ac_powerflow12[b] = self.varAcBranchFlow12[b]
+                self.p_branch_ac_powerflow21[b] = self.varAcBranchFlow21[b]
+            for b in self.s_branch_dc:
+                self.p_branch_dc_powerflow12[b] = self.varDcBranchFlow12[b]
+                self.p_branch_dc_powerflow21[b] = self.varDcBranchFlow21[b]
+        elif self._lossmethod == 2:
+            # compute power losses and store for next timestep
+            for b in self.s_branch_ac:
                 r = self._grid.branch.loc[b, "resistance"]
                 lossMVA = r * self.varAcBranchFlow[b] ** 2 / const.baseMVA
                 # A multiplication factor to account for reactive current losses
-                # (or more precicely, to get similar results as Giacomo in
-                # the SmartNet project)
                 lossMVA = lossMVA * aclossmultiplier
                 self.p_branch_ac_power_loss[b] = lossMVA
             for b in self.s_branch_dc:
-                # TODO: Test this before adding
                 r_pu = self._grid.dcbranch.loc[b, "resistance"]
                 p_pu = self.varDcBranchFlow[b] / const.baseMVA
                 loss_pu = r_pu * p_pu**2
                 lossMVA = loss_pu * const.baseMVA * dclossmultiplier
                 self.p_branch_dc_power_loss[b] = lossMVA
-        else:
-            raise Exception("Loss method={} is not implemented".format(self._lossmethod))
 
     def _get_fault_start(self, timestep):
         # Used by LpFaultProblem
@@ -836,17 +910,16 @@ class LpProblem(pyo.ConcreteModel):
 
         timesteps_to_solve = self._get_timesteps_to_solve(continue_from_last=continue_from_last, results=results)
         if continue_from_last:
-            # TODO update self._storage with value from database (and similar for flex load)
+            # Update internal variable for storage filling level (self._storage and self._storage_flexload)
             # this must be done before updateLpProblem below
             self._storage.loc[self._idx_generatorsWithStorage] = results.db.getResultStorageFillingAll(
-                timestep=timesteps_to_solve[0]
+                timestep=timesteps_to_solve[0] - 1
             )
             self._storage_flexload.loc[self._idx_consumersWithFlexLoad] = results.db.getResultFlexloadStorageFillingAll(
-                timestep=timesteps_to_solve[0]
+                timestep=timesteps_to_solve[0] - 1
             )
-            raise NotImplementedError("CHECK THIS FIRST - and add test case")
 
-        if self._lossmethod == 2:
+        if self._lossmethod in [1, 2]:
             print("Computing losses in first timestep")
             self._updateLpProblem(timestep=timesteps_to_solve[0])
             res = opt.solve(self)
@@ -859,7 +932,7 @@ class LpProblem(pyo.ConcreteModel):
         for timestep in tqdm(timesteps_to_solve):
             # update LP problem (inflow, storage, profiles)
             self._updateLpProblem(timestep)
-            self._updatePowerLosses(aclossmultiplier, dclossmultiplier)
+            self._update_params_powerlosses(aclossmultiplier, dclossmultiplier)
             if self._solver_persistent:
                 self._update_persistent_model(opt=opt)
 

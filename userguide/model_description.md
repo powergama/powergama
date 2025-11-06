@@ -363,6 +363,62 @@ where $D$ is a diagonal matrix with
 elements given by the branch susceptance $D_{mm} =-b_m$, and $A$ is the
 node-arc incidence matrix.
 
+## Power transmission losses
+Power losses in transmission lines increase quadratically with the power transmission, and since our model is linear, some approximation is necessary.
+
+There are three alternatives for treating transmission power losses in the simulation, specified through the `lossmethod`:
+- lossmethod = 0: No transmission losses included (default)
+- lossmethod = 1: Linearised model for power losees
+- lossmethod = 2: Losses added as load
+
+To get better approximation for the overall energy balance, transmission losses should be included
+
+### Loss method 1
+
+In this case, the power losses are approximated as a linear function of the power flow. See Figure 6.
+
+<p id="fig_flexvalue_curve"><img src="losses_linear.png"/>
+<b>Figure 6:</b> Linearisation of losses. </p>
+
+In this case, we assume that power loss is proportional to the power flow (blue line), with the proporionality factor computed from flow and losses in the previous timestep. This is numerically stable and simple to impelment.
+
+An alternative could be to linearise around the operating point (red line), but this does not work well when power flow changes significantly from one timestep to the next. It may e.g. gives negative losses if power flow is far from the (assume) operating point.
+
+First, we introduce four new variables for each branch, that are all non-negative: Power flow in positive and negative direction, and power losses associated with flow in positive and negative direction.
+
+$$P_j = P_j^+ - P_j^-$$
+$$P_j^{loss} = P_j^{loss,+} - P_j^{loss,-}$$
+
+
+The proportional approximation is:
+
+$$
+P_j^{loss,+} = \alpha_{j} P_j^+,
+\quad
+P_j^{loss,-} = \alpha_{j} P_j^-,
+$$
+where
+$$\alpha_{j,t} = \frac{P_{j,t-1}^{loss}}{|P_{j,t-1}|} 
+=  \frac{R_j P_{j,t-1}^2}{|P_{j,t-1}|}
+=  R_j |P_{j,t-1}|
+= R_j (P_j^{+} + P_j^{-})_{t-1}.
+$$
+
+
+
+
+### Loss method 2
+In this case, the power loss $P_j^{loss}(t)$ on a branch $j$ is computed from the power flow results in the *previous* timestep via 
+$P_{j,t}^{loss} = R P_{j,t-1}^2$,
+where $R$ is the line resistance.
+This power loss is added as power consumption at the endpoints of the branch, with eaqual split on each node. The same is done both for AC and CD branches.
+
+This gives realistic power losses when the power flow does not change much from one timestep to the next. 
+It is useful for including transmission power losses in the overall power balance in a simple way.
+
+The main drawback with this method is that power losees do not directly influence the generation dispatch optimisation. There is no incentive in the optimisation for reducing losses as they are taken as fixed quantities.
+
+
 # Optimisation problem
 
 A linear objective function is used in order to ensure fast optimisation
@@ -372,8 +428,8 @@ input parameters.
 The set of variables <a id="eq_variables"></a> to be determined by the
 optimisation are 
 
-$$  X = \\{P_g^\text{gen}, P_p^\text{pump},P_f^\text{flex}, P_n^\text{shed},
-\theta_n, P_j \\}, %\label{eq_variables} $$ 
+$$  X = \{P_g^\text{gen}, P_p^\text{pump},P_f^\text{flex}, P_n^\text{shed},
+\theta_n, P_j \}, %\label{eq_variables} $$ 
 
 where $g\in \mathcal{G}$, the set of generators; $p\in \mathcal{P}$, the
 set of pumps; $f\in \mathcal{F}$, the set of flexible loads;
@@ -486,20 +542,13 @@ $\mathcal{D}_k$ is the set of DC branches connected to node $k$,
 $P_j^\text{cons}$ is consumer demand (fixed *and* flexible), and
 $\mathcal{C}_k$ is the set of loads at node $k$.
 
-The *sixth* set of constraints expresses the relationship between power
-flow on branches and nodal voltage angle differences. In the linear
-approximation, power flow $\mathbf{P^\text{ac}}$ on AC branches is
-related to nodal voltage angles as expressed by the equation
-$$C_6:\quad \mathbf{P}^\text{ac} = \mathbf{D A \Theta},$$ where
-$\mathbf{D}$ is a diagonal matrix with elements given by the branch
-reactance $D_{mm} =-\frac{1}{x_m}$, and $\mathbf{A}$ is the node-branch
-incidence matrix describing the network topology.
+The *sixth* set of constraints expresses the relationship between power flow on branches and nodal voltage angle differences. In the linear approximation, power flow $\mathbf{P^\text{ac}}$ on AC branches is related to nodal voltage angles as expressed by the equation
+$$C_6:\quad \mathbf{P}^\text{ac} = \mathbf{D A \Theta},$$
+where $\mathbf{D}$ is a diagonal matrix with elements given by the branch reactance $D_{mm} =-\frac{1}{x_m}$, and $\mathbf{A}$ is the node-branch incidence matrix describing the network topology.
 
-The *seventh* constraint specifies the reference node and its voltage
-angle, $$C_7:\quad 
-    \theta_0 = 0.$$ Since these are arbitrary and don't influence the
-results, the reference is chosen such that the zeroth node has zero
-voltage angle.
+The *seventh* constraint specifies the reference node and its voltage angle, 
+$$C_7:\quad \theta_0 = 0.$$
+Since these are arbitrary and don't influence the results, the reference is chosen such that the zeroth node has zero voltage angle.
 
 # References
 * Grainger, J.J. and Stevenson Jr, W.D., 1994. *Power system analysis*.
