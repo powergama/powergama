@@ -41,7 +41,7 @@ class LpProblem(pyo.ConcreteModel):
         loss method; 0=no losses, 1=linearised losses, 2=added as load
     """
 
-    def __init__(self, grid, lossmethod=0):
+    def __init__(self, grid, lossmethod=0, penalty_twoway_flow=0):
         # 1.
         super().__init__()
 
@@ -113,7 +113,7 @@ class LpProblem(pyo.ConcreteModel):
         self._powerbalance_rhs = self._get_powerbalance_rhs()
         # 3b. Constraints:
         self._create_constraint_powerflow_limit(grid)
-        self._create_constraint_powerloss(grid)
+        self._create_constraint_powerloss(grid, penalty_twoway_flow=penalty_twoway_flow)
         self._create_constraint_generator_output()
         self._create_constraint_generator_pump(grid)
         self._create_constraint_load_flex(grid)
@@ -179,10 +179,21 @@ class LpProblem(pyo.ConcreteModel):
         self.varAcBranchFlow = pyo.Var(self.s_branch_ac, within=pyo.Reals)
         self.varDcBranchFlow = pyo.Var(self.s_branch_dc, within=pyo.Reals)
         if self._lossmethod == 1:
-            self.varAcBranchFlow12 = pyo.Var(self.s_branch_ac, within=pyo.NonNegativeReals)
-            self.varAcBranchFlow21 = pyo.Var(self.s_branch_ac, within=pyo.NonNegativeReals)
-            self.varDcBranchFlow12 = pyo.Var(self.s_branch_dc, within=pyo.NonNegativeReals)
-            self.varDcBranchFlow21 = pyo.Var(self.s_branch_dc, within=pyo.NonNegativeReals)
+
+            def maxflow(model, j):
+                return (0, model._grid.branch.loc[j, "capacity"])
+
+            def maxflow_dc(model, j):
+                return (0, model._grid.dcbranch.loc[j, "capacity"])
+
+            # Ref issue: https://github.com/powergama/powergama/issues/29
+            # Adding bounds on 12 and 21 flows reduces the problem with simultaneously large 12 and 21 flows
+            # that are not physical (but hard to avoid in circumstances when branch loss is actually beneficial
+            # for the optimisation). However, it doesn't eliminate the problem.
+            self.varAcBranchFlow12 = pyo.Var(self.s_branch_ac, within=pyo.NonNegativeReals, bounds=maxflow)
+            self.varAcBranchFlow21 = pyo.Var(self.s_branch_ac, within=pyo.NonNegativeReals, bounds=maxflow)
+            self.varDcBranchFlow12 = pyo.Var(self.s_branch_dc, within=pyo.NonNegativeReals, bounds=maxflow_dc)
+            self.varDcBranchFlow21 = pyo.Var(self.s_branch_dc, within=pyo.NonNegativeReals, bounds=maxflow_dc)
             self.varLossAc12 = pyo.Var(self.s_branch_ac, within=pyo.NonNegativeReals)
             self.varLossAc21 = pyo.Var(self.s_branch_ac, within=pyo.NonNegativeReals)
             self.varLossDc12 = pyo.Var(self.s_branch_dc, within=pyo.NonNegativeReals)
@@ -216,7 +227,7 @@ class LpProblem(pyo.ConcreteModel):
         self.cMaxFlowAc = pyo.Constraint(self.s_branch_ac, rule=maxflowAc_rule)
         self.cMaxFlowDc = pyo.Constraint(self.s_branch_dc, rule=maxflowDc_rule)
 
-    def _powerloss_rules1_linearisation_PROBLEMATIC(self, grid_data):
+    def OBSOLETE_powerloss_rules1_linearisation(self, grid_data):
         # linarisation based on power flow in previous timestep (see user guide/model desription)
 
         # Some problems with this:
@@ -265,7 +276,7 @@ class LpProblem(pyo.ConcreteModel):
         self.cLossDc12 = pyo.Constraint(self.s_branch_dc, rule=make_lossDc_rule12(grid_data.dcbranch))
         self.cLossDc21 = pyo.Constraint(self.s_branch_dc, rule=make_lossDc_rule21(grid_data.dcbranch))
 
-    def _powerloss_rules1(self, grid_data):
+    def _powerloss_rules1(self, grid_data, penalty_twoway_flow=0):
         """Power loss proportional to flow, proportionality factor given by previous timestep
 
         P_loss = alpha P
@@ -317,7 +328,15 @@ class LpProblem(pyo.ConcreteModel):
         make_lossDc_rule12(grid_data.dcbranch)
         make_lossDc_rule21(grid_data.dcbranch)
 
-    def _create_constraint_powerloss(self, grid_data):
+        # add penalty in objective function to discourage simultaneous flow in both directions
+        # TODO: Github issue https://github.com/powergama/powergama/issues/29
+        if penalty_twoway_flow > 0:
+            print("Adding a cost to penalise simultaneous branch flow in both directions - ")
+            self.OBJ.expr += penalty_twoway_flow * sum(
+                self.varAcBranchFlow12[i] + self.varAcBranchFlow21[i] for i in self.s_branch_ac
+            )
+
+    def _create_constraint_powerloss(self, grid_data, penalty_twoway_flow=0):
         """Constraint: flow = flow12-flow21 & powerloss"""
         if self._lossmethod == 1:
 
@@ -335,7 +354,7 @@ class LpProblem(pyo.ConcreteModel):
         # 1b Losses vs flow
         if self._lossmethod == 1:
             # self._powerloss_rules1_linearisation_PROBLEMATIC(grid_data) # problematic linearisation with loss=A*flow + B
-            self._powerloss_rules1(grid_data)
+            self._powerloss_rules1(grid_data, penalty_twoway_flow)
 
     def _create_constraint_generator_output(self):
         """Constraint: Generator output limit"""
@@ -411,12 +430,15 @@ class LpProblem(pyo.ConcreteModel):
                 elif model._lossmethod == 2:
                     lhs -= model.p_branch_dc_power_loss[b] / 2
             if self._lossmethod == 1:
-                # add ac branch losses as load
+                # we define flow12 as flow leaving node 1, and flow21 as flow leaving node 2
+                # so subtract loss at "receiving" node but not at "sending" node
+                # i.e. loss12 at to-node and loss21 at from-node
                 for b in self._branch_to_node[n]:
                     lhs += -model.varLossAc12[b]
                 for b in self._branch_from_node[n]:
                     lhs += -model.varLossAc21[b]
             elif self._lossmethod == 2:
+                # add ac branch losses as load, equally split between sending and receiving node
                 for b in self._branch_to_node[n]:
                     # positive sign for flow into node
                     lhs -= model.p_branch_ac_power_loss[b] / 2
@@ -671,11 +693,22 @@ class LpProblem(pyo.ConcreteModel):
         if self._lossmethod == 1:
             # store power flows for next timestep (used for loss calculation)
             for b in self.s_branch_ac:
-                self.p_branch_ac_powerflow12[b] = self.varAcBranchFlow12[b]
-                self.p_branch_ac_powerflow21[b] = self.varAcBranchFlow21[b]
+                # Github issue https://github.com/powergama/powergama/issues/29
+                # write it in terms of varAcBranchFlow and not varBranchFlow12 because
+                # under certain circumstances, varAcBranchFlow12 and varAcBranchFlow21
+                # may both be large (if high loss is beneficial) since there is no constraint
+                # forbidding simultaneous flow in both direction (only an indirect cost
+                # via generation costs)
+                if self.varAcBranchFlow[b].value > 0:
+                    self.p_branch_ac_powerflow12[b] = self.varAcBranchFlow[b].value
+                    self.p_branch_ac_powerflow21[b] = 0
+                else:
+                    self.p_branch_ac_powerflow12[b] = 0
+                    self.p_branch_ac_powerflow21[b] = -self.varAcBranchFlow[b].value
             for b in self.s_branch_dc:
-                self.p_branch_dc_powerflow12[b] = self.varDcBranchFlow12[b]
-                self.p_branch_dc_powerflow21[b] = self.varDcBranchFlow21[b]
+                # not the same issue for dc lines because there are not power flow equations
+                self.p_branch_dc_powerflow12[b] = self.varDcBranchFlow12[b].value
+                self.p_branch_dc_powerflow21[b] = self.varDcBranchFlow21[b].value
         elif self._lossmethod == 2:
             # compute power losses and store for next timestep
             for b in self.s_branch_ac:
