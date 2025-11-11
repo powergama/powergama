@@ -948,15 +948,16 @@ class Database(DatabaseBaseClass):
 
     def getResultBranchLossesSum(self, timeMaxMin, acdc="ac"):
         """Sum of losses for each time-step time step"""
-        sqlTable = "Res_Branches"
-        if acdc == "dc":
-            sqlTable = "Res_DcBranches"
+        valid_tables = {"ac": "Res_Branches", "dc": "Res_DcBranches"}
+        if acdc not in valid_tables:
+            raise Exception('branch type must be "ac" or "dc"')
+        table = valid_tables[acdc]
         con = db.connect(self.filename)
         with con:
             cur = con.cursor()
             cur.execute(
-                "SELECT indx,SUM(loss) FROM ? WHERE timestep>=? AND timestep<? GROUP BY timestep",
-                (sqlTable, timeMaxMin[0], timeMaxMin[-1]),
+                f"SELECT indx,SUM(loss) FROM {table} WHERE timestep>=? AND timestep<? GROUP BY timestep",  # nosec B608 - is safe even if bandit says no
+                (timeMaxMin[0], timeMaxMin[-1]),
             )
             rows = cur.fetchall()
             values = [row[1] for row in rows]
