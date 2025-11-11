@@ -369,7 +369,7 @@ Power losses in transmission lines increase quadratically with the power transmi
 
 There are three alternatives for treating transmission power losses in the simulation, specified through the `lossmethod`:
 - lossmethod = 0: No transmission losses included (default)
-- lossmethod = 1: Linearised model for power losees
+- lossmethod = 1: Linear model for power losees
 - lossmethod = 2: Losses added as load
 
 To get better approximation for the overall energy balance, transmission losses should be included
@@ -390,22 +390,22 @@ First, we introduce four new variables for each branch, that are all non-negativ
 $$P_j = P_j^+ - P_j^-$$
 $$P_j^{loss} = P_j^{loss,+} - P_j^{loss,-}$$
 
-
-The proportional approximation is:
+At a given time, only one of the two components is non-zero (flow cannot be in the both direction at the same time.)
+The proportional loss approximation is:
 
 $$
 P_j^{loss,+} = \alpha_{j} P_j^+,
 \quad
 P_j^{loss,-} = \alpha_{j} P_j^-,
 $$
-where
+where the loss factor $\alpha$ is computed from results in the previous time step:
 $$\alpha_{j,t} = \frac{P_{j,t-1}^{loss}}{|P_{j,t-1}|} 
 =  \frac{R_j P_{j,t-1}^2}{|P_{j,t-1}|}
 =  R_j |P_{j,t-1}|
 = R_j (P_j^{+} + P_j^{-})_{t-1}.
 $$
 
-
+These losses affect the power balance constraint in the optimisation (See constraint $C_5$ below) with the addition of the branch power loss enering the equation similarly to consumer load.
 
 
 ### Loss method 2

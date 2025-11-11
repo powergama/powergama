@@ -34,7 +34,7 @@ def test_faultsimulation(testcase_9bus_data, testcase_9bus_res, tmp_path):
     full_profiles.stored_storagevalue_time = gridmodel_base.storagevalue_time
     full_profiles.storagevalue_filling = gridmodel_base.storagevalue_filling
 
-    lp_base = powergama.LpProblem(gridmodel_base, lossmethod=1)
+    lp_base = powergama.LpProblem(gridmodel_base, lossmethod=0)
 
     # temporary folder for files created during test:
     dirname = tmp_path
