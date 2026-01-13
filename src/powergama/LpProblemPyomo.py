@@ -39,6 +39,8 @@ class LpProblem(pyo.ConcreteModel):
         grid data object
     lossmethod : int
         loss method; 0=no losses, 1=linearised losses, 2=added as load
+    penalty_twoway_flow : float
+        penalty factor to discourage flow in both directions on a branch with losses
     """
 
     def __init__(self, grid, lossmethod=0, penalty_twoway_flow=0):
@@ -227,55 +229,6 @@ class LpProblem(pyo.ConcreteModel):
         self.cMaxFlowAc = pyo.Constraint(self.s_branch_ac, rule=maxflowAc_rule)
         self.cMaxFlowDc = pyo.Constraint(self.s_branch_dc, rule=maxflowDc_rule)
 
-    def OBSOLETE_powerloss_rules1_linearisation(self, grid_data):
-        # linarisation based on power flow in previous timestep (see user guide/model desription)
-
-        # Some problems with this:
-        # loss is nonzero even if flow is zero, because of the B constant
-        # loss may be negative
-        # -> does it help to split p_branch_ac/dc_powerflow in pos and neg direction?
-
-        def make_lossAc_rule12(br):
-            def rule(model, j):
-                loss_A = 2 * br.loc[j, "resistance"] * model.p_branch_ac_powerflow[j]
-                loss_B = -br.loc[j, "resistance"] * model.p_branch_ac_powerflow[j] ** 2
-                expr = model.varLossAc12[j] == model.varAcBranchFlow12[j] * loss_A + loss_B
-                return expr
-
-            return rule
-
-        def make_lossAc_rule21(br):
-            def rule(model, j):
-                loss_A = 2 * br.loc[j, "resistance"] * model.p_branch_ac_powerflow[j]
-                loss_B = -br.loc[j, "resistance"] * model.p_branch_ac_powerflow[j] ** 2
-                expr = model.varLossAc21[j] == model.varAcBranchFlow21[j] * loss_A + loss_B
-                return expr
-
-            return rule
-
-        def make_lossDc_rule12(br):
-            def rule(model, j):
-                loss_A = 2 * br.loc[j, "resistance"] * model.p_branch_dc_powerflow[j]
-                loss_B = -br.loc[j, "resistance"] * model.p_branch_dc_powerflow[j] ** 2
-                expr = model.varLossDc12[j] == model.varDcBranchFlow12[j] * loss_A + loss_B
-                return expr
-
-            return rule
-
-        def make_lossDc_rule21(br):
-            def rule(model, j):
-                loss_A = 2 * br.loc[j, "resistance"] * model.p_branch_dc_powerflow[j]
-                loss_B = -br.loc[j, "resistance"] * model.p_branch_dc_powerflow[j] ** 2
-                expr = model.varLossDc21[j] == model.varDcBranchFlow21[j] * loss_A + loss_B
-                return expr
-
-            return rule
-
-        self.cLossAc12 = pyo.Constraint(self.s_branch_ac, rule=make_lossAc_rule12(grid_data.branch))
-        self.cLossAc21 = pyo.Constraint(self.s_branch_ac, rule=make_lossAc_rule21(grid_data.branch))
-        self.cLossDc12 = pyo.Constraint(self.s_branch_dc, rule=make_lossDc_rule12(grid_data.dcbranch))
-        self.cLossDc21 = pyo.Constraint(self.s_branch_dc, rule=make_lossDc_rule21(grid_data.dcbranch))
-
     def _powerloss_rules1(self, grid_data, penalty_twoway_flow=0):
         """Power loss proportional to flow, proportionality factor given by previous timestep
 
@@ -328,8 +281,9 @@ class LpProblem(pyo.ConcreteModel):
         make_lossDc_rule12(grid_data.dcbranch)
         make_lossDc_rule21(grid_data.dcbranch)
 
-        # add penalty in objective function to discourage simultaneous flow in both directions
-        # TODO: Github issue https://github.com/powergama/powergama/issues/29
+        # Add penalty in objective function to discourage simultaneous flow in both directions
+        # This is not particularly elegant and should not be normally used
+        # REF: Issue https://github.com/powergama/powergama/issues/29
         if penalty_twoway_flow > 0:
             print("Adding a cost to penalise simultaneous branch flow in both directions - ")
             self.OBJ.expr += penalty_twoway_flow * sum(
@@ -353,7 +307,6 @@ class LpProblem(pyo.ConcreteModel):
 
         # 1b Losses vs flow
         if self._lossmethod == 1:
-            # self._powerloss_rules1_linearisation_PROBLEMATIC(grid_data) # problematic linearisation with loss=A*flow + B
             self._powerloss_rules1(grid_data, penalty_twoway_flow)
 
     def _create_constraint_generator_output(self):
@@ -927,9 +880,6 @@ class LpProblem(pyo.ConcreteModel):
                 raise Exception("Could not find LP solver {}".format(solver))
         else:
             solver_io = None
-            # if solver=="cbc":
-            # NL requres CBC with ampl interface built in
-            #    solver_io="nl"
             opt = pyo.SolverFactory(solver, executable=solver_path, solver_io=solver_io)
             if opt.available():
                 print(":) Found solver here: {}".format(opt.executable()))
