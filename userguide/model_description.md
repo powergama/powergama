@@ -287,11 +287,12 @@ where $i,j \in \{1,2,\dots, N\}$. From these impedances, the bus
 admittance matrix $Y$ may be constructed:
 
 $$
-Y_{ij} = G_{ij}+jB_{ij} = \left\{ \begin{array}{ll} 
-        y_{ii} + \sum_{n\neq i} y_{ni}  & i=j, \\
-        -y_{ij}                 & i\neq j,
-    \end{array} \right.
-$$ 
+Y_{ij} = G_{ij}+jB_{ij} = 
+\begin{cases}
+y_{ii} + \sum_{n\neq i} y_{ni} & i = j, \\
+-y_{ij} & i \neq j,
+\end{cases}
+$$
 
 where $y_{ij} = g_{ij} + j b_{ij} = \frac{1}{z_{ij}}$
 is the admittance of the branch between $i$ and $j$.
@@ -363,6 +364,65 @@ where $D$ is a diagonal matrix with
 elements given by the branch susceptance $D_{mm} =-b_m$, and $A$ is the
 node-arc incidence matrix.
 
+## Power transmission losses
+Power losses in transmission lines increase quadratically with the power transmission, and since our model is linear, some approximation is necessary.
+
+There are three alternatives for treating transmission power losses in the simulation, specified through the `lossmethod`:
+- lossmethod = 0: No transmission losses included (default)
+- lossmethod = 1: Linear model for power losees
+- lossmethod = 2: Losses added as load
+
+To get better approximation for the overall energy balance, transmission losses should be included
+
+### Loss method 1
+
+In this case, the power losses are approximated as a linear function of the power flow. See Figure 6.
+
+<p id="fig_flexvalue_curve"><img src="losses_linear.png"/>
+<b>Figure 6:</b> Linearisation of losses. </p>
+
+
+The immediate idea would be to linearise around the operating point (red line), $P_{loss}=AP_{flow}+B$, with linearisation parameters $A$ and $B$ computed from results in the previous time-step. But this does not work well when power flow changes significantly from one timestep to the next. It may e.g. gives negative losses if power flow is far from the (assume) operating point. This could be avoided by computing $A$ and $B$ in an iterative way, at the cost of increased simulation time.
+
+Instead, we assume that power loss is proportional to the power flow (blue line), $P_{loss} = \alpha P_{flow}$ with the proporionality factor computed from flow and losses in the previous timestep. This is numerically stable and simple to impelment. It is less accurate, but gives the same incentive to the optimisation problem of avoiding long-distance transmission
+
+
+
+First, we introduce four new variables for each branch, that are all non-negative: Power flow in positive and negative direction, and power losses associated with flow in positive and negative direction.
+
+$$P_j = P_j^+ - P_j^-$$
+$$P_j^{loss} = P_j^{loss,+} - P_j^{loss,-}$$
+
+At a given time, only one of the two components is non-zero (flow cannot be in the both direction at the same time.)
+The proportional loss approximation is:
+
+$$
+P_j^{loss,+} = \alpha_{j} P_j^+,
+\quad
+P_j^{loss,-} = \alpha_{j} P_j^-,
+$$
+where the loss factor $\alpha$ is computed from results in the previous time step:
+$$\alpha_{j,t} = \frac{P_{j,t-1}^{loss}}{|P_{j,t-1}|} 
+=  \frac{R_j P_{j,t-1}^2}{|P_{j,t-1}|}
+=  R_j |P_{j,t-1}|
+= R_j (P_j^{+} + P_j^{-})_{t-1}.
+$$
+
+These losses affect the power balance constraint in the optimisation (See constraint $C_5$ below) with the addition of the branch power loss enering the equation similarly to consumer load.
+
+
+### Loss method 2
+In this case, the power loss $P_j^{loss}(t)$ on a branch $j$ is computed from the power flow results in the *previous* timestep via 
+$P_{j,t}^{loss} = R P_{j,t-1}^2$,
+where $R$ is the line resistance.
+This power loss is added as power consumption at the endpoints of the branch, with eaqual split on each node. The same is done both for AC and CD branches.
+
+This gives realistic power losses when the power flow does not change much from one timestep to the next. 
+It is useful for including transmission power losses in the overall power balance in a simple way.
+
+The main drawback with this method is that power losees do not directly influence the generation dispatch optimisation. There is no incentive in the optimisation for reducing losses as they are taken as fixed quantities.
+
+
 # Optimisation problem
 
 A linear objective function is used in order to ensure fast optimisation
@@ -372,8 +432,8 @@ input parameters.
 The set of variables <a id="eq_variables"></a> to be determined by the
 optimisation are 
 
-$$  X = \\{P_g^\text{gen}, P_p^\text{pump},P_f^\text{flex}, P_n^\text{shed},
-\theta_n, P_j \\}, %\label{eq_variables} $$ 
+$$  X = \{P_g^\text{gen}, P_p^\text{pump},P_f^\text{flex}, P_n^\text{shed},
+\theta_n, P_j \}, %\label{eq_variables} $$ 
 
 where $g\in \mathcal{G}$, the set of generators; $p\in \mathcal{P}$, the
 set of pumps; $f\in \mathcal{F}$, the set of flexible loads;
@@ -411,7 +471,8 @@ them. Referring to these constraints as $C_m$, the optimisation problem
 is formulated in the standard Linear Programming (LP) form 
 
 $$ \min F = \min \sum c_i X_i \quad \text{such that} \quad  
-\\{C_1,\dots,C_7\\}. %\label{eq:optimisation}  $$ 
+\\{C_1,\dots,C_7\\}. %\label{eq:optimisation}
+$$ 
 
 This must be solved time step by time step, where time steps are coupled
 due to the presence of storage. The various constraints are now
@@ -420,28 +481,40 @@ described in more detail.
 The *first* set of constraints states that power flow on branches is
 constrained by their capacity limits: 
 
-$$C_1:\quad  
-    - P_j^\text{max} \le P_j \le P_j^\text{max}$$
+$$
+C_1:\quad  - P_j^\text{max} \le P_j \le P_j^\text{max},
+$$
     
-where $j$ refers to AC
-and DC branches with limited capacity.
+where $j$ refers to AC and DC branches with limited capacity.
 
 The *second* set of constraints states that the power generation at
 generators is limited by lower and upper bounds, most notably the
 generation capacity and available power as described in the 
-[\[section on power generation\]](#power-generation): $$C_2:\quad 
-    P_g^\text{min} \le P^\text{gen}_g \le P_g^\text{limit},$$ where $g$
-refers to all generators.
+[\[section on power generation\]](#power-generation): 
+
+$$
+C_2:\quad P_g^\text{min} \le P^\text{gen}_g \le P_g^\text{limit},
+$$ 
+
+where $g$ refers to all generators.
 
 The *third* set of constraints states that the pumping is limited by the
-pump capacity $$C_3:\quad
-    0 \le P^\text{pump}_p \le P^\text{pump,max}_p,$$ where $p$ refers to
-all pumps.
+pump capacity 
+
+$$
+C_3:\quad 0 \le P^\text{pump}_p \le P^\text{pump,max}_p,
+$$ 
+
+where $p$ refers toall pumps.
 
 The *fourth* set of constraints states that the flexible load is limited
-by the maximum demand $$C_4:\quad
-    0 \le P^\text{flex}_f \le P^\text{flex,max}_f,$$ where $f$ refers to
-all flexible loads.
+by the maximum demand 
+
+$$
+C_4:\quad 0 \le P^\text{flex}_f \le P^\text{flex,max}_f,
+$$ 
+
+where $f$ refers to all flexible loads.
 
 The *fifth* set of constraints expresses the condition of power balance at
 each node, which requires that net power injection at a node equals the
@@ -457,8 +530,13 @@ following assumptions are made: 1) phase angle differences are small; 2)
 voltage deviations are small; 3) branch resistance is small compared to
 reactance; 4) shunt reactances are small, so self-admittances can be
 ignored. With these assumptions the AC power flow equations reduce to
-the linear equations (Grainger and Stevenson, pp. 371, 373) $$C_5: \quad
-    \mathbf{P}^\text{node} = \mathbf{B}^\prime \mathbf{\Theta},$$ where
+the linear equations (Grainger and Stevenson, pp. 371, 373) 
+
+$$C_5: \quad
+    \mathbf{P}^\text{node} = \mathbf{B}^\prime \mathbf{\Theta},
+$$
+
+where
 $\mathbf{\Theta}$ is a vector of voltage angles,
 $\mathbf{B}^\prime = - \mathbf{B}$, and $\mathbf{P}^\text{node}$ is a
 vector of net power injections into all nodes. The matrix
@@ -486,20 +564,17 @@ $\mathcal{D}_k$ is the set of DC branches connected to node $k$,
 $P_j^\text{cons}$ is consumer demand (fixed *and* flexible), and
 $\mathcal{C}_k$ is the set of loads at node $k$.
 
-The *sixth* set of constraints expresses the relationship between power
-flow on branches and nodal voltage angle differences. In the linear
-approximation, power flow $\mathbf{P^\text{ac}}$ on AC branches is
-related to nodal voltage angles as expressed by the equation
-$$C_6:\quad \mathbf{P}^\text{ac} = \mathbf{D A \Theta},$$ where
-$\mathbf{D}$ is a diagonal matrix with elements given by the branch
-reactance $D_{mm} =-\frac{1}{x_m}$, and $\mathbf{A}$ is the node-branch
-incidence matrix describing the network topology.
+The *sixth* set of constraints expresses the relationship between power flow on branches and nodal voltage angle differences. In the linear approximation, power flow $\mathbf{P^\text{ac}}$ on AC branches is related to nodal voltage angles as expressed by the equation
 
-The *seventh* constraint specifies the reference node and its voltage
-angle, $$C_7:\quad 
-    \theta_0 = 0.$$ Since these are arbitrary and don't influence the
-results, the reference is chosen such that the zeroth node has zero
-voltage angle.
+$$C_6:\quad \mathbf{P}^\text{ac} = \mathbf{D A \Theta},$$
+
+where $\mathbf{D}$ is a diagonal matrix with elements given by the branch reactance $D_{mm} =-\frac{1}{x_m}$, and $\mathbf{A}$ is the node-branch incidence matrix describing the network topology.
+
+The *seventh* constraint specifies the reference node and its voltage angle, 
+
+$$C_7:\quad \theta_0 = 0.$$
+
+Since these are arbitrary and don't influence the results, the reference is chosen such that the zeroth node has zero voltage angle.
 
 # References
 * Grainger, J.J. and Stevenson Jr, W.D., 1994. *Power system analysis*.
