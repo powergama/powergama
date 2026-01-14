@@ -1,5 +1,9 @@
 # Changes
 
+## v1.5.1
+2026-01-14
+- improve simulation with losses (lossmethod=1)
+
 ## v1.5.0
 2025-10-17
 - add option to read model, including grid data, from sqlite file

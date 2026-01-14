@@ -238,6 +238,17 @@ class LpProblem(pyo.ConcreteModel):
                 p_pu = self.varDcBranchFlow[b] / const.baseMVA
                 loss_pu = r_pu * p_pu**2
                 lossMVA = loss_pu * const.baseMVA * dclossmultiplier
+
+        NOTE:
+        With losses included, flow is split, flow=flow12-flow21. But there is no constraint
+        saying flow can be only one direction. In some cases, the optimisation may find it
+        beneficial to have increases losses by having large values for both flow12 and flow21
+        (with flow still below capacity). High losses on a branch may be beneficial by
+        allowing more flow on another line (under certain combinations of branch impedances
+        and capacities.)
+        The penalty_twoway_flow parameter may be used to discourange simultaneous (unphysical)
+        twoway flow by adding a penalty in the objective function. This is not generally advices
+        as it may have other unwanted effects (not sufficiently tested.)
         """
 
         def make_lossAc_rule12(br):

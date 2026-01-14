@@ -381,9 +381,12 @@ In this case, the power losses are approximated as a linear function of the powe
 <p id="fig_flexvalue_curve"><img src="losses_linear.png"/>
 <b>Figure 6:</b> Linearisation of losses. </p>
 
-In this case, we assume that power loss is proportional to the power flow (blue line), with the proporionality factor computed from flow and losses in the previous timestep. This is numerically stable and simple to impelment.
 
-An alternative could be to linearise around the operating point (red line), but this does not work well when power flow changes significantly from one timestep to the next. It may e.g. gives negative losses if power flow is far from the (assume) operating point.
+The immediate idea would be to linearise around the operating point (red line), $P_{loss}=AP_{flow}+B$, with linearisation parameters $A$ and $B$ computed from results in the previous time-step. But this does not work well when power flow changes significantly from one timestep to the next. It may e.g. gives negative losses if power flow is far from the (assume) operating point. This could be avoided by computing $A$ and $B$ in an iterative way, at the cost of increased simulation time.
+
+Instead, we assume that power loss is proportional to the power flow (blue line), $P_{loss} = \alpha P_{flow}$ with the proporionality factor computed from flow and losses in the previous timestep. This is numerically stable and simple to impelment. It is less accurate, but gives the same incentive to the optimisation problem of avoiding long-distance transmission
+
+
 
 First, we introduce four new variables for each branch, that are all non-negative: Power flow in positive and negative direction, and power losses associated with flow in positive and negative direction.
 
