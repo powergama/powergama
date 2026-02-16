@@ -1,6 +1,6 @@
 [project]
 name = "powergama"
-version = "1.5.1"
+version = "1.5.2"
 description = "PowerGAMA - Power Grid And Market Analysis tool)"
 authors = [{name="Harald G Svendsen", email="harald.svendsen@sintef.no"}]
 license = {text="MIT"}
@@ -35,7 +35,7 @@ dependencies = [
 homepage = "https://github.com/powergama/powergama"
 
 [tool.poetry.dependencies]
-python = ">=3.11,<3.14"
+python = ">=3.11,<3.15"
 
 [tool.poetry.group.dev.dependencies]
 pytest = ">=8.4"
