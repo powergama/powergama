@@ -712,6 +712,18 @@ class Database(DatabaseBaseClass):
             values = [row[1] for row in rows]
         return values
 
+    def getResultGeneratorPowerAll(self, timestep):
+        """Get power output for all generators at a single timestep, ordered by generator index"""
+        con = db.connect(self.filename)
+        with con:
+            cur = con.cursor()
+            cur.execute(
+                "SELECT indx,output FROM Res_Generators WHERE timestep=? ORDER BY indx",
+                (timestep,),
+            )
+            rows = cur.fetchall()
+        return {row[0]: row[1] for row in rows}
+
     def getResultStorageFillingMultiple(self, genindx, timeMaxMin, capacity=None):
         """Get storage filling level for multiple storage generators"""
         con = db.connect(self.filename)

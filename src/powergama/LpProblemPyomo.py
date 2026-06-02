@@ -82,6 +82,16 @@ class LpProblem(pyo.ConcreteModel):
         self._idx_generatorsWithPumping = grid.getIdxGeneratorsWithPumping()
         self._idx_generatorsWithStorage = grid.getIdxGeneratorsWithStorage()
         self._idx_consumersWithFlexLoad = grid.getIdxConsumersWithFlexibleLoad()
+        # Optional profile references for time-varying dispatch bounds.
+        # pmax_ref scales installed pmax (availability factor), pmin_ref sets a
+        # profile-driven floor as a fraction of installed pmax.
+        self._pmax_ref = grid.generator["pmax_ref"] if "pmax_ref" in grid.generator.columns else None
+        self._pmin_ref = grid.generator["pmin_ref"] if "pmin_ref" in grid.generator.columns else None
+        # Ramp-rate limits (MW per timestep). NaN means unconstrained.
+        self._ramp_up_mw = grid.generator["ramp_up_mw"].values.copy() if "ramp_up_mw" in grid.generator.columns else None
+        self._ramp_down_mw = grid.generator["ramp_down_mw"].values.copy() if "ramp_down_mw" in grid.generator.columns else None
+        # Previous-timestep generation dispatch; NaN signals first timestep (no ramp constraint).
+        self._gen_prev = np.full(len(grid.generator), np.nan)
         self._idx_branchesWithConstraints = grid.getIdxBranchesWithFlowConstraints()
         # self._fancy_progressbar = False
 
@@ -335,10 +345,7 @@ class LpProblem(pyo.ConcreteModel):
             return model.varGeneration[i] <= self.p_gen_pmax[i]
 
         def genMinLimit_rule(model, i):
-            if self.p_gen_pmin[i].value > 0:
-                return model.varGeneration[i] >= self.p_gen_pmin[i]
-            else:
-                return pyo.Constraint.Skip
+            return model.varGeneration[i] >= self.p_gen_pmin[i]
 
         self.cGenMaxLimit = pyo.Constraint(self.s_gen, rule=genMaxLimit_rule)
         self.cGenMinLimit = pyo.Constraint(self.s_gen, rule=genMinLimit_rule)
@@ -512,25 +519,56 @@ class LpProblem(pyo.ConcreteModel):
         P_max = self._grid.generator["pmax"]
         P_min = self._grid.generator["pmin"]
         for i in self.s_gen:
-            # inflow_factor = self._grid.generator.loc[i, "inflow_fac"]
-            # capacity = self._grid.generator.loc[i, "pmax"]
-            # inflow_profile = self._grid.generator.loc[i, "inflow_ref"]
-            # P_inflow = capacity * inflow_factor * self._grid.profiles.loc[timestep, inflow_profile]
-            P_inflow = self._grid.getGeneratorAvailablePower(i, timestep)
+            inflow_factor = self._grid.generator.loc[i, "inflow_fac"]
+            inflow_profile = self._grid.generator.loc[i, "inflow_ref"]
+
+            # Time-varying pmax factor is applied to installed capacity.
+            pmax_factor = 1.0
+            if self._pmax_ref is not None:
+                pmax_ref = self._pmax_ref.iloc[i]
+                if isinstance(pmax_ref, str) and pmax_ref in self._grid.profiles.columns:
+                    pmax_factor = self._grid.profiles.loc[timestep, pmax_ref]
+            capacity_now = max(0, P_max[i] * pmax_factor)
+            P_inflow = capacity_now * inflow_factor * self._grid.profiles.loc[timestep, inflow_profile]
+
+            # pmin_ref profile is interpreted as fraction of installed pmax.
+            pmin_now = P_min[i]
+            if self._pmin_ref is not None:
+                pmin_ref = self._pmin_ref.iloc[i]
+                if isinstance(pmin_ref, str) and pmin_ref in self._grid.profiles.columns:
+                    pmin_now = max(0, P_max[i] * self._grid.profiles.loc[timestep, pmin_ref])
             if i not in self._idx_generatorsWithStorage:
                 """
                 Don't let P_max limit the output (e.g. solar PV)
                 This won't affect fuel based generators with zero storage,
                 since these should have inflow=p_max in any case
                 """
-                if P_min[i] > 0:
-                    self.p_gen_pmin[i] = min(P_inflow, P_min[i])
+                self.p_gen_pmin[i] = max(min(P_inflow, pmin_now), 0)
                 self.p_gen_pmax[i] = P_inflow
             else:
                 # generator has storage
-                if P_min[i] > 0:
-                    self.p_gen_pmin[i] = min(max(0, P_inflow + P_storage[i]), P_min[i])
-                self.p_gen_pmax[i] = min(max(0, P_inflow + P_storage[i]), P_max[i])
+                self.p_gen_pmin[i] = max(min(max(0, P_inflow + P_storage[i]), pmin_now), 0)
+                self.p_gen_pmax[i] = min(max(0, P_inflow + P_storage[i]), capacity_now)
+
+        # 1b. Apply ramp-rate limits based on previous-timestep dispatch.
+        #     Generators with NaN ramp values or NaN _gen_prev (first timestep) are unconstrained.
+        if self._ramp_up_mw is not None or self._ramp_down_mw is not None:
+            for i in self.s_gen:
+                prev = self._gen_prev[i]
+                if np.isnan(prev):
+                    continue  # first timestep: no ramp constraint
+                ramp_up = self._ramp_up_mw[i] if self._ramp_up_mw is not None else np.nan
+                ramp_dn = self._ramp_down_mw[i] if self._ramp_down_mw is not None else np.nan
+                pmax_now = pyo.value(self.p_gen_pmax[i])
+                pmin_now = pyo.value(self.p_gen_pmin[i])
+                if not np.isnan(ramp_up):
+                    pmax_now = min(pmax_now, prev + ramp_up)
+                if not np.isnan(ramp_dn):
+                    pmin_now = max(pmin_now, prev - ramp_dn)
+                # Guard: pmin must not exceed pmax after ramp clipping
+                pmin_now = min(pmin_now, pmax_now)
+                self.p_gen_pmax[i] = max(pmax_now, 0)
+                self.p_gen_pmin[i] = max(pmin_now, 0)
 
         # TODO: re-create constraint - if persistent solver
 
@@ -724,6 +762,11 @@ class LpProblem(pyo.ConcreteModel):
             )
             self._storage_flexload[i] += energyIn_flexload - energyOut_flexload
 
+        # 1c. Record this timestep's dispatch for ramp constraints in next timestep.
+        for i in self.s_gen:
+            v = self.varGeneration[i].value
+            self._gen_prev[i] = v if v is not None else 0.0
+
         # 3. Collect variable values from optimisation result
         F = self.OBJ()
         Pgen = [self.varGeneration[i].value for i in self.s_gen]
@@ -884,6 +927,8 @@ class LpProblem(pyo.ConcreteModel):
         elif solver == "appsi_highs":
             # opt = pyo.SolverFactory(solver)
             opt = appsi.solvers.Highs()
+            # Keep solve() from raising on infeasible/unbounded runs; load values explicitly on optimal.
+            opt.config.load_solution = False
             if opt.available():
                 print(":) Found solver")
             else:
@@ -891,9 +936,23 @@ class LpProblem(pyo.ConcreteModel):
                 raise Exception("Could not find LP solver {}".format(solver))
         else:
             solver_io = None
-            opt = pyo.SolverFactory(solver, executable=solver_path, solver_io=solver_io)
+            # Some solver plugins (e.g. pyomo.contrib.highs) do not accept
+            # the executable kwarg in their ConfigDict.
+            if solver_path:
+                opt = pyo.SolverFactory(solver, executable=solver_path, solver_io=solver_io)
+            else:
+                opt = pyo.SolverFactory(solver, solver_io=solver_io)
             if opt.available():
-                print(":) Found solver here: {}".format(opt.executable()))
+                opt_exec = None
+                if hasattr(opt, "executable"):
+                    try:
+                        opt_exec = opt.executable()
+                    except Exception:
+                        opt_exec = None
+                if opt_exec:
+                    print(":) Found solver here: {}".format(opt_exec))
+                else:
+                    print(":) Found solver")
             else:
                 print(":( Could not find solver {}. Returning.".format(solver))
                 raise Exception("Could not find LP solver {}".format(solver))
@@ -912,11 +971,23 @@ class LpProblem(pyo.ConcreteModel):
             self._storage_flexload.loc[self._idx_consumersWithFlexLoad] = results.db.getResultFlexloadStorageFillingAll(
                 timestep=timesteps_to_solve[0] - 1
             )
+            # Restore previous-timestep generation for ramp constraints
+            if self._ramp_up_mw is not None or self._ramp_down_mw is not None:
+                prev_gen = results.db.getResultGeneratorPowerAll(timestep=timesteps_to_solve[0] - 1)
+                for i in self.s_gen:
+                    self._gen_prev[i] = prev_gen.get(i, 0.0)
 
         if self._lossmethod in [1, 2]:
             print("Computing losses in first timestep")
             self._updateLpProblem(timestep=timesteps_to_solve[0])
             res = opt.solve(self)
+            if isinstance(res, appsi.solvers.highs.HighsResults):
+                if res.termination_condition != appsi.base.TerminationCondition.optimal:
+                    raise RuntimeError(
+                        "APPSI HIGHS non-optimal termination before timestep loop: "
+                        f"{res.termination_condition}"
+                    )
+                opt.load_vars()
             # Now, power flow values are computed for the first timestep, and
             # power losses can be computed.
 
@@ -954,6 +1025,10 @@ class LpProblem(pyo.ConcreteModel):
             except Exception as ex:
                 # do something ()
                 print(f"SOLVE ERROR at timestep={timestep}. Tries to solve again")
+                if solver == "appsi_highs":
+                    # APPsi/HiGHS may emit cascading low-level row-bound update
+                    # errors on immediate retry; preserve original failure signal.
+                    raise
                 try:
                     res = opt.solve(self, **solve_args)
                 except Exception:
@@ -973,7 +1048,11 @@ class LpProblem(pyo.ConcreteModel):
 
             if isinstance(res, appsi.solvers.highs.HighsResults):
                 if res.termination_condition != appsi.base.TerminationCondition.optimal:
-                    print("APPSI HIGHS: Non-optimal solution")
+                    raise RuntimeError(
+                        f"APPSI HIGHS non-optimal termination at timestep={timestep}: "
+                        f"{res.termination_condition}"
+                    )
+                opt.load_vars()
                 self.dual = opt.get_duals()
             elif res.solver.status != pyomo.opt.SolverStatus.ok:
                 warnings.warn("Something went wrong with LP solver: {}".format(res.solver.status))
