@@ -90,6 +90,15 @@ class LpProblem(pyo.ConcreteModel):
         # Ramp-rate limits (MW per timestep). NaN means unconstrained.
         self._ramp_up_mw = grid.generator["ramp_up_mw"].values.copy() if "ramp_up_mw" in grid.generator.columns else None
         self._ramp_down_mw = grid.generator["ramp_down_mw"].values.copy() if "ramp_down_mw" in grid.generator.columns else None
+        # If True for a generator, the ramp constraint is released at the start of every 24-hour
+        # block (timestep % 24 == 0).  This models plant types (e.g. nuclear) whose output level
+        # is decided day-ahead but is held constant throughout the day.
+        # NOTE: Assumes simulations start at hour 0 (midnight).  Timestep indices from
+        # continue_from_last runs preserve the original numbering so midnight detection remains valid.
+        if "ramp_daily_reset" in grid.generator.columns:
+            self._ramp_daily_reset = grid.generator["ramp_daily_reset"].fillna(False).astype(bool).values
+        else:
+            self._ramp_daily_reset = None
         # Previous-timestep generation dispatch; NaN signals first timestep (no ramp constraint).
         self._gen_prev = np.full(len(grid.generator), np.nan)
         self._idx_branchesWithConstraints = grid.getIdxBranchesWithFlowConstraints()
@@ -552,6 +561,12 @@ class LpProblem(pyo.ConcreteModel):
 
         # 1b. Apply ramp-rate limits based on previous-timestep dispatch.
         #     Generators with NaN ramp values or NaN _gen_prev (first timestep) are unconstrained.
+        # Daily-reset generators have their _gen_prev cleared at the start of each 24-hour window,
+        # so they are free to choose a new level at midnight while staying fixed intra-day.
+        if self._ramp_daily_reset is not None and timestep % 24 == 0:
+            for i in self.s_gen:
+                if self._ramp_daily_reset[i]:
+                    self._gen_prev[i] = np.nan
         if self._ramp_up_mw is not None or self._ramp_down_mw is not None:
             for i in self.s_gen:
                 prev = self._gen_prev[i]
