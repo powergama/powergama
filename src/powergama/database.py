@@ -14,6 +14,7 @@ class DatabaseBaseClass(object):
     """
 
     SQLITE_MAX_VARIABLE_NUMBER = 990
+    SQLITE_MAX_COLUMNS_SOFT = 1800
 
     def __init__(self, filename):
         self.filename = os.path.abspath(filename)
@@ -47,7 +48,31 @@ class DatabaseBaseClass(object):
             data.dcbranch.to_sql("data_dcbranch", con, if_exists="replace", index=True)
             data.generator.to_sql("data_generator", con, if_exists="replace", index=True)
             data.consumer.to_sql("data_consumer", con, if_exists="replace", index=True)
-            data.profiles.to_sql("data_profiles", con, if_exists="replace", index=True)
+            prof_cols = list(data.profiles.columns)
+            if len(prof_cols) <= self.SQLITE_MAX_COLUMNS_SOFT:
+                data.profiles.to_sql("data_profiles", con, if_exists="replace", index=True)
+            else:
+                # Keep only analysis-relevant refs for SQL output.
+                # The full profile matrix is not needed for solving (solve uses in-memory grid),
+                # but SQL postprocessing needs stable load/inflow/lock references.
+                keep = self._select_profiles_for_sql(data)
+                if len(keep) > self.SQLITE_MAX_COLUMNS_SOFT:
+                    raise RuntimeError(
+                        "data_profiles still has too many required columns for SQLite output "
+                        f"({len(keep)} > {self.SQLITE_MAX_COLUMNS_SOFT}). "
+                        "Refusing silent truncation. Reduce profile references in PREPARE_RT "
+                        "or add an alternate non-wide export for diagnostics."
+                    )
+                print(
+                    "INFO: data_profiles reduced for SQL output: "
+                    + str(len(prof_cols))
+                    + " -> "
+                    + str(len(keep))
+                    + " columns (no silent truncation)."
+                )
+                data.profiles.loc[:, keep].to_sql("data_profiles", con, if_exists="replace", index=True)
+            if getattr(data, "inter_area_ntc", None) is not None:
+                data.inter_area_ntc.to_sql("data_inter_area_ntc", con, if_exists="replace", index=True)
             if data.storagevalue_filling is not None:
                 data.storagevalue_filling.to_sql("data_storval_filling", con, if_exists="replace", index=True)
                 data.storagevalue_time.to_sql("data_storval_time", con, if_exists="replace", index=True)
@@ -81,6 +106,45 @@ class DatabaseBaseClass(object):
 
         return nodes
 
+    def _select_profiles_for_sql(self, data):
+        """Select profile columns that are required for SQL-based diagnostics.
+
+        Keep demand and inflow references (used by postprocessing), lock-transfer and
+        residual-cap helper columns, and common constants.
+        """
+        profile_cols = list(data.profiles.columns)
+        profile_set = set(profile_cols)
+        keep = []
+
+        def _add(col):
+            if isinstance(col, str) and col in profile_set and col not in keep:
+                keep.append(col)
+
+        # Core utility columns used across datasets.
+        for c in [
+            "const",
+            "flexdemand",
+            "be_da_net_export_mw",
+            "be_da_lock_share",
+            "rt_residual_pos_cap_mw",
+            "rt_residual_neg_cap_mw",
+        ]:
+            _add(c)
+
+        # Consumer demand profiles drive BE/system load reconstruction.
+        if getattr(data, "consumer", None) is not None and "demand_ref" in data.consumer.columns:
+            for ref in data.consumer["demand_ref"].dropna().astype(str).unique():
+                _add(ref)
+
+        # Generator inflow profiles are used for availability and wind-speed proxies.
+        if getattr(data, "generator", None) is not None and "inflow_ref" in data.generator.columns:
+            for ref in data.generator["inflow_ref"].dropna().astype(str).unique():
+                _add(ref)
+
+        # Preserve original dataframe order for deterministic output.
+        ordered = [c for c in profile_cols if c in set(keep)]
+        return ordered
+
     def get_grid_data(self):
         """Extract grid data from database, as dictionary"""
         con = db.connect(self.filename)
@@ -89,6 +153,13 @@ class DatabaseBaseClass(object):
             for k in ["node", "branch", "dcbranch", "generator", "consumer", "profiles"]:
                 data[k] = pd.read_sql(f"SELECT * FROM data_{k}", con, index_col="index")  # nosec B608
                 data[k].index.name = None
+
+            df_ntc = pd.read_sql("SELECT name FROM sqlite_master WHERE type='table' AND name='data_inter_area_ntc'", con)
+            if not df_ntc.empty:
+                data["inter_area_ntc"] = pd.read_sql("SELECT * FROM data_inter_area_ntc", con, index_col="index")
+                data["inter_area_ntc"].index.name = None
+            else:
+                data["inter_area_ntc"] = None
 
             # Query to check if storage value tables exist
             df = pd.read_sql("SELECT name FROM sqlite_master WHERE type='table' AND name='data_storval_time'", con)
