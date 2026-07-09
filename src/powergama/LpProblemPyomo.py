@@ -871,40 +871,32 @@ class LpProblem(pyo.ConcreteModel):
         def _ac_pos_rule(model, b):
             if int(b) not in self._idx_be_border_ac:
                 return pyo.Constraint.Skip
-            sign = float(self._be_border_ac_sign.get(int(b), 0.0))
-            pos_var = model.varRtIoTargetDevPosAc[b] if sign >= 0.0 else model.varRtIoTargetDevNegAc[b]
             return (
-                self.p_rt_io_target_active_ac[b] * pos_var
+                    self.p_rt_io_target_active_ac[b] * model.varRtIoTargetDevPosAc[b]
                 <= self.p_rt_residual_pos_cap + model.varRtSourceIoAcPosExceed[b]
             )
 
         def _ac_neg_rule(model, b):
             if int(b) not in self._idx_be_border_ac:
                 return pyo.Constraint.Skip
-            sign = float(self._be_border_ac_sign.get(int(b), 0.0))
-            neg_var = model.varRtIoTargetDevNegAc[b] if sign >= 0.0 else model.varRtIoTargetDevPosAc[b]
             return (
-                self.p_rt_io_target_active_ac[b] * neg_var
+                    self.p_rt_io_target_active_ac[b] * model.varRtIoTargetDevNegAc[b]
                 <= self.p_rt_residual_neg_cap + model.varRtSourceIoAcNegExceed[b]
             )
 
         def _dc_pos_rule(model, b):
             if int(b) not in self._idx_be_border_dc:
                 return pyo.Constraint.Skip
-            sign = float(self._be_border_dc_sign.get(int(b), 0.0))
-            pos_var = model.varRtIoTargetDevPosDc[b] if sign >= 0.0 else model.varRtIoTargetDevNegDc[b]
             return (
-                self.p_rt_io_target_active_dc[b] * pos_var
+                    self.p_rt_io_target_active_dc[b] * model.varRtIoTargetDevPosDc[b]
                 <= self.p_rt_residual_pos_cap + model.varRtSourceIoDcPosExceed[b]
             )
 
         def _dc_neg_rule(model, b):
             if int(b) not in self._idx_be_border_dc:
                 return pyo.Constraint.Skip
-            sign = float(self._be_border_dc_sign.get(int(b), 0.0))
-            neg_var = model.varRtIoTargetDevNegDc[b] if sign >= 0.0 else model.varRtIoTargetDevPosDc[b]
             return (
-                self.p_rt_io_target_active_dc[b] * neg_var
+                    self.p_rt_io_target_active_dc[b] * model.varRtIoTargetDevNegDc[b]
                 <= self.p_rt_residual_neg_cap + model.varRtSourceIoDcNegExceed[b]
             )
 
