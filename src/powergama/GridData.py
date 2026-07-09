@@ -25,6 +25,7 @@ class GridData(object):
         "node": {"id": None, "area": None, "zone": "", "lat": None, "lon": None},
         "branch": {"node_from": None, "node_to": None, "reactance": None, "capacity": None, "resistance": 0.0},
         "dcbranch": {"node_from": None, "node_to": None, "capacity": None, "resistance": 0.0},
+        "inter_area_ntc": {"area_from": None, "area_to": None, "ntc_forward": None, "ntc_backward": None},
         "generator": {
             "type": None,
             "desc": "",
@@ -62,6 +63,7 @@ class GridData(object):
         "dcbranch": {"node_from": str, "node_to": str, "capacity": float},
         "generator": {"node": str, "type": str, "pmax": float},
         "consumer": {"node": str},
+        "inter_area_ntc": {"area_from": str, "area_to": str, "ntc_forward": float, "ntc_backward": float},
     }
 
     def __init__(self):
@@ -74,6 +76,7 @@ class GridData(object):
         self.dcbranch = None
         self.generator = None
         self.consumer = None
+        self.inter_area_ntc = None
         self.profiles = None
         self.storagevalue_filling = None
         self.storagevalue_time = None
@@ -93,14 +96,34 @@ class GridData(object):
         else:
             raise Exception("Rounding error")
 
+    def _read_tabular_file(self, file_input, dtype=None):
+        """Read tabular input from CSV (default) or Parquet based on file extension."""
+        path = pathlib.Path(file_input)
+        suffix = path.suffix.lower()
+
+        if suffix in {".parquet", ".pq"}:
+            try:
+                df = pd.read_parquet(path)
+            except ImportError as exc:
+                raise ImportError(
+                    "Reading Parquet input requires optional dependency 'pyarrow' or 'fastparquet'."
+                ) from exc
+            if dtype:
+                for col, col_dtype in dtype.items():
+                    if col in df.columns:
+                        df[col] = df[col].astype(col_dtype)
+            return df
+
+        return pd.read_csv(path, dtype=dtype, sep=self.CSV_SEPARATOR, engine="python")
+
     def read_csv_files(self, file_input, dataset):
         dtype = self.dtypes[dataset]
         if isinstance(file_input, str) or isinstance(file_input, pathlib.Path):
             # Single file
-            df = pd.read_csv(file_input, dtype=dtype)
+            df = self._read_tabular_file(file_input, dtype=dtype)
         elif isinstance(file_input, list):
             # Multiple files
-            df_list = [pd.read_csv(file, dtype=dtype) for file in file_input]
+            df_list = [self._read_tabular_file(file, dtype=dtype) for file in file_input]
             df = pd.concat(df_list, ignore_index=True)
         elif file_input is None:
             # Empty dataframe with the right columns
@@ -126,7 +149,7 @@ class GridData(object):
         self.timeDelta = timedelta
         self.timerange = list(self.profiles.index)
 
-    def readGridData(self, nodes, ac_branches, dc_branches, generators, consumers, remove_extra_columns=False):
+    def readGridData(self, nodes, ac_branches, dc_branches, generators, consumers, remove_extra_columns=False, inter_area_ntc=None):
         """Read grid data from files into data variables
 
         nodes: filename or list of filenames or None
@@ -134,6 +157,7 @@ class GridData(object):
         dc_branches: filename or list of filenames or None
         generators: filename or list of filenames or None
         consumers: filename or list of filenames or Non
+        inter_area_ntc: filename or list of filenames or None (optional)
         """
 
         self.node = self.read_csv_files(nodes, dataset="node")
@@ -141,6 +165,8 @@ class GridData(object):
         self.dcbranch = self.read_csv_files(dc_branches, dataset="dcbranch")
         self.generator = self.read_csv_files(generators, dataset="generator")
         self.consumer = self.read_csv_files(consumers, dataset="consumer")
+        if inter_area_ntc is not None:
+            self.inter_area_ntc = self.read_csv_files(inter_area_ntc, dataset="inter_area_ntc")
 
         self._checkGridDataFields(self.keys_powergama)
         self._checkGridData()
@@ -182,6 +208,11 @@ class GridData(object):
         for k in keys["node"]:
             if k not in self.node.keys():
                 self.node[k] = keys["node"][k]
+        # Handle optional inter_area_ntc if loaded
+        if self.inter_area_ntc is not None:
+            for k in keys["inter_area_ntc"]:
+                if k not in self.inter_area_ntc.keys():
+                    self.inter_area_ntc[k] = keys["inter_area_ntc"][k]
 
         # Discard extra columns (comments etc)
         if remove_extra_columns:
@@ -190,6 +221,8 @@ class GridData(object):
             self.dcbranch = self.dcbranch[list(keys["dcbranch"].keys())]
             self.generator = self.generator[list(keys["generator"].keys())]
             self.consumer = self.consumer[list(keys["consumer"].keys())]
+            if self.inter_area_ntc is not None:
+                self.inter_area_ntc = self.inter_area_ntc[list(keys["inter_area_ntc"].keys())]
 
     def _checkGridDataFields(self, keys):
         """check if all required columns are present
@@ -209,6 +242,11 @@ class GridData(object):
         for k, v in keys["consumer"].items():
             if v is None and k not in self.consumer:
                 raise Exception("Consumer input file must contain %s" % k)
+        # Only check inter_area_ntc if it was loaded
+        if self.inter_area_ntc is not None:
+            for k, v in keys["inter_area_ntc"].items():
+                if v is None and k not in self.inter_area_ntc:
+                    raise Exception("Inter-area NTC input file must contain %s" % k)
 
     def _checkConsistency(self):
         """Check consistency between default and provided values.
@@ -259,13 +297,13 @@ class GridData(object):
                 raise Exception("DC Branch to node does not exist: '%s'" % c)
 
     def _readProfileFromFile(self, filename, timerange):
-        profiles = pd.read_csv(filename, sep=self.CSV_SEPARATOR, engine="python")
+        profiles = self._read_tabular_file(filename)
         profiles = profiles.loc[timerange]
         profiles.index = range(len(timerange))
         return profiles
 
     def _readStoragevaluesFromFile(self, filename):
-        profiles = pd.read_csv(filename, sep=self.CSV_SEPARATOR, engine="python")
+        profiles = self._read_tabular_file(filename)
         return profiles
 
     def readProfileData(self, filename, timerange, storagevalue_filling=None, storagevalue_time=None, timedelta=1.0):

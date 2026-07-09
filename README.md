@@ -62,3 +62,12 @@ You are welcome to contribute to the improvement of the code.
 [Harald G Svendsen](https://www.sintef.no/en/all-employees/employee/?empid=3414)  
 SINTEF Energy Research
 
+## Project-Specific Workflow Note (This Workspace)
+
+If you are running the WILLOW T45 scenario workflows from this repository workspace, use the T45 runbooks instead of generic package commands:
+
+- `../willow/T45/README.md`
+- `../willow/T45/workflow/README.md`
+
+These documents provide copy-paste commands for the maintained scenario (`2023_I_A_A`), environment setup (`willow-py311`), and weekly storage-value sensitivity runs.
+
