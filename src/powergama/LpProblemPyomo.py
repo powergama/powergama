@@ -19,6 +19,8 @@ Module containing PowerGAMA LpProblem class
 
 import warnings
 import os
+import json
+import uuid
 from pathlib import Path
 
 import networkx as nx
@@ -54,8 +56,10 @@ class LpProblem(pyo.ConcreteModel):
         objective_day_horizon_hours=24,
         objective_day_commit_hours=24,
         storage_initial_fill_scale=1.0,
-        rt_residual_penalty=0.0,
-        rt_foreign_da_lock_penalty_coeff=0.0,
+        rt_dispatch_objective_mode="deviation",
+        rt_balancing_fee_eur_per_mwh=1.0,
+        rt_res_surplus_override_active=True,
+        rt_p_res_surplus=0.0,
         is_rt=False,
     ):
         # 1.
@@ -76,13 +80,19 @@ class LpProblem(pyo.ConcreteModel):
             raise ValueError("objective_mode must be one of: hourly, daily_24h")
         self._objective_day_horizon_hours = int(max(1, int(objective_day_horizon_hours)))
         self._objective_day_commit_hours = int(max(1, int(objective_day_commit_hours)))
-        self._rt_residual_penalty = float(rt_residual_penalty)
-        self._rt_foreign_da_lock_penalty_coeff = float(rt_foreign_da_lock_penalty_coeff)
-        self._rt_target_tracking_active = (
-            self._rt_residual_penalty > 0.0
-            or self._rt_foreign_da_lock_penalty_coeff > 0.0
-        )
         self._is_rt = bool(is_rt)
+        self._rt_dispatch_objective_mode = "deviation" if self._is_rt else str(rt_dispatch_objective_mode).strip().lower()
+        self._rt_deviation_objective_active = bool(
+            self._is_rt and self._rt_dispatch_objective_mode == "deviation"
+        )
+        self._rt_res_surplus_override_active = bool(rt_res_surplus_override_active)
+        self._rt_p_res_surplus = float(rt_p_res_surplus)
+        # Fixed balancing fee to discourage frivolous RT redispatch (€/MWh).
+        self._rt_balancing_fee_eur_per_mwh: float = float(rt_balancing_fee_eur_per_mwh)
+        self._rt_solver_debug_path: Path | None = None
+        self._rt_debug_session_id: str = ""
+        self._rt_target_tracking_active = bool(self._rt_deviation_objective_active)
+        self._initialize_rt_solver_debug_stream(grid)
         self._timestep_day_hour: dict[int, tuple[int, int]] = {}
         self._daily_objective_trace: dict[int, float] = {}
         self._hourly_objective_trace: list[tuple[int, int, int, float]] = []
@@ -150,6 +160,18 @@ class LpProblem(pyo.ConcreteModel):
         # Optional storage (reservoir/battery filling) DA target references for DA-target deviation penalties.
         # Stores normalized filling fraction [0, 1] to ensure storage state continuity matches DA.
         self._rt_storage_target_ref = grid.generator["rt_storage_target_ref"] if "rt_storage_target_ref" in grid.generator.columns else None
+        self._rt_storage_soc_da_pricing_ref = (
+            grid.generator["rt_storage_soc_da_pricing_ref"] if "rt_storage_soc_da_pricing_ref" in grid.generator.columns else None
+        )
+        self._rt_storage_pmax_ref = grid.generator["rt_storage_pmax_ref"] if "rt_storage_pmax_ref" in grid.generator.columns else None
+        self._rt_storage_pmin_ref = grid.generator["rt_storage_pmin_ref"] if "rt_storage_pmin_ref" in grid.generator.columns else None
+        self._rt_storage_soc_min_da_ref = (
+            grid.generator["rt_storage_soc_min_da_ref"] if "rt_storage_soc_min_da_ref" in grid.generator.columns else None
+        )
+        self._rt_storage_soc_max_da_ref = (
+            grid.generator["rt_storage_soc_max_da_ref"] if "rt_storage_soc_max_da_ref" in grid.generator.columns else None
+        )
+        self._rt_storage_soc_pricing_da_lag_hours = int(max(0, int(getattr(grid, "rt_storage_soc_pricing_da_lag_hours", 0) or 0)))
         self._rt_storage_target_indices = {
             int(i)
             for i in grid.generator.index
@@ -158,14 +180,6 @@ class LpProblem(pyo.ConcreteModel):
             and str(self._rt_storage_target_ref.loc[i]).strip()
             and int(i) in self._idx_generatorsWithStorage
         }
-        # Optional BE residual cap profiles (MW) for directional BE balancing constraints.
-        self._rt_residual_pos_cap_ref = "rt_residual_pos_cap_mw"
-        self._rt_residual_neg_cap_ref = "rt_residual_neg_cap_mw"
-        self._rt_residual_cap_active = (
-            self._rt_residual_penalty > 0
-            and self._rt_residual_pos_cap_ref in grid.profiles.columns
-            and self._rt_residual_neg_cap_ref in grid.profiles.columns
-        )
         self._idx_be_generators = {
             int(i)
             for i in grid.generator.index
@@ -223,6 +237,45 @@ class LpProblem(pyo.ConcreteModel):
         self._be_border_ac_flow_ub = None
         self._be_border_dc_flow_lb = None
         self._be_border_dc_flow_ub = None
+        # DA nodal prices: dict {(timestep, node_id): price} for wind/gas deviation pricing.
+        self._da_nodal_prices: dict[tuple[int, str], float] = {}
+        # DA storage marginalprice: dict {(timestep, storage_indx): value} for storage deviation pricing.
+        self._da_storage_marginalprice: dict[tuple[int, int], float] = {}
+        # Per-generator node map for deviation price lookup.
+        self._gen_node: dict[int, str] = {
+            int(i): str(grid.generator.loc[i, "node"])
+            for i in grid.generator.index
+        }
+        # Classify BE generators by type/tag for differentiated deviation pricing.
+        _gtype = grid.generator["type"].astype(str).str.lower() if "type" in grid.generator.columns else pd.Series("", index=grid.generator.index)
+        _gdesc = grid.generator["desc"].astype(str) if "desc" in grid.generator.columns else pd.Series("", index=grid.generator.index)
+        self._idx_be_peak_gas: set[int] = {
+            int(i) for i in grid.generator.index
+            if str(grid.generator.loc[i, "node"]).startswith("BE")
+            and _gtype.loc[i] == "fossil_gas"
+            and "[RT]" in str(_gdesc.loc[i])
+        }
+        self._idx_be_normal_gas: set[int] = {
+            int(i) for i in grid.generator.index
+            if str(grid.generator.loc[i, "node"]).startswith("BE")
+            and _gtype.loc[i] == "fossil_gas"
+            and "[RT]" not in str(_gdesc.loc[i])
+        }
+        self._idx_be_wind: set[int] = {
+            int(i) for i in grid.generator.index
+            if str(grid.generator.loc[i, "node"]).startswith("BE")
+            and _gtype.loc[i] in {"wind_off", "wind_on", "wind"}
+        }
+        self._idx_be_solar: set[int] = {
+            int(i) for i in grid.generator.index
+            if str(grid.generator.loc[i, "node"]).startswith("BE")
+            and _gtype.loc[i] == "solar"
+        }
+        self._idx_be_storage_gens: set[int] = {
+            int(i) for i in grid.generator.index
+            if str(grid.generator.loc[i, "node"]).startswith("BE")
+            and int(i) in self._idx_generatorsWithStorage
+        }
         self._idx_be_border_ac = {
             int(idx)
             for idx, row in grid.branch.iterrows()
@@ -319,9 +372,6 @@ class LpProblem(pyo.ConcreteModel):
         self._create_constraint_rt_flexload_target_tracking()
         self._create_constraint_rt_storage_target_tracking()
         self._create_constraint_rt_io_target_tracking()
-        self._create_constraint_rt_residual_caps()
-        self._create_constraint_rt_source_directional_caps()
-        self._create_constraint_rt_io_source_directional_caps()
         self._create_constraint_powerbalance(grid)
         self._create_constraint_powerflow_equation(grid)
 
@@ -417,6 +467,37 @@ class LpProblem(pyo.ConcreteModel):
                 except Exception as exc:
                     warnings.warn(f"Failed reading BE-border DC flow bounds parquet '{p}': {exc}", UserWarning)
 
+        da_nodal_prices_path = getattr(grid, "da_nodal_prices_parquet", "")
+        if da_nodal_prices_path:
+            p = Path(str(da_nodal_prices_path))
+            if p.exists():
+                try:
+                    ndf = pd.read_parquet(p)
+                    ndf["timestep"] = pd.to_numeric(ndf["timestep"], errors="coerce").fillna(-1).astype(int)
+                    ndf["nodalprice"] = pd.to_numeric(ndf["nodalprice"], errors="coerce").fillna(0.0)
+                    self._da_nodal_prices = {
+                        (int(row["timestep"]), str(row["node_id"])): float(row["nodalprice"])
+                        for _, row in ndf.iterrows()
+                    }
+                except Exception as exc:
+                    warnings.warn(f"Failed reading DA nodal prices parquet '{p}': {exc}", UserWarning)
+
+        da_storage_marginalprice_path = getattr(grid, "da_storage_marginalprice_parquet", "")
+        if da_storage_marginalprice_path:
+            p = Path(str(da_storage_marginalprice_path))
+            if p.exists():
+                try:
+                    sdf = pd.read_parquet(p)
+                    sdf["timestep"] = pd.to_numeric(sdf["timestep"], errors="coerce").fillna(-1).astype(int)
+                    sdf["indx"] = pd.to_numeric(sdf["indx"], errors="coerce").fillna(-1).astype(int)
+                    sdf["marginalprice"] = pd.to_numeric(sdf["marginalprice"], errors="coerce").fillna(0.0)
+                    self._da_storage_marginalprice = {
+                        (int(row["timestep"]), int(row["indx"])): float(row["marginalprice"])
+                        for _, row in sdf.iterrows()
+                    }
+                except Exception as exc:
+                    warnings.warn(f"Failed reading DA storage marginalprice parquet '{p}': {exc}", UserWarning)
+
     def _create_sets_and_parameters(self, grid_data):
         """Create pyomo model sets"""
         self.s_node = pyo.Set(ordered=True, initialize=grid_data.node["id"].tolist())
@@ -463,19 +544,21 @@ class LpProblem(pyo.ConcreteModel):
         )
         self.p_rt_target = pyo.Param(self.s_gen, within=pyo.Reals, default=0, mutable=True)
         self.p_rt_target_active = pyo.Param(self.s_gen, within=pyo.Binary, default=0, mutable=True)
-        self.p_rt_foreign_da_lock_penalty_gen = pyo.Param(self.s_gen, within=pyo.NonNegativeReals, default=0, mutable=True)
+        self.p_rt_deviation_price_gen = pyo.Param(self.s_gen, within=pyo.NonNegativeReals, default=0, mutable=True)
+        self.p_rt_deviation_price_gen_pos = pyo.Param(self.s_gen, within=pyo.Reals, default=0, mutable=True)
+        self.p_rt_deviation_price_gen_neg = pyo.Param(self.s_gen, within=pyo.Reals, default=0, mutable=True)
         self.p_demand = pyo.Param(self.s_load, within=pyo.Reals, default=0, mutable=True)
         self.p_rt_pump_target = pyo.Param(self.s_gen_pump, within=pyo.NonNegativeReals, default=0, mutable=True)
-        self.p_rt_foreign_da_lock_penalty_pump = pyo.Param(self.s_gen_pump, within=pyo.NonNegativeReals, default=0, mutable=True)
+        self.p_rt_deviation_price_pump = pyo.Param(self.s_gen_pump, within=pyo.NonNegativeReals, default=0, mutable=True)
         # Consumer (flexible load) RT DA target for DA-target deviation penalties
         self.p_rt_flexload_target = pyo.Param(self.s_load_flex, within=pyo.NonNegativeReals, default=0, mutable=True)
         self.p_rt_flexload_target_active = pyo.Param(self.s_load_flex, within=pyo.Binary, default=0, mutable=True)
-        self.p_rt_foreign_da_lock_penalty_flex = pyo.Param(self.s_load_flex, within=pyo.NonNegativeReals, default=0, mutable=True)
+        self.p_rt_deviation_price_flex = pyo.Param(self.s_load_flex, within=pyo.NonNegativeReals, default=0, mutable=True)
         self.p_rt_storage_target = pyo.Param(self.s_gen_storage, within=pyo.NonNegativeReals, default=0, mutable=True)
         self.p_rt_storage_balance_rhs = pyo.Param(self.s_gen_storage, within=pyo.NonNegativeReals, default=0, mutable=True)
-        self.p_rt_foreign_da_lock_penalty_storage = pyo.Param(self.s_gen_storage, within=pyo.NonNegativeReals, default=0, mutable=True)
-        self.p_rt_residual_pos_cap = pyo.Param(within=pyo.NonNegativeReals, default=0, mutable=True)
-        self.p_rt_residual_neg_cap = pyo.Param(within=pyo.NonNegativeReals, default=0, mutable=True)
+        self.p_rt_deviation_price_storage = pyo.Param(self.s_gen_storage, within=pyo.NonNegativeReals, default=0, mutable=True)
+        self.p_rt_deviation_price_storage_pos = pyo.Param(self.s_gen_storage, within=pyo.Reals, default=0, mutable=True)
+        self.p_rt_deviation_price_storage_neg = pyo.Param(self.s_gen_storage, within=pyo.Reals, default=0, mutable=True)
         self.p_rt_io_target_ac = pyo.Param(self.s_branch_ac, within=pyo.Reals, default=0, mutable=True)
         self.p_rt_io_target_dc = pyo.Param(self.s_branch_dc, within=pyo.Reals, default=0, mutable=True)
         self.p_rt_io_target_active_ac = pyo.Param(self.s_branch_ac, within=pyo.Binary, default=0, mutable=True)
@@ -527,18 +610,10 @@ class LpProblem(pyo.ConcreteModel):
         self.varCurtailment = pyo.Var(self.s_gen, within=pyo.NonNegativeReals)
         self.varRtTargetDevPos = pyo.Var(self.s_gen, within=pyo.NonNegativeReals)
         self.varRtTargetDevNeg = pyo.Var(self.s_gen, within=pyo.NonNegativeReals)
-        self.varRtSourceGenPosExceed = pyo.Var(self.s_gen, within=pyo.NonNegativeReals)
-        self.varRtSourceGenNegExceed = pyo.Var(self.s_gen, within=pyo.NonNegativeReals)
         self.varFlexLoad = pyo.Var(self.s_load_flex, within=pyo.NonNegativeReals)
         self.varRtPumpTargetDevPos = pyo.Var(self.s_gen_pump, within=pyo.NonNegativeReals)
         self.varRtPumpTargetDevNeg = pyo.Var(self.s_gen_pump, within=pyo.NonNegativeReals)
-        self.varRtSourcePumpPosExceed = pyo.Var(self.s_gen_pump, within=pyo.NonNegativeReals)
-        self.varRtSourcePumpNegExceed = pyo.Var(self.s_gen_pump, within=pyo.NonNegativeReals)
-        self.varRtResidualExceedPos = pyo.Var(within=pyo.NonNegativeReals)
-        self.varRtResidualExceedNeg = pyo.Var(within=pyo.NonNegativeReals)
         self.varLoadShed = pyo.Var(self.s_load, within=pyo.NonNegativeReals)
-        self.varRtSourceLoadShedExceed = pyo.Var(self.s_load, within=pyo.NonNegativeReals)
-        self.varRtSourceFlexLoadExceed = pyo.Var(self.s_load_flex, within=pyo.NonNegativeReals)
         # Flexible load DA target tracking deviations (soft penalty)
         self.varRtFlexLoadTargetDevPos = pyo.Var(self.s_load_flex, within=pyo.NonNegativeReals)
         self.varRtFlexLoadTargetDevNeg = pyo.Var(self.s_load_flex, within=pyo.NonNegativeReals)
@@ -548,10 +623,6 @@ class LpProblem(pyo.ConcreteModel):
         self.varRtIoTargetDevNegAc = pyo.Var(self.s_branch_ac, within=pyo.NonNegativeReals)
         self.varRtIoTargetDevPosDc = pyo.Var(self.s_branch_dc, within=pyo.NonNegativeReals)
         self.varRtIoTargetDevNegDc = pyo.Var(self.s_branch_dc, within=pyo.NonNegativeReals)
-        self.varRtSourceIoAcPosExceed = pyo.Var(self.s_branch_ac, within=pyo.NonNegativeReals)
-        self.varRtSourceIoAcNegExceed = pyo.Var(self.s_branch_ac, within=pyo.NonNegativeReals)
-        self.varRtSourceIoDcPosExceed = pyo.Var(self.s_branch_dc, within=pyo.NonNegativeReals)
-        self.varRtSourceIoDcNegExceed = pyo.Var(self.s_branch_dc, within=pyo.NonNegativeReals)
         self.varVoltageAngle = pyo.Var(self.s_node, within=pyo.Reals, initialize=0.0)
 
     def _create_constraint_powerflow_limit(self, grid_data):
@@ -819,7 +890,7 @@ class LpProblem(pyo.ConcreteModel):
     def _create_constraint_rt_io_target_tracking(self):
         """Constraint: DA BE border flow target deviation accounting for AC/DC branches."""
 
-        if self._rt_residual_penalty <= 0:
+        if not self._rt_target_tracking_active:
             return
 
         def _ac_rule(model, b):
@@ -840,159 +911,6 @@ class LpProblem(pyo.ConcreteModel):
 
         self.cRtIoTargetTrackingAc = pyo.Constraint(self.s_branch_ac, rule=_ac_rule)
         self.cRtIoTargetTrackingDc = pyo.Constraint(self.s_branch_dc, rule=_dc_rule)
-
-    def _create_constraint_rt_residual_caps(self):
-        """Constraint: cap BE balancing action by directional residual need.
-
-        Under BE residual-penalty mode, the solver may deviate from DA targets for balancing.
-        This constraint limits aggregate BE balancing action to the residual magnitude
-        per timestep (up/down), while allowing explicit overflow variables that are
-        penalized in the objective.
-        
-        Directional semantics (residual sign determines allowed correction):
-        - Positive residual (BE surplus): allow gen↑, pump↓ (help reduce), penalize others
-        - Negative residual (BE deficit): allow gen↓, pump↑ (help inject), penalize others
-        """
-
-        if not self._rt_residual_cap_active:
-            return
-
-        def _be_balancing_deviation(model):
-            dev_gen = sum(
-                model.varGeneration[i] - self.p_rt_target[i]
-                for i in self.s_gen
-                if int(i) in self._idx_be_target_generators
-            )
-            dev_pump = sum(
-                model.varPump[i] - self.p_rt_pump_target[i]
-                for i in self.s_gen_pump
-                if int(i) in self._idx_be_target_pumps
-            )
-            dev_loadshed = sum(
-                model.varLoadShed[j]
-                for j in self.s_load
-                if int(j) in self._idx_be_loads
-            )
-            dev_flex = sum(
-                model.varFlexLoad[j] - self.p_rt_flexload_target[j]
-                for j in self.s_load_flex
-                if int(j) in self._idx_be_target_flexloads
-            )
-            dev_io_ac = sum(
-                self._be_border_ac_sign.get(int(b), 0.0)
-                * self.p_rt_io_target_active_ac[b]
-                * (model.varAcBranchFlow[b] - self.p_rt_io_target_ac[b])
-                for b in self.s_branch_ac
-                if int(b) in self._idx_be_border_ac
-            )
-            dev_io_dc = sum(
-                self._be_border_dc_sign.get(int(b), 0.0)
-                * self.p_rt_io_target_active_dc[b]
-                * (model.varDcBranchFlow[b] - self.p_rt_io_target_dc[b])
-                for b in self.s_branch_dc
-                if int(b) in self._idx_be_border_dc
-            )
-            return dev_gen - dev_pump + dev_loadshed - dev_flex + dev_io_ac + dev_io_dc
-
-        def _rt_residual_pos_cap_rule(model):
-            return _be_balancing_deviation(model) <= self.p_rt_residual_pos_cap + model.varRtResidualExceedPos
-
-        def _rt_residual_neg_cap_rule(model):
-            return -_be_balancing_deviation(model) <= self.p_rt_residual_neg_cap + model.varRtResidualExceedNeg
-
-        self.cRtResidualPosCap = pyo.Constraint(rule=_rt_residual_pos_cap_rule)
-        self.cRtResidualNegCap = pyo.Constraint(rule=_rt_residual_neg_cap_rule)
-
-    def _create_constraint_rt_source_directional_caps(self):
-        """Constraint: cap each BE balancing source by the directional residual need.
-
-        The residual sign determines which correction channels are meaningful. A zero
-        directional cap soft-discourages the wrong-direction channel, while a positive
-        cap allows that channel up to the residual magnitude before the penalty applies.
-        """
-
-        if not self._rt_residual_cap_active:
-            return
-
-        def _gen_pos_rule(model, i):
-            if int(i) not in self._idx_be_target_generators:
-                return pyo.Constraint.Skip
-            return model.varRtTargetDevPos[i] <= self.p_rt_residual_pos_cap + model.varRtSourceGenPosExceed[i]
-
-        def _gen_neg_rule(model, i):
-            if int(i) not in self._idx_be_target_generators:
-                return pyo.Constraint.Skip
-            return model.varRtTargetDevNeg[i] <= self.p_rt_residual_neg_cap + model.varRtSourceGenNegExceed[i]
-
-        def _pump_pos_rule(model, i):
-            if int(i) not in self._idx_be_target_pumps:
-                return pyo.Constraint.Skip
-            return model.varRtPumpTargetDevNeg[i] <= self.p_rt_residual_pos_cap + model.varRtSourcePumpPosExceed[i]
-
-        def _pump_neg_rule(model, i):
-            if int(i) not in self._idx_be_target_pumps:
-                return pyo.Constraint.Skip
-            return model.varRtPumpTargetDevPos[i] <= self.p_rt_residual_neg_cap + model.varRtSourcePumpNegExceed[i]
-
-        def _loadshed_rule(model, j):
-            if int(j) not in self._idx_be_loads:
-                return pyo.Constraint.Skip
-            return model.varLoadShed[j] <= self.p_rt_residual_pos_cap + model.varRtSourceLoadShedExceed[j]
-
-        def _flex_rule(model, j):
-            if int(j) not in self._idx_be_flexloads:
-                return pyo.Constraint.Skip
-            return model.varFlexLoad[j] <= self.p_rt_residual_neg_cap + model.varRtSourceFlexLoadExceed[j]
-
-        self.cRtSourceGenPosCap = pyo.Constraint(self.s_gen, rule=_gen_pos_rule)
-        self.cRtSourceGenNegCap = pyo.Constraint(self.s_gen, rule=_gen_neg_rule)
-        self.cRtSourcePumpPosCap = pyo.Constraint(self.s_gen_pump, rule=_pump_pos_rule)
-        self.cRtSourcePumpNegCap = pyo.Constraint(self.s_gen_pump, rule=_pump_neg_rule)
-        self.cRtSourceLoadShedCap = pyo.Constraint(self.s_load, rule=_loadshed_rule)
-        self.cRtSourceFlexLoadCap = pyo.Constraint(self.s_load_flex, rule=_flex_rule)
-
-    def _create_constraint_rt_io_source_directional_caps(self):
-        """Constraint: cap DA I/O deviation channels by directional residual need."""
-
-        if not self._rt_residual_cap_active:
-            return
-
-        def _ac_pos_rule(model, b):
-            if int(b) not in self._idx_be_border_ac:
-                return pyo.Constraint.Skip
-            return (
-                    self.p_rt_io_target_active_ac[b] * model.varRtIoTargetDevPosAc[b]
-                <= self.p_rt_residual_pos_cap + model.varRtSourceIoAcPosExceed[b]
-            )
-
-        def _ac_neg_rule(model, b):
-            if int(b) not in self._idx_be_border_ac:
-                return pyo.Constraint.Skip
-            return (
-                    self.p_rt_io_target_active_ac[b] * model.varRtIoTargetDevNegAc[b]
-                <= self.p_rt_residual_neg_cap + model.varRtSourceIoAcNegExceed[b]
-            )
-
-        def _dc_pos_rule(model, b):
-            if int(b) not in self._idx_be_border_dc:
-                return pyo.Constraint.Skip
-            return (
-                    self.p_rt_io_target_active_dc[b] * model.varRtIoTargetDevPosDc[b]
-                <= self.p_rt_residual_pos_cap + model.varRtSourceIoDcPosExceed[b]
-            )
-
-        def _dc_neg_rule(model, b):
-            if int(b) not in self._idx_be_border_dc:
-                return pyo.Constraint.Skip
-            return (
-                    self.p_rt_io_target_active_dc[b] * model.varRtIoTargetDevNegDc[b]
-                <= self.p_rt_residual_neg_cap + model.varRtSourceIoDcNegExceed[b]
-            )
-
-        self.cRtSourceIoAcPosCap = pyo.Constraint(self.s_branch_ac, rule=_ac_pos_rule)
-        self.cRtSourceIoAcNegCap = pyo.Constraint(self.s_branch_ac, rule=_ac_neg_rule)
-        self.cRtSourceIoDcPosCap = pyo.Constraint(self.s_branch_dc, rule=_dc_pos_rule)
-        self.cRtSourceIoDcNegCap = pyo.Constraint(self.s_branch_dc, rule=_dc_neg_rule)
 
     def _create_constraint_generator_pump(self, grid_data):
         """Constraint: Pump output limit (respects both hardware cap and remaining reservoir space)."""
@@ -1113,70 +1031,39 @@ class LpProblem(pyo.ConcreteModel):
             """Operational costs: cost of gen, load shed and curtailment"""
 
             # Operational costs phase 1 (if stage2DeltaTime>0)
-            cost = sum(model.varGeneration[i] * self.p_gen_cost[i] for i in model.s_gen)
-            cost -= sum(model.varPump[i] * self.p_genpump_cost[i] for i in model.s_gen_pump)
-            cost -= sum(model.varFlexLoad[i] * self.p_loadflex_cost[i] for i in model.s_load_flex)
+            if self._rt_deviation_objective_active:
+                cost = 0
+            else:
+                cost = sum(model.varGeneration[i] * self.p_gen_cost[i] for i in model.s_gen)
+                cost -= sum(model.varPump[i] * self.p_genpump_cost[i] for i in model.s_gen_pump)
+                cost -= sum(model.varFlexLoad[i] * self.p_loadflex_cost[i] for i in model.s_load_flex)
             cost += sum(model.varLoadShed[i] * const.loadshedcost for i in model.s_load)
             cost += sum(model.varCurtailment[i] * self.p_curtail_cost[i] for i in model.s_gen)
-            if self._rt_foreign_da_lock_penalty_coeff > 0:
+
+            if self._rt_deviation_objective_active:
                 cost += sum(
-                    self.p_rt_foreign_da_lock_penalty_gen[i]
-                    * (model.varRtTargetDevPos[i] + model.varRtTargetDevNeg[i])
+                    self.p_rt_deviation_price_gen_pos[i] * model.varRtTargetDevPos[i]
+                    + self.p_rt_deviation_price_gen_neg[i] * model.varRtTargetDevNeg[i]
                     for i in model.s_gen
-                    if int(i) not in self._idx_be_target_generators
+                    if int(i) in self._rt_target_gen_indices
                 )
                 cost += sum(
-                    self.p_rt_foreign_da_lock_penalty_pump[i]
+                    self.p_rt_deviation_price_pump[i]
                     * (model.varRtPumpTargetDevPos[i] + model.varRtPumpTargetDevNeg[i])
                     for i in model.s_gen_pump
-                    if int(i) not in self._idx_be_target_pumps
+                    if int(i) in self._rt_pump_target_gen_indices
                 )
                 cost += sum(
-                    self.p_rt_foreign_da_lock_penalty_flex[j]
+                    self.p_rt_deviation_price_flex[j]
                     * (model.varRtFlexLoadTargetDevPos[j] + model.varRtFlexLoadTargetDevNeg[j])
                     for j in model.s_load_flex
-                    if int(j) not in self._idx_be_target_flexloads
+                    if int(j) in self._rt_consumer_target_indices
                 )
                 cost += sum(
-                    self.p_rt_foreign_da_lock_penalty_storage[i]
-                    * (model.varRtStorageTargetDevPos[i] + model.varRtStorageTargetDevNeg[i])
+                    self.p_rt_deviation_price_storage_pos[i] * model.varRtStorageTargetDevPos[i]
+                    + self.p_rt_deviation_price_storage_neg[i] * model.varRtStorageTargetDevNeg[i]
                     for i in model.s_gen_storage
-                    if int(i) not in self._idx_be_target_storage
-                )
-
-            if self._rt_residual_penalty > 0:
-                cost += self._rt_residual_penalty * sum(
-                    model.varRtSourceGenPosExceed[i] + model.varRtSourceGenNegExceed[i]
-                    for i in model.s_gen
-                    if int(i) in self._idx_be_target_generators
-                )
-                cost += self._rt_residual_penalty * sum(
-                    model.varRtSourcePumpPosExceed[i] + model.varRtSourcePumpNegExceed[i]
-                    for i in model.s_gen_pump
-                    if int(i) in self._idx_be_target_pumps
-                )
-                cost += self._rt_residual_penalty * sum(
-                    model.varRtSourceLoadShedExceed[i]
-                    for i in model.s_load
-                    if int(i) in self._idx_be_loads
-                )
-                cost += self._rt_residual_penalty * sum(
-                    model.varRtSourceFlexLoadExceed[i]
-                    for i in model.s_load_flex
-                    if int(i) in self._idx_be_target_flexloads
-                )
-                cost += self._rt_residual_penalty * sum(
-                    model.varRtSourceIoAcPosExceed[b] + model.varRtSourceIoAcNegExceed[b]
-                    for b in model.s_branch_ac
-                    if int(b) in self._idx_be_border_ac
-                )
-                cost += self._rt_residual_penalty * sum(
-                    model.varRtSourceIoDcPosExceed[b] + model.varRtSourceIoDcNegExceed[b]
-                    for b in model.s_branch_dc
-                    if int(b) in self._idx_be_border_dc
-                )
-                cost += self._rt_residual_penalty * (
-                    model.varRtResidualExceedPos + model.varRtResidualExceedNeg
+                    if int(i) in self._rt_storage_target_indices
                 )
             return cost
         self.OBJ = pyo.Objective(rule=cost_rule, sense=pyo.minimize)
@@ -1832,6 +1719,8 @@ class LpProblem(pyo.ConcreteModel):
                 fault_start=None,
             )
 
+            self._append_rt_solver_debug_day_joint(m, hi, grid.timerange[0] + ts)
+
             # Update gen_prev for context at day boundary
             for gi, i in enumerate(gen_list):
                 self._gen_prev[i] = Pgen[gi]
@@ -1922,6 +1811,472 @@ class LpProblem(pyo.ConcreteModel):
             print(f"Wrote objective trace CSV: {out_path}")
         except Exception as ex:
             warnings.warn(f"Failed to write POWERGAMA_OBJECTIVE_TRACE_CSV='{trace_path}': {ex}", UserWarning)
+
+    def _append_rt_solver_debug_payload(self, payload, *, warning_context=""):
+        """Best-effort JSONL append for RT solver diagnostics."""
+        if not self._is_rt or self._rt_solver_debug_path is None:
+            return False
+        try:
+            with self._rt_solver_debug_path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(payload, ensure_ascii=True) + "\n")
+            return True
+        except Exception as ex:
+            if warning_context:
+                warnings.warn(f"{warning_context}: {ex}", UserWarning)
+            return False
+
+    def _initialize_rt_solver_debug_stream(self, grid):
+        """Initialize optional RT solver debug stream and write a session header."""
+        _rt_debug_raw = str(getattr(grid, "rt_solver_debug_jsonl", "")).strip()
+        if not _rt_debug_raw:
+            _rt_debug_raw = str(os.environ.get("POWERGAMA_RT_SOLVER_DEBUG_JSONL", "")).strip()
+        if not (self._is_rt and _rt_debug_raw):
+            return
+        try:
+            _dbg_path = Path(_rt_debug_raw)
+            _dbg_path.parent.mkdir(parents=True, exist_ok=True)
+            self._rt_solver_debug_path = _dbg_path
+            self._rt_debug_session_id = str(uuid.uuid4())
+            _meta = {
+                "event": "rt_debug_header",
+                "debug_session_id": self._rt_debug_session_id,
+                "debug_header_written_at_utc": str(pd.Timestamp.utcnow().isoformat()),
+                "dispatch_objective_mode": self._rt_dispatch_objective_mode,
+                "rt_target_tracking_active": bool(self._rt_target_tracking_active),
+                "rt_balancing_fee_eur_per_mwh": float(self._rt_balancing_fee_eur_per_mwh),
+                "rt_storage_soc_pricing_da_lag_hours": int(max(0, int(getattr(grid, "rt_storage_soc_pricing_da_lag_hours", 0) or 0))),
+            }
+            self._append_rt_solver_debug_payload(
+                _meta,
+                warning_context=f"Failed to write RT solver debug header to '{_rt_debug_raw}'",
+            )
+        except Exception as ex:
+            warnings.warn(f"Failed to initialize RT solver debug stream '{_rt_debug_raw}': {ex}", UserWarning)
+            self._rt_solver_debug_path = None
+
+    def append_rt_solver_debug_event(self, payload):
+        """Public wrapper for optional debug append used by workflow helpers."""
+        self._append_rt_solver_debug_payload(payload)
+
+    def _append_rt_solver_debug(self, timestep):
+        """Append per-timestep RT solver internals for redispatch diagnostics."""
+        if not self._is_rt or self._rt_solver_debug_path is None:
+            return
+
+        def _val(x):
+            try:
+                v = pyo.value(x, exception=False)
+            except Exception:
+                v = x
+            if v is None:
+                return None
+            try:
+                fv = float(v)
+                if not np.isfinite(fv):
+                    return None
+                return fv
+            except Exception:
+                return None
+
+        def _sum_expr(items):
+            s = 0.0
+            for term in items:
+                tv = _val(term)
+                if tv is not None:
+                    s += tv
+            return float(s)
+
+        def _prof(ts, ref_name):
+            if not isinstance(ref_name, str):
+                return None
+            ref = str(ref_name).strip()
+            if not ref:
+                return None
+            try:
+                if ref in self._grid.profiles.columns:
+                    return float(self._grid.profiles.loc[int(ts), ref])
+            except Exception:
+                return None
+            return None
+
+        storage_rows = []
+        da_reference_storage_mismatch_cost = 0.0
+        for i in sorted(int(ii) for ii in self._idx_be_target_storage):
+            storage_cap = _val(self._grid.generator.loc[i, "storage_cap"]) or 0.0
+            pre_storage = _val(self._storage[i]) or 0.0
+            soc_rt = (pre_storage / storage_cap) if storage_cap > 0.0 else 0.0
+            ref_target = self._rt_storage_target_ref.iloc[int(i)] if self._rt_storage_target_ref is not None else ""
+            ref_soc_pricing = (
+                self._rt_storage_soc_da_pricing_ref.iloc[int(i)]
+                if self._rt_storage_soc_da_pricing_ref is not None
+                else ref_target
+            )
+            soc_da_target = _prof(timestep, ref_target)
+            soc_da_pricing = _prof(timestep, ref_soc_pricing)
+            dt_h = float(self.timeDelta) if np.isfinite(self.timeDelta) and self.timeDelta > 0.0 else 1.0
+            da_gen_target_mw = _val(self.p_rt_target[i]) or 0.0
+            da_pump_target_mw = (_val(self.p_rt_pump_target[i]) or 0.0) if int(i) in self.s_gen_pump else 0.0
+            eff = float(pd.to_numeric(self._grid.generator.loc[i, "pump_efficiency"], errors="coerce") or 0.0) if int(i) in self.s_gen_pump else 0.0
+            lhs_da_mwh = (_val(self.p_rt_storage_balance_rhs[i]) or 0.0) - dt_h * da_gen_target_mw
+            if int(i) in self.s_gen_pump:
+                lhs_da_mwh += dt_h * eff * da_pump_target_mw
+            target_mwh = _val(self.p_rt_storage_target[i]) or 0.0
+            mismatch_da_mwh = lhs_da_mwh - target_mwh
+            c_pos = _val(self.p_rt_deviation_price_storage_pos[i]) or 0.0
+            c_neg = _val(self.p_rt_deviation_price_storage_neg[i]) or 0.0
+            mismatch_da_cost = c_pos * max(0.0, mismatch_da_mwh) + c_neg * max(0.0, -mismatch_da_mwh)
+            da_reference_storage_mismatch_cost += float(mismatch_da_cost)
+            row = {
+                "indx": int(i),
+                "node": str(self._grid.generator.loc[i, "node"]),
+                "desc": str(self._grid.generator.loc[i, "desc"]),
+                "type": str(self._grid.generator.loc[i, "type"]),
+                "storage_cap_mwh": float(storage_cap),
+                "pre_storage_mwh": float(pre_storage),
+                "soc_rt": float(max(0.0, min(1.0, soc_rt))),
+                "target_storage_mwh": _val(self.p_rt_storage_target[i]) or 0.0,
+                "storage_dev_pos_mwh": _val(self.varRtStorageTargetDevPos[i]) or 0.0,
+                "storage_dev_neg_mwh": _val(self.varRtStorageTargetDevNeg[i]) or 0.0,
+                "coef_storage_pos": _val(self.p_rt_deviation_price_storage_pos[i]) or 0.0,
+                "coef_storage_neg": _val(self.p_rt_deviation_price_storage_neg[i]) or 0.0,
+                "gen_mw": _val(self.varGeneration[i]) or 0.0,
+                "pump_mw": (_val(self.varPump[i]) or 0.0) if int(i) in self.s_gen_pump else 0.0,
+                "gen_target_mw": _val(self.p_rt_target[i]) or 0.0,
+                "pump_target_mw": (_val(self.p_rt_pump_target[i]) or 0.0) if int(i) in self.s_gen_pump else 0.0,
+                "gen_cost_mwh": _val(self.p_gen_cost[i]) or 0.0,
+                "pump_cost_mwh": (_val(self.p_genpump_cost[i]) or 0.0) if int(i) in self.s_gen_pump else 0.0,
+                "rt_storage_target_ref": str(ref_target) if isinstance(ref_target, str) else "",
+                "rt_storage_soc_da_pricing_ref": str(ref_soc_pricing) if isinstance(ref_soc_pricing, str) else "",
+                "soc_da_target_profile": float(soc_da_target) if soc_da_target is not None else None,
+                "soc_da_pricing_profile": float(soc_da_pricing) if soc_da_pricing is not None else None,
+                "soc_pricing_gap_da_minus_rt": (
+                    float(soc_da_pricing - soc_rt)
+                    if soc_da_pricing is not None
+                    else None
+                ),
+                "da_ref_storage_balance_lhs_mwh": float(lhs_da_mwh),
+                "da_ref_storage_target_mwh": float(target_mwh),
+                "da_ref_storage_balance_mismatch_mwh": float(mismatch_da_mwh),
+                "da_ref_storage_mismatch_cost": float(mismatch_da_cost),
+                "storage_soc_pricing_da_lag_hours": int(self._rt_storage_soc_pricing_da_lag_hours),
+                "storage_soc_pricing_da_source_timestep": (
+                    int(timestep) - int(self._rt_storage_soc_pricing_da_lag_hours)
+                ),
+            }
+            storage_rows.append(row)
+
+        gas_rows = []
+        da_replay_unavoidable_gas_dev_cost_lb = 0.0
+        da_replay_infeasible_gas_count = 0
+        for i in sorted(int(ii) for ii in self._idx_be_target_generators if int(ii) in (self._idx_be_normal_gas | self._idx_be_peak_gas)):
+            pmin_now = _val(self.p_gen_pmin[i])
+            pmax_now = _val(self.p_gen_pmax[i])
+            target_now = _val(self.p_rt_target[i]) or 0.0
+            target_clipped = max(pmin_now if pmin_now is not None else 0.0, min(target_now, pmax_now if pmax_now is not None else target_now))
+            da_replay_pos_lb = max(0.0, target_clipped - target_now)
+            da_replay_neg_lb = max(0.0, target_now - target_clipped)
+            coef_pos = _val(self.p_rt_deviation_price_gen_pos[i]) or 0.0
+            coef_neg = _val(self.p_rt_deviation_price_gen_neg[i]) or 0.0
+            da_replay_cost_lb = da_replay_pos_lb * coef_pos + da_replay_neg_lb * coef_neg
+            ramp_prev = float(self._gen_prev[i]) if i < len(self._gen_prev) and np.isfinite(self._gen_prev[i]) else None
+            ramp_up = None
+            if self._ramp_up_mw is not None:
+                rv = self._ramp_up_mw[i]
+                ramp_up = float(rv) if np.isfinite(rv) else None
+            ramp_down = None
+            if self._ramp_down_mw is not None:
+                rv = self._ramp_down_mw[i]
+                ramp_down = float(rv) if np.isfinite(rv) else None
+            da_replay_reachable = (abs(da_replay_pos_lb) <= 1e-9) and (abs(da_replay_neg_lb) <= 1e-9)
+            if not da_replay_reachable:
+                da_replay_infeasible_gas_count += 1
+            da_replay_unavoidable_gas_dev_cost_lb += float(da_replay_cost_lb)
+            gas_rows.append(
+                {
+                    "indx": int(i),
+                    "node": str(self._grid.generator.loc[i, "node"]),
+                    "desc": str(self._grid.generator.loc[i, "desc"]),
+                    "is_peak_rt_block": bool(int(i) in self._idx_be_peak_gas),
+                    "gen_mw": _val(self.varGeneration[i]) or 0.0,
+                    "gen_target_mw": _val(self.p_rt_target[i]) or 0.0,
+                    "gen_dev_pos_mw": _val(self.varRtTargetDevPos[i]) or 0.0,
+                    "gen_dev_neg_mw": _val(self.varRtTargetDevNeg[i]) or 0.0,
+                    "coef_gen_pos": coef_pos,
+                    "coef_gen_neg": coef_neg,
+                    "gen_cost_mwh": _val(self.p_gen_cost[i]) or 0.0,
+                    "da_replay_target_reachable": bool(da_replay_reachable),
+                    "da_replay_prev_gen_mw": ramp_prev,
+                    "da_replay_ramp_up_mw": ramp_up,
+                    "da_replay_ramp_down_mw": ramp_down,
+                    "da_replay_feasible_pmin_mw": pmin_now,
+                    "da_replay_feasible_pmax_mw": pmax_now,
+                    "da_replay_target_clipped_mw": float(target_clipped),
+                    "da_replay_unavoidable_dev_pos_mw": float(da_replay_pos_lb),
+                    "da_replay_unavoidable_dev_neg_mw": float(da_replay_neg_lb),
+                    "da_replay_unavoidable_dev_cost_lb": float(da_replay_cost_lb),
+                }
+            )
+
+        gas_actual_dev_cost = sum(
+            float(row["gen_dev_pos_mw"]) * float(row["coef_gen_pos"])
+            + float(row["gen_dev_neg_mw"]) * float(row["coef_gen_neg"])
+            for row in gas_rows
+        )
+        storage_actual_dev_cost = sum(
+            float(row["storage_dev_pos_mwh"]) * float(row["coef_storage_pos"])
+            + float(row["storage_dev_neg_mwh"]) * float(row["coef_storage_neg"])
+            for row in storage_rows
+        )
+        storage_da_injected_abs_balance_mismatch_mwh = sum(
+            abs(float(row["da_ref_storage_balance_mismatch_mwh"]))
+            for row in storage_rows
+        )
+        storage_da_injected_signed_balance_mismatch_mwh = sum(
+            float(row["da_ref_storage_balance_mismatch_mwh"])
+            for row in storage_rows
+        )
+
+        be_balancing_dev = (
+            _sum_expr(
+                self.varGeneration[i] - self.p_rt_target[i]
+                for i in self.s_gen
+                if int(i) in self._idx_be_target_generators
+            )
+            - _sum_expr(
+                self.varPump[i] - self.p_rt_pump_target[i]
+                for i in self.s_gen_pump
+                if int(i) in self._idx_be_target_pumps
+            )
+            + _sum_expr(
+                self.varLoadShed[j]
+                for j in self.s_load
+                if int(j) in self._idx_be_loads
+            )
+            - _sum_expr(
+                self.varFlexLoad[j] - self.p_rt_flexload_target[j]
+                for j in self.s_load_flex
+                if int(j) in self._idx_be_target_flexloads
+            )
+            + _sum_expr(
+                self._be_border_ac_sign.get(int(b), 0.0)
+                * (_val(self.p_rt_io_target_active_ac[b]) or 0.0)
+                * ((_val(self.varAcBranchFlow[b]) or 0.0) - (_val(self.p_rt_io_target_ac[b]) or 0.0))
+                for b in self.s_branch_ac
+                if int(b) in self._idx_be_border_ac
+            )
+            + _sum_expr(
+                self._be_border_dc_sign.get(int(b), 0.0)
+                * (_val(self.p_rt_io_target_active_dc[b]) or 0.0)
+                * ((_val(self.varDcBranchFlow[b]) or 0.0) - (_val(self.p_rt_io_target_dc[b]) or 0.0))
+                for b in self.s_branch_dc
+                if int(b) in self._idx_be_border_dc
+            )
+        )
+
+        payload = {
+            "event": "rt_timestep_debug",
+            "timestep": int(timestep),
+            "objective": _val(self.OBJ()),
+            "flags": {
+                "rt_deviation_objective_active": bool(self._rt_deviation_objective_active),
+            },
+            "residual": {
+                "be_balancing_deviation_mw": float(be_balancing_dev),
+            },
+            "term_breakdown": {
+                "gen_dev": _sum_expr(
+                    self.p_rt_deviation_price_gen_pos[i] * self.varRtTargetDevPos[i]
+                    + self.p_rt_deviation_price_gen_neg[i] * self.varRtTargetDevNeg[i]
+                    for i in self.s_gen
+                    if int(i) in self._rt_target_gen_indices
+                ),
+                "pump_dev": _sum_expr(
+                    self.p_rt_deviation_price_pump[i]
+                    * (self.varRtPumpTargetDevPos[i] + self.varRtPumpTargetDevNeg[i])
+                    for i in self.s_gen_pump
+                    if int(i) in self._rt_pump_target_gen_indices
+                ),
+                "flex_dev": _sum_expr(
+                    self.p_rt_deviation_price_flex[j]
+                    * (self.varRtFlexLoadTargetDevPos[j] + self.varRtFlexLoadTargetDevNeg[j])
+                    for j in self.s_load_flex
+                    if int(j) in self._rt_consumer_target_indices
+                ),
+                "storage_dev": _sum_expr(
+                    self.p_rt_deviation_price_storage_pos[i] * self.varRtStorageTargetDevPos[i]
+                    + self.p_rt_deviation_price_storage_neg[i] * self.varRtStorageTargetDevNeg[i]
+                    for i in self.s_gen_storage
+                    if int(i) in self._rt_storage_target_indices
+                ),
+                "da_ref_storage_mismatch_cost": float(da_reference_storage_mismatch_cost),
+            },
+            "active_channels": {
+                "be_storage_target_count": int(len(self._idx_be_target_storage)),
+                "be_target_gen_count": int(len(self._idx_be_target_generators)),
+                "foreign_gen_lock_rows": int(sum(1 for i in self.s_gen if self._foreign_gen_lock is not None and (int(timestep), int(i)) in self._foreign_gen_lock.index)),
+                "foreign_cons_lock_rows": int(sum(1 for j in self.s_load if self._foreign_cons_lock is not None and (int(timestep), int(j)) in self._foreign_cons_lock.index)),
+                "be_io_target_active_ac": int(sum(int(_val(self.p_rt_io_target_active_ac[b]) or 0) for b in self.s_branch_ac if int(b) in self._idx_be_border_ac)),
+                "be_io_target_active_dc": int(sum(int(_val(self.p_rt_io_target_active_dc[b]) or 0) for b in self.s_branch_dc if int(b) in self._idx_be_border_dc)),
+            },
+            "da_injection_check": {
+                "storage_check_available": True,
+                "gas_da_injected_dev_cost": 0.0,
+                "storage_da_injected_dev_cost": float(da_reference_storage_mismatch_cost),
+                "storage_da_injected_abs_balance_mismatch_mwh": float(storage_da_injected_abs_balance_mismatch_mwh),
+                "storage_da_injected_signed_balance_mismatch_mwh": float(storage_da_injected_signed_balance_mismatch_mwh),
+                "da_replay_gas_reachable_count": int(len(gas_rows) - da_replay_infeasible_gas_count),
+                "da_replay_gas_infeasible_count": int(da_replay_infeasible_gas_count),
+                "da_replay_unavoidable_gas_dev_cost_lb": float(da_replay_unavoidable_gas_dev_cost_lb),
+                "actual_gas_rt_dev_cost": float(gas_actual_dev_cost),
+                "actual_storage_rt_dev_cost": float(storage_actual_dev_cost),
+                "actual_total_rt_dev_cost": float(gas_actual_dev_cost + storage_actual_dev_cost),
+            },
+            "be_storage_rows": storage_rows,
+            "be_gas_rows": gas_rows,
+        }
+
+        self._append_rt_solver_debug_payload(
+            payload,
+            warning_context=f"Failed writing RT solver debug at timestep={timestep}",
+        )
+
+    def _append_rt_solver_debug_day_joint(self, m, hi, timestep):
+        """Append per-timestep RT debug rows for daily_24h joint solves."""
+        if not self._is_rt or self._rt_solver_debug_path is None:
+            return
+
+        def _val(x):
+            try:
+                v = pyo.value(x, exception=False)
+                if v is None:
+                    return 0.0
+                fv = float(v)
+                if not np.isfinite(fv):
+                    return 0.0
+                return fv
+            except Exception:
+                return 0.0
+
+        def _prof(ts, ref_name):
+            if not isinstance(ref_name, str):
+                return None
+            ref = str(ref_name).strip()
+            if not ref:
+                return None
+            try:
+                if ref in self._grid.profiles.columns:
+                    return float(self._grid.profiles.loc[int(ts), ref])
+            except Exception:
+                return None
+            return None
+
+        storage_rows = []
+        for i in sorted(int(ii) for ii in self._idx_be_target_storage):
+            storage_cap = float(pd.to_numeric(self._grid.generator.loc[i, "storage_cap"], errors="coerce") or 0.0)
+            rt_storage_mwh = _val(m.varStorage[i, hi]) if i in self.s_gen_storage else 0.0
+            soc_rt = (rt_storage_mwh / storage_cap) if storage_cap > 0.0 else 0.0
+
+            target_storage_mwh = 0.0
+            ref_target = self._rt_storage_target_ref.iloc[int(i)] if self._rt_storage_target_ref is not None else ""
+            ref_soc_pricing = (
+                self._rt_storage_soc_da_pricing_ref.iloc[int(i)]
+                if self._rt_storage_soc_da_pricing_ref is not None
+                else ref_target
+            )
+            soc_da_target = _prof(timestep, ref_target)
+            soc_da_pricing = _prof(timestep, ref_soc_pricing)
+            if self._rt_storage_target_ref is not None:
+                ref = self._rt_storage_target_ref.iloc[int(i)]
+                rv = _prof(timestep, ref)
+                if rv is not None and storage_cap > 0.0:
+                    target_storage_mwh = max(0.0, storage_cap * max(0.0, min(1.0, rv)))
+
+            gen_mw = _val(m.varGeneration[i, hi])
+            pump_mw = _val(m.varPump[i, hi]) if i in self.s_gen_pump else 0.0
+
+            storage_rows.append(
+                {
+                    "indx": int(i),
+                    "node": str(self._grid.generator.loc[i, "node"]),
+                    "desc": str(self._grid.generator.loc[i, "desc"]),
+                    "rt_storage_mwh": float(rt_storage_mwh),
+                    "target_storage_mwh": float(target_storage_mwh),
+                    "storage_dev_pos_mwh": float(max(0.0, rt_storage_mwh - target_storage_mwh)),
+                    "storage_dev_neg_mwh": float(max(0.0, target_storage_mwh - rt_storage_mwh)),
+                    "soc_rt": float(max(0.0, min(1.0, soc_rt))),
+                    "rt_storage_target_ref": str(ref_target) if isinstance(ref_target, str) else "",
+                    "rt_storage_soc_da_pricing_ref": str(ref_soc_pricing) if isinstance(ref_soc_pricing, str) else "",
+                    "soc_da_target_profile": float(soc_da_target) if soc_da_target is not None else None,
+                    "soc_da_pricing_profile": float(soc_da_pricing) if soc_da_pricing is not None else None,
+                    "soc_pricing_gap_da_minus_rt": (
+                        float(soc_da_pricing - soc_rt)
+                        if soc_da_pricing is not None
+                        else None
+                    ),
+                    "storage_soc_pricing_da_lag_hours": int(self._rt_storage_soc_pricing_da_lag_hours),
+                    "storage_soc_pricing_da_source_timestep": (
+                        int(timestep) - int(self._rt_storage_soc_pricing_da_lag_hours)
+                    ),
+                    "gen_mw": float(gen_mw),
+                    "pump_mw": float(pump_mw),
+                }
+            )
+
+        gas_rows = []
+        be_gas_idx = self._idx_be_normal_gas | self._idx_be_peak_gas
+        for i in sorted(int(ii) for ii in self._idx_be_target_generators if int(ii) in be_gas_idx):
+            gen_mw = _val(m.varGeneration[i, hi])
+            target_mw = 0.0
+            if self._rt_target_ref is not None:
+                ref = self._rt_target_ref.iloc[int(i)]
+                rv = _prof(timestep, ref)
+                if rv is not None:
+                    pmax_base = float(pd.to_numeric(self._grid.generator.loc[i, "pmax"], errors="coerce") or 0.0)
+                    pmax_fac = 1.0
+                    if self._pmax_ref is not None:
+                        pmax_ref = self._pmax_ref.iloc[int(i)]
+                        pmax_ref_val = _prof(timestep, pmax_ref)
+                        if pmax_ref_val is not None:
+                            pmax_fac = float(pmax_ref_val)
+                    target_mw = max(0.0, pmax_base * pmax_fac * rv)
+
+            gas_rows.append(
+                {
+                    "indx": int(i),
+                    "node": str(self._grid.generator.loc[i, "node"]),
+                    "desc": str(self._grid.generator.loc[i, "desc"]),
+                    "is_peak_rt_block": bool(int(i) in self._idx_be_peak_gas),
+                    "gen_mw": float(gen_mw),
+                    "gen_target_mw": float(target_mw),
+                    "gen_dev_pos_mw": float(max(0.0, gen_mw - target_mw)),
+                    "gen_dev_neg_mw": float(max(0.0, target_mw - gen_mw)),
+                }
+            )
+
+        payload = {
+            "event": "rt_timestep_debug",
+            "debug_path_mode": "daily_24h",
+            "timestep": int(timestep),
+            "hour_in_window": int(hi),
+            "da_injection_check": {
+                "storage_check_available": False,
+                "gas_da_injected_dev_cost": 0.0,
+                "storage_da_injected_dev_cost": None,
+                "storage_da_injected_abs_balance_mismatch_mwh": None,
+                "storage_da_injected_signed_balance_mismatch_mwh": None,
+                "actual_gas_rt_dev_cost": None,
+                "actual_storage_rt_dev_cost": None,
+                "actual_total_rt_dev_cost": None,
+                "note": "daily_24h debug mode does not compute DA-reference storage mismatch diagnostics",
+            },
+            "be_storage_rows": storage_rows,
+            "be_gas_rows": gas_rows,
+        }
+
+        self._append_rt_solver_debug_payload(
+            payload,
+            warning_context=f"Failed writing daily_24h RT solver debug at timestep={timestep}",
+        )
 
     def _relax_and_retry(self, opt, warmstart, count, solve_args):
         raise NotImplementedError
@@ -2034,17 +2389,6 @@ class LpProblem(pyo.ConcreteModel):
                 else:
                     self.p_rt_storage_target[i] = 0.0
         
-        # Update storage (filling state) DA targets for DA-target deviation penalties
-        if self._rt_residual_cap_active:
-            pos_val = pd.to_numeric(
-                self._grid.profiles.loc[timestep, self._rt_residual_pos_cap_ref], errors="coerce"
-            )
-            neg_val = pd.to_numeric(
-                self._grid.profiles.loc[timestep, self._rt_residual_neg_cap_ref], errors="coerce"
-            )
-            self.p_rt_residual_pos_cap = max(0.0, float(pos_val) if np.isfinite(pos_val) else 0.0)
-            self.p_rt_residual_neg_cap = max(0.0, float(neg_val) if np.isfinite(neg_val) else 0.0)
-
         # 1b. Apply ramp-rate limits based on previous-timestep dispatch.
         #     Generators with NaN ramp values or NaN _gen_prev (first timestep) are unconstrained.
         # Daily-reset generators have their _gen_prev cleared at the start of each 24-hour window,
@@ -2151,32 +2495,180 @@ class LpProblem(pyo.ConcreteModel):
                 )
             self.p_loadflex_cost[i] = storagevalue_flex
 
-        # 3c. Non-BE DA-locking penalty weights (dimensionless coeff * DA source marginal cost/storage value).
-        _coeff = max(0.0, float(self._rt_foreign_da_lock_penalty_coeff))
+        # In deviation objective mode, deviation prices are RELATIVE TO DA DECISIONS:
+        #   - Normal gas [DA]: max(0, gen_cost - DA_price - fee) — free to reduce within ramps
+        #   - Peak gas [RT]: gen_cost - DA_price - fee — stays expensive (expensive reserve)
+        #   - Storage: DA_storage_value - DA_price - fee — protects DA's storage decisions
+        #   - Wind: DA_price - gen_cost - fee — curtailment is costly (prevents irrational patterns)
+        #   - Other BE gens: gen_cost - DA_price - fee
+        # All prices include a fixed balancing fee to discourage frivolous RT redispatch.
+        _fee = float(self._rt_balancing_fee_eur_per_mwh)
+        _split_eps = 1e-6
+
+        def _enforce_split_sum_guard(p_pos: float, p_neg: float, eps: float = _split_eps) -> tuple[float, float]:
+            """Ensure split-variable coefficients satisfy p_pos + p_neg >= eps.
+
+            This prevents degenerate/unbounded rays where both split variables can
+            increase together without improving the physical deviation variable.
+            The adjustment is applied to the smaller coefficient, matching the
+            intended semantics of preserving the larger directional signal.
+            """
+            s = float(p_pos) + float(p_neg)
+            if s >= float(eps):
+                return float(p_pos), float(p_neg)
+            add = float(eps) - s
+            if float(p_pos) <= float(p_neg):
+                return float(p_pos) + add, float(p_neg)
+            return float(p_pos), float(p_neg) + add
+
         for i in self.s_gen:
-            if int(i) in self._idx_be_target_generators or int(i) not in self._rt_target_gen_indices:
-                self.p_rt_foreign_da_lock_penalty_gen[i] = 0.0
-                continue
-            _price = max(0.0, float(self.p_gen_cost[i]))
-            self.p_rt_foreign_da_lock_penalty_gen[i] = _coeff * _price
+            if int(i) in self._rt_target_gen_indices:
+                ii = int(i)
+                if self._rt_deviation_objective_active:
+                    # Calculate default DA price (fallback to BE area average if node-specific not found)
+                    _da_price = float(self._da_nodal_prices.get((int(timestep), "BE"), 0.0))
+                    _node = self._gen_node.get(ii, "")
+                    _da_node_price = float(self._da_nodal_prices.get((int(timestep), _node), _da_price))
+                    _gen_cost = max(0.0, float(pyo.value(self.p_gen_cost[i])))
+
+                    if ii in self._idx_be_storage_gens:
+                        # Storage keeps its dedicated storage-target pricing path.
+                        _da_stor_value = float(self._da_storage_marginalprice.get((int(timestep), ii), 0.0))
+                        _legacy_dev_price = max(0.0, _da_stor_value - _da_node_price + _fee)
+                        _dev_price_pos = _legacy_dev_price
+                        _dev_price_neg = _legacy_dev_price
+                    else:
+                        # All generators follow the same base DA-relative split rule.
+                        _dev_price_pos = max(0.0, _gen_cost + _fee)
+                        _dev_price_neg = max(0.0, _da_node_price - _gen_cost) + _fee
+                        if self._rt_res_surplus_override_active and (ii in self._idx_be_wind or ii in self._idx_be_solar):
+                            # RES keeps the same downward price, but can override upward
+                            # deviation price with a dedicated surplus value.
+                            _dev_price_pos = float(self._rt_p_res_surplus)
+                else:
+                    _legacy_dev_price = max(0.0, float(pyo.value(self.p_gen_cost[i])) + _fee)
+                    _dev_price_pos = _legacy_dev_price
+                    _dev_price_neg = _legacy_dev_price
+                _dev_price_pos, _dev_price_neg = _enforce_split_sum_guard(_dev_price_pos, _dev_price_neg)
+                self.p_rt_deviation_price_gen_pos[i] = _dev_price_pos
+                self.p_rt_deviation_price_gen_neg[i] = _dev_price_neg
+                self.p_rt_deviation_price_gen[i] = max(_dev_price_pos, _dev_price_neg)
+            else:
+                self.p_rt_deviation_price_gen[i] = 0.0
+                self.p_rt_deviation_price_gen_pos[i] = 0.0
+                self.p_rt_deviation_price_gen_neg[i] = 0.0
         for i in self.s_gen_pump:
-            if int(i) in self._idx_be_target_pumps or int(i) not in self._rt_pump_target_gen_indices:
-                self.p_rt_foreign_da_lock_penalty_pump[i] = 0.0
-                continue
-            _price = max(0.0, float(self.p_genpump_cost[i]))
-            self.p_rt_foreign_da_lock_penalty_pump[i] = _coeff * _price
+            if int(i) in self._rt_pump_target_gen_indices:
+                if self._rt_deviation_objective_active and int(i) in self._idx_be_target_pumps:
+                    # Pump deviation carries balancing fee even when otherwise unconstrained.
+                    self.p_rt_deviation_price_pump[i] = max(0.0, _fee)
+                else:
+                    self.p_rt_deviation_price_pump[i] = max(0.0, float(pyo.value(self.p_genpump_cost[i])) + _fee)
+            else:
+                self.p_rt_deviation_price_pump[i] = 0.0
         for i in self.s_load_flex:
-            if int(i) in self._idx_be_target_flexloads or int(i) not in self._rt_consumer_target_indices:
-                self.p_rt_foreign_da_lock_penalty_flex[i] = 0.0
-                continue
-            _price = max(0.0, float(self.p_loadflex_cost[i]))
-            self.p_rt_foreign_da_lock_penalty_flex[i] = _coeff * _price
+            if int(i) in self._rt_consumer_target_indices:
+                self.p_rt_deviation_price_flex[i] = max(0.0, float(pyo.value(self.p_loadflex_cost[i])) + _fee)
+            else:
+                self.p_rt_deviation_price_flex[i] = 0.0
         for i in self.s_gen_storage:
-            if int(i) in self._idx_be_target_storage or int(i) not in self._rt_storage_target_indices:
-                self.p_rt_foreign_da_lock_penalty_storage[i] = 0.0
-                continue
-            _price = max(0.0, float(self.p_gen_cost[i]))
-            self.p_rt_foreign_da_lock_penalty_storage[i] = _coeff * _price
+            if int(i) in self._rt_storage_target_indices:
+                if self._rt_deviation_objective_active and int(i) in self._idx_be_target_storage:
+                    # Storage SOC-window pricing (Option 1):
+                    # Use DA trajectory and DA min/max-event windows to define asymmetric
+                    # incentive/penalty for storage target deviations.
+                    storage_cap = float(pd.to_numeric(self._grid.generator.loc[i, "storage_cap"], errors="coerce"))
+                    soc_rt = 0.0 if storage_cap <= 0.0 else float(self._storage[i]) / storage_cap
+                    soc_rt = max(0.0, min(1.0, soc_rt))
+
+                    soc_da = 0.0
+                    pmax_da = 0.0
+                    pmin_da = 0.0
+                    soc_min_da = 0.0
+                    soc_max_da = 1.0
+
+                    ref_soc = (
+                        self._rt_storage_soc_da_pricing_ref.iloc[int(i)]
+                        if self._rt_storage_soc_da_pricing_ref is not None
+                        else (
+                            self._rt_storage_target_ref.iloc[int(i)]
+                            if self._rt_storage_target_ref is not None
+                            else ""
+                        )
+                    )
+                    if isinstance(ref_soc, str) and ref_soc in self._grid.profiles.columns:
+                        soc_da = float(pd.to_numeric(self._grid.profiles.loc[timestep, ref_soc], errors="coerce"))
+                    ref_pmax = self._rt_storage_pmax_ref.iloc[int(i)] if self._rt_storage_pmax_ref is not None else ""
+                    if isinstance(ref_pmax, str) and ref_pmax in self._grid.profiles.columns:
+                        pmax_da = float(pd.to_numeric(self._grid.profiles.loc[timestep, ref_pmax], errors="coerce"))
+                    ref_pmin = self._rt_storage_pmin_ref.iloc[int(i)] if self._rt_storage_pmin_ref is not None else ""
+                    if isinstance(ref_pmin, str) and ref_pmin in self._grid.profiles.columns:
+                        pmin_da = float(pd.to_numeric(self._grid.profiles.loc[timestep, ref_pmin], errors="coerce"))
+                    ref_soc_min = self._rt_storage_soc_min_da_ref.iloc[int(i)] if self._rt_storage_soc_min_da_ref is not None else ""
+                    if isinstance(ref_soc_min, str) and ref_soc_min in self._grid.profiles.columns:
+                        soc_min_da = float(pd.to_numeric(self._grid.profiles.loc[timestep, ref_soc_min], errors="coerce"))
+                    ref_soc_max = self._rt_storage_soc_max_da_ref.iloc[int(i)] if self._rt_storage_soc_max_da_ref is not None else ""
+                    if isinstance(ref_soc_max, str) and ref_soc_max in self._grid.profiles.columns:
+                        soc_max_da = float(pd.to_numeric(self._grid.profiles.loc[timestep, ref_soc_max], errors="coerce"))
+
+                    soc_da = soc_da if np.isfinite(soc_da) else 0.0
+                    soc_min_da = soc_min_da if np.isfinite(soc_min_da) else 0.0
+                    # RT policy: always make full storage range available.
+                    # Keep DA soc_max profile reading for traceability, but do not
+                    # let it tighten RT availability/pricing behavior.
+                    soc_max_da = 1.0
+                    soc_da = max(0.0, min(1.0, soc_da))
+                    soc_min_da = max(0.0, min(1.0, soc_min_da))
+                    soc_max_da = max(0.0, min(1.0, soc_max_da))
+                    pmax_da = float(pmax_da) if np.isfinite(pmax_da) else 0.0
+                    pmin_da = float(pmin_da) if np.isfinite(pmin_da) else 0.0
+
+                    # Storage DA-tracking uses storage-balance deviation (not generation deviation):
+                    #   lhs - target = DevPos - DevNeg,
+                    # with lhs = balance_rhs - gen + pump*eff.
+                    # Therefore:
+                    # - charging tendency increases lhs  -> DevPos,
+                    # - discharging tendency decreases lhs -> DevNeg.
+                    #
+                    # Underfill pricing shape (user convention):
+                    #   delta_soc = max(SOC_DA - SOC_RT - SOC_min_DA, 0)
+                    #   pmaxtilde = pmax_da_price * delta_soc * (tau / dt)
+                    # where tau = Ecap / Pcap [h], dt = timestep duration [h].
+                    # Then:
+                    #   c_pos = p0 - pmaxtilde  (reward restore / charging side)
+                    #   c_neg = p0 + pmaxtilde  (penalize deviate / discharging side)
+                    # In overfill, keep both at fee.
+                    if soc_da > soc_rt:
+                        delta_soc = max(soc_da - soc_rt - soc_min_da, 0.0)
+                        ecap = float(pd.to_numeric(self._grid.generator.loc[i, "storage_cap"], errors="coerce"))
+                        pcap = float(pd.to_numeric(self._grid.generator.loc[i, "pmax"], errors="coerce"))
+                        if not np.isfinite(ecap) or ecap <= 0.0 or not np.isfinite(pcap) or pcap <= 0.0:
+                            tau_over_dt = 1.0
+                        else:
+                            dt_h = float(self.timeDelta) if np.isfinite(self.timeDelta) and self.timeDelta > 0.0 else 1.0
+                            tau_over_dt = (ecap / pcap) / dt_h
+                        pmaxtilde = pmax_da * delta_soc * max(0.0, tau_over_dt)
+                        c_pos = -pmaxtilde + _fee
+                        c_neg = +pmaxtilde + _fee
+                    else:
+                        c_pos = _fee
+                        c_neg = _fee
+
+                    c_pos, c_neg = _enforce_split_sum_guard(c_pos, c_neg)
+
+                    self.p_rt_deviation_price_storage_pos[i] = c_pos
+                    self.p_rt_deviation_price_storage_neg[i] = c_neg
+                    # Keep aggregate param for debug/output compatibility.
+                    self.p_rt_deviation_price_storage[i] = 0.5 * (c_pos + c_neg)
+                else:
+                    _c = max(0.0, float(pyo.value(self.p_gen_cost[i])) + _fee)
+                    self.p_rt_deviation_price_storage[i] = _c
+                    self.p_rt_deviation_price_storage_pos[i] = _c
+                    self.p_rt_deviation_price_storage_neg[i] = _c
+            else:
+                self.p_rt_deviation_price_storage[i] = 0.0
+                self.p_rt_deviation_price_storage_pos[i] = 0.0
+                self.p_rt_deviation_price_storage_neg[i] = 0.0
 
         # 4. Optional hard lock of BE cross-border branch flows to DA values
         for b in self.s_branch_ac:
@@ -2628,6 +3120,24 @@ class LpProblem(pyo.ConcreteModel):
 
         timesteps_to_solve = self._get_timesteps_to_solve(continue_from_last=continue_from_last, results=results)
         self._build_day_hour_index(timesteps_to_solve)
+        if self._is_rt and self._rt_solver_debug_path is not None:
+            last_saved = None
+            if continue_from_last and (results is not None):
+                try:
+                    last_saved = results.get_last_timestep_in_results()
+                except Exception:
+                    last_saved = None
+            payload = {
+                "event": "rt_debug_solve_start",
+                "debug_session_id": self._rt_debug_session_id,
+                "written_at_utc": str(pd.Timestamp.utcnow().isoformat()),
+                "continue_from_last": bool(continue_from_last),
+                "last_saved_timestep": (int(last_saved) if last_saved is not None else None),
+                "first_timestep": (int(timesteps_to_solve[0]) if timesteps_to_solve else None),
+                "last_timestep": (int(timesteps_to_solve[-1]) if timesteps_to_solve else None),
+                "n_timesteps": int(len(timesteps_to_solve)),
+            }
+            self._append_rt_solver_debug_payload(payload)
         if self._objective_mode == "daily_24h":
             # ── true 24h joint LP path ────────────────────────────────
             if self._lossmethod != 0:
@@ -2785,6 +3295,9 @@ class LpProblem(pyo.ConcreteModel):
                 obj_value = float(self.OBJ())
                 self._daily_objective_trace[day_idx] = self._daily_objective_trace.get(day_idx, 0.0) + obj_value
                 self._hourly_objective_trace.append((int(timestep), int(day_idx), int(hour_in_day), obj_value))
+
+            # Optional deep RT solver diagnostics (JSONL stream)
+            self._append_rt_solver_debug(timestep)
 
             # store results and update storage levels
             self._storeResultsAndUpdateStorage(timestep, results)
