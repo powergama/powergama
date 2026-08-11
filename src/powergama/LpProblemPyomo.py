@@ -1134,6 +1134,16 @@ class LpProblem(pyo.ConcreteModel):
         storage_ini = {int(i): float(self._storage[i]) for i in self._idx_generatorsWithStorage}
         storage_cap = {int(i): max(0.0, float(grid.generator.loc[i, "storage_cap"]))
                        for i in self._idx_generatorsWithStorage}
+        spill_frac_series = pd.to_numeric(grid.generator.get("spill_cap_frac", 1.0), errors="coerce")
+        if not isinstance(spill_frac_series, pd.Series):
+            spill_frac_series = pd.Series(spill_frac_series, index=grid.generator.index)
+        spill_cap_mw = {}
+        for i in self._idx_generatorsWithStorage:
+            raw_frac = spill_frac_series.loc[i] if i in spill_frac_series.index else 1.0
+            frac = 1.0 if pd.isna(raw_frac) else float(raw_frac)
+            frac = max(0.0, min(1.0, frac))
+            pmax_i = max(0.0, float(grid.generator.loc[i, "pmax"]))
+            spill_cap_mw[int(i)] = frac * pmax_i
         pump_eff_g = {int(i): float(grid.generator.loc[i, "pump_efficiency"])
                       for i in self._idx_generatorsWithPumping}
         pump_cap_raw = {int(i): float(grid.generator.loc[i, "pump_cap"])
@@ -1397,6 +1407,11 @@ class LpProblem(pyo.ConcreteModel):
                 prev_s + (infl - m.varGeneration[i, h] + pump_term - m.varSpill[i, h]) * dt
             )
         m.cStorCont = pyo.Constraint(m.s_gen_storage, m.s_h, rule=_stor_cont_rule)
+
+        # Limit spill power by per-generator fraction of installed generator capacity.
+        def _spill_cap_rule(m, i, h):
+            return m.varSpill[i, h] <= spill_cap_mw.get(i, 0.0)
+        m.cSpillCap = pyo.Constraint(m.s_gen_storage, m.s_h, rule=_spill_cap_rule)
 
         # ── pump bounds ────────────────────────────────────────────────
         # pump[i,h]*eff*dt + storage_prev <= storage_cap  (no spurious pump credit)

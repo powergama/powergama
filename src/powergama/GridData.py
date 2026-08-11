@@ -43,6 +43,7 @@ class GridData(object):
             "pump_cap": 0.0,
             "pump_efficiency": 0.0,
             "pump_deadband": 0.0,
+            "spill_cap_frac": 1.0,
             "ramp_up_pu": numpy.nan,
             "ramp_down_pu": numpy.nan,
             "ramp_up_mw": numpy.nan,
@@ -293,6 +294,17 @@ class GridData(object):
                     + "but non-zero pump capacity (%s)." % cur_gen.pump_cap
                 )
                 warnings.warn(warn_message, UserWarning)
+
+            # spill_cap_frac is interpreted as a fraction in [0, 1].
+            if "spill_cap_frac" in self.generator.columns:
+                spill_frac = pd.to_numeric(cur_gen.spill_cap_frac, errors="coerce")
+                if pd.notna(spill_frac) and (spill_frac < 0.0 or spill_frac > 1.0):
+                    warn_message = (
+                        "Warning, generator at node '%s' " % cur_gen.node
+                        + "has spill_cap_frac=%s outside [0,1]. " % cur_gen.spill_cap_frac
+                        + "Solver will clip it to [0,1]."
+                    )
+                    warnings.warn(warn_message, UserWarning)
 
     def _checkGridData(self):
         """Check consistency of grid data"""
