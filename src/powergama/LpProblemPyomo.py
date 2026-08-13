@@ -271,10 +271,34 @@ class LpProblem(pyo.ConcreteModel):
             if str(grid.generator.loc[i, "node"]).startswith("BE")
             and _gtype.loc[i] == "solar"
         }
+        self._idx_be_nuclear: set[int] = {
+            int(i) for i in grid.generator.index
+            if str(grid.generator.loc[i, "node"]).startswith("BE")
+            and _gtype.loc[i] == "nuclear"
+        }
+        self._idx_be_biomass: set[int] = {
+            int(i) for i in grid.generator.index
+            if str(grid.generator.loc[i, "node"]).startswith("BE")
+            and _gtype.loc[i] == "biomass"
+        }
+        self._idx_be_fossil_other: set[int] = {
+            int(i) for i in grid.generator.index
+            if str(grid.generator.loc[i, "node"]).startswith("BE")
+            and _gtype.loc[i] == "fossil_other"
+        }
         self._idx_be_storage_gens: set[int] = {
             int(i) for i in grid.generator.index
             if str(grid.generator.loc[i, "node"]).startswith("BE")
             and int(i) in self._idx_generatorsWithStorage
+        }
+        self._idx_be_hydro_ror: set[int] = {
+            int(i)
+            for i in grid.generator.index
+            if str(grid.generator.loc[i, "node"]).startswith("BE")
+            and _gtype.loc[i] == "hydro"
+            and int(i) not in self._idx_be_storage_gens
+            and float(pd.to_numeric(grid.generator.loc[i, "pump_cap"], errors="coerce") or 0.0) <= 0.0
+            and float(pd.to_numeric(grid.generator.loc[i, "storage_cap"], errors="coerce") or 0.0) <= 0.0
         }
         self._idx_be_border_ac = {
             int(idx)
@@ -332,8 +356,20 @@ class LpProblem(pyo.ConcreteModel):
         # self._fancy_progressbar = False
 
         # Initial values of marginal costs, storage and storage values
+        # Apply optional start-fill scaling only to pumped hydro and batteries.
         _ini_fill_scale = float(max(0.0, min(1.0, storage_initial_fill_scale)))
-        self._storage = (_ini_fill_scale * grid.generator["storage_ini"] * grid.generator["storage_cap"]).fillna(0)
+        _gen_type = (
+            grid.generator["type"].astype(str).str.lower()
+            if "type" in grid.generator.columns
+            else pd.Series("", index=grid.generator.index)
+        )
+        _pump_cap = pd.to_numeric(grid.generator.get("pump_cap", 0.0), errors="coerce").fillna(0.0)
+        _storage_cap = pd.to_numeric(grid.generator.get("storage_cap", 0.0), errors="coerce").fillna(0.0)
+        _eligible_scaled_fill = ((_gen_type == "hydro") & (_pump_cap > 0.0)) | (_gen_type == "battery")
+        _fill_scale = pd.Series(1.0, index=grid.generator.index, dtype=float)
+        _fill_scale.loc[_eligible_scaled_fill] = _ini_fill_scale
+        _storage_ini = pd.to_numeric(grid.generator.get("storage_ini", 0.0), errors="coerce").fillna(0.0)
+        self._storage = (_fill_scale * _storage_ini * _storage_cap).fillna(0)
         self._storage_flexload = (
             grid.consumer["flex_storagelevel_init"]
             * grid.consumer["flex_storage"]
@@ -2088,6 +2124,91 @@ class LpProblem(pyo.ConcreteModel):
             )
         )
 
+        redispatch_cost_attribution_eur: dict[str, float] = {
+            "wind": 0.0,
+            "solar": 0.0,
+            "gas": 0.0,
+            "nuclear": 0.0,
+            "hydro_ror": 0.0,
+            "biomass": 0.0,
+            "fossil_other": 0.0,
+            "storage_generation": 0.0,
+            "other": 0.0,
+            "storage_soc": 0.0,
+            "pump_dev": 0.0,
+            "flex_dev": 0.0,
+        }
+        redispatch_mw_attribution: dict[str, dict[str, float]] = {}
+
+        def _bucket_for_gen(ii: int) -> str:
+            if ii in self._idx_be_storage_gens:
+                return "storage_generation"
+            if ii in self._idx_be_wind:
+                return "wind"
+            if ii in self._idx_be_solar:
+                return "solar"
+            if ii in (self._idx_be_normal_gas | self._idx_be_peak_gas):
+                return "gas"
+            if ii in self._idx_be_nuclear:
+                return "nuclear"
+            if ii in self._idx_be_hydro_ror:
+                return "hydro_ror"
+            if ii in self._idx_be_biomass:
+                return "biomass"
+            if ii in self._idx_be_fossil_other:
+                return "fossil_other"
+            return "other"
+
+        for i in self.s_gen:
+            ii = int(i)
+            if ii not in self._idx_be_target_generators:
+                continue
+            dev_pos = _val(self.varRtTargetDevPos[i]) or 0.0
+            dev_neg = _val(self.varRtTargetDevNeg[i]) or 0.0
+            coef_pos = _val(self.p_rt_deviation_price_gen_pos[i]) or 0.0
+            coef_neg = _val(self.p_rt_deviation_price_gen_neg[i]) or 0.0
+            this_cost = float(dev_pos * coef_pos + dev_neg * coef_neg)
+            bucket = _bucket_for_gen(ii)
+            redispatch_cost_attribution_eur[bucket] = float(redispatch_cost_attribution_eur.get(bucket, 0.0) + this_cost)
+            if bucket not in redispatch_mw_attribution:
+                redispatch_mw_attribution[bucket] = {
+                    "abs_dev_mw": 0.0,
+                    "signed_dev_mw": 0.0,
+                    "up_dev_mw": 0.0,
+                    "down_dev_mw": 0.0,
+                }
+            redispatch_mw_attribution[bucket]["abs_dev_mw"] += float(dev_pos + dev_neg)
+            redispatch_mw_attribution[bucket]["signed_dev_mw"] += float(dev_pos - dev_neg)
+            redispatch_mw_attribution[bucket]["up_dev_mw"] += float(dev_pos)
+            redispatch_mw_attribution[bucket]["down_dev_mw"] += float(dev_neg)
+
+        redispatch_cost_attribution_eur["storage_soc"] = float(storage_actual_dev_cost)
+        redispatch_cost_attribution_eur["pump_dev"] = _sum_expr(
+            self.p_rt_deviation_price_pump[i]
+            * (self.varRtPumpTargetDevPos[i] + self.varRtPumpTargetDevNeg[i])
+            for i in self.s_gen_pump
+            if int(i) in self._rt_pump_target_gen_indices
+        )
+        redispatch_cost_attribution_eur["flex_dev"] = _sum_expr(
+            self.p_rt_deviation_price_flex[j]
+            * (self.varRtFlexLoadTargetDevPos[j] + self.varRtFlexLoadTargetDevNeg[j])
+            for j in self.s_load_flex
+            if int(j) in self._rt_consumer_target_indices
+        )
+
+        gen_dev_cost_total = _sum_expr(
+            self.p_rt_deviation_price_gen_pos[i] * self.varRtTargetDevPos[i]
+            + self.p_rt_deviation_price_gen_neg[i] * self.varRtTargetDevNeg[i]
+            for i in self.s_gen
+            if int(i) in self._rt_target_gen_indices
+        )
+        redispatch_cost_attribution_eur["meta_be_gen_dev_cost_accounted"] = float(
+            sum(redispatch_cost_attribution_eur.get(k, 0.0) for k in [
+                "wind", "solar", "gas", "nuclear", "hydro_ror", "biomass", "fossil_other", "storage_generation", "other"
+            ])
+        )
+        redispatch_cost_attribution_eur["meta_model_gen_dev_cost_total"] = float(gen_dev_cost_total)
+
         payload = {
             "event": "rt_timestep_debug",
             "timestep": int(timestep),
@@ -2146,6 +2267,8 @@ class LpProblem(pyo.ConcreteModel):
                 "actual_storage_rt_dev_cost": float(storage_actual_dev_cost),
                 "actual_total_rt_dev_cost": float(gas_actual_dev_cost + storage_actual_dev_cost),
             },
+            "redispatch_cost_attribution_eur": redispatch_cost_attribution_eur,
+            "redispatch_mw_attribution": redispatch_mw_attribution,
             "be_storage_rows": storage_rows,
             "be_gas_rows": gas_rows,
         }
@@ -2284,6 +2407,8 @@ class LpProblem(pyo.ConcreteModel):
                 "actual_total_rt_dev_cost": None,
                 "note": "daily_24h debug mode does not compute DA-reference storage mismatch diagnostics",
             },
+            "redispatch_cost_attribution_eur": {},
+            "redispatch_mw_attribution": {},
             "be_storage_rows": storage_rows,
             "be_gas_rows": gas_rows,
         }
@@ -2510,13 +2635,12 @@ class LpProblem(pyo.ConcreteModel):
                 )
             self.p_loadflex_cost[i] = storagevalue_flex
 
-        # In deviation objective mode, deviation prices are RELATIVE TO DA DECISIONS:
-        #   - Normal gas [DA]: max(0, gen_cost - DA_price - fee) — free to reduce within ramps
-        #   - Peak gas [RT]: gen_cost - DA_price - fee — stays expensive (expensive reserve)
-        #   - Storage: DA_storage_value - DA_price - fee — protects DA's storage decisions
-        #   - Wind: DA_price - gen_cost - fee — curtailment is costly (prevents irrational patterns)
-        #   - Other BE gens: gen_cost - DA_price - fee
-        # All prices include a fixed balancing fee to discourage frivolous RT redispatch.
+        # In deviation objective mode, all generation technologies use the same
+        # RT-local deviation pricing scheme (no DA-price coupling):
+        #   deviation_price = max(0, current_marginal_cost + balancing_fee)
+        # applied symmetrically to upward and downward deviation variables.
+        # This ensures every technology follows a pure deviation-based RT scheme,
+        # while ramp-rate constraints continue to govern feasible redispatch.
         _fee = float(self._rt_balancing_fee_eur_per_mwh)
         _split_eps = 1e-6
 
@@ -2538,28 +2662,11 @@ class LpProblem(pyo.ConcreteModel):
 
         for i in self.s_gen:
             if int(i) in self._rt_target_gen_indices:
-                ii = int(i)
                 if self._rt_deviation_objective_active:
-                    # Calculate default DA price (fallback to BE area average if node-specific not found)
-                    _da_price = float(self._da_nodal_prices.get((int(timestep), "BE"), 0.0))
-                    _node = self._gen_node.get(ii, "")
-                    _da_node_price = float(self._da_nodal_prices.get((int(timestep), _node), _da_price))
                     _gen_cost = max(0.0, float(pyo.value(self.p_gen_cost[i])))
-
-                    if ii in self._idx_be_storage_gens:
-                        # Storage keeps its dedicated storage-target pricing path.
-                        _da_stor_value = float(self._da_storage_marginalprice.get((int(timestep), ii), 0.0))
-                        _legacy_dev_price = max(0.0, _da_stor_value - _da_node_price + _fee)
-                        _dev_price_pos = _legacy_dev_price
-                        _dev_price_neg = _legacy_dev_price
-                    else:
-                        # All generators follow the same base DA-relative split rule.
-                        _dev_price_pos = max(0.0, _gen_cost + _fee)
-                        _dev_price_neg = max(0.0, _da_node_price - _gen_cost) + _fee
-                        if self._rt_res_surplus_override_active and (ii in self._idx_be_wind or ii in self._idx_be_solar):
-                            # RES keeps the same downward price, but can override upward
-                            # deviation price with a dedicated surplus value.
-                            _dev_price_pos = float(self._rt_p_res_surplus)
+                    _dev_price = max(0.0, _gen_cost + _fee)
+                    _dev_price_pos = _dev_price
+                    _dev_price_neg = _dev_price
                 else:
                     _legacy_dev_price = max(0.0, float(pyo.value(self.p_gen_cost[i])) + _fee)
                     _dev_price_pos = _legacy_dev_price
