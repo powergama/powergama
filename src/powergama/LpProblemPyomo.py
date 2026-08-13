@@ -1,4 +1,4 @@
-"""
+﻿"""
 Module containing PowerGAMA LpProblem class
 
  Power flow equations:
@@ -180,39 +180,6 @@ class LpProblem(pyo.ConcreteModel):
             and str(self._rt_storage_target_ref.loc[i]).strip()
             and int(i) in self._idx_generatorsWithStorage
         }
-        self._idx_be_generators = {
-            int(i)
-            for i in grid.generator.index
-            if str(grid.generator.loc[i, "node"]).startswith("BE")
-        }
-        self._idx_be_target_generators = {
-            int(i) for i in self._rt_target_gen_indices if int(i) in self._idx_be_generators
-        }
-        self._idx_be_target_pumps = {
-            int(i) for i in self._rt_pump_target_gen_indices if int(i) in self._idx_be_generators
-        }
-        self._idx_be_loads = {
-            int(i)
-            for i in grid.consumer.index
-            if str(grid.consumer.loc[i, "node"]).startswith("BE")
-        }
-        self._idx_be_flexloads = {
-            int(i)
-            for i in self._idx_consumersWithFlexLoad
-            if int(i) in self._idx_be_loads
-        }
-        self._idx_be_target_flexloads = {
-            int(i) for i in self._rt_consumer_target_indices if int(i) in self._idx_be_flexloads
-        }
-        self._idx_be_storage = {
-            int(i)
-            for i in grid.generator.index
-            if str(grid.generator.loc[i, "node"]).startswith("BE")
-            and int(i) in self._idx_generatorsWithStorage
-        }
-        self._idx_be_target_storage = {
-            int(i) for i in self._rt_storage_target_indices if int(i) in self._idx_be_storage
-        }
         # Ramp-rate limits (MW per timestep). NaN means unconstrained.
         self._ramp_up_mw = grid.generator["ramp_up_mw"].values.copy() if "ramp_up_mw" in grid.generator.columns else None
         self._ramp_down_mw = grid.generator["ramp_down_mw"].values.copy() if "ramp_down_mw" in grid.generator.columns else None
@@ -231,12 +198,12 @@ class LpProblem(pyo.ConcreteModel):
         # Optional sparse foreign DA locks (parquet long format) injected by prepare-rt.
         self._foreign_gen_lock = None
         self._foreign_cons_lock = None
-        self._be_border_ac_flow_lock = None
-        self._be_border_dc_flow_lock = None
-        self._be_border_ac_flow_lb = None
-        self._be_border_ac_flow_ub = None
-        self._be_border_dc_flow_lb = None
-        self._be_border_dc_flow_ub = None
+        self._border_ac_flow_lock = None
+        self._border_dc_flow_lock = None
+        self._border_ac_flow_lb = None
+        self._border_ac_flow_ub = None
+        self._border_dc_flow_lb = None
+        self._border_dc_flow_ub = None
         # DA nodal prices: dict {(timestep, node_id): price} for wind/gas deviation pricing.
         self._da_nodal_prices: dict[tuple[int, str], float] = {}
         # DA storage marginalprice: dict {(timestep, storage_indx): value} for storage deviation pricing.
@@ -249,93 +216,55 @@ class LpProblem(pyo.ConcreteModel):
         # Classify BE generators by type/tag for differentiated deviation pricing.
         _gtype = grid.generator["type"].astype(str).str.lower() if "type" in grid.generator.columns else pd.Series("", index=grid.generator.index)
         _gdesc = grid.generator["desc"].astype(str) if "desc" in grid.generator.columns else pd.Series("", index=grid.generator.index)
-        self._idx_be_peak_gas: set[int] = {
+        # Generator type classification for RT deviation cost attribution in debug output.
+        # These classify by generator type only — no country filter.
+        _storage_gens_set = self._idx_generatorsWithStorage
+        self._idx_rt_peak_gen: set[int] = {
             int(i) for i in grid.generator.index
-            if str(grid.generator.loc[i, "node"]).startswith("BE")
-            and _gtype.loc[i] == "fossil_gas"
+            if _gtype.loc[i] == "fossil_gas"
             and "[RT]" in str(_gdesc.loc[i])
         }
-        self._idx_be_normal_gas: set[int] = {
+        self._idx_rt_normal_gas: set[int] = {
             int(i) for i in grid.generator.index
-            if str(grid.generator.loc[i, "node"]).startswith("BE")
-            and _gtype.loc[i] == "fossil_gas"
+            if _gtype.loc[i] == "fossil_gas"
             and "[RT]" not in str(_gdesc.loc[i])
         }
-        self._idx_be_wind: set[int] = {
+        self._idx_rt_wind: set[int] = {
             int(i) for i in grid.generator.index
-            if str(grid.generator.loc[i, "node"]).startswith("BE")
-            and _gtype.loc[i] in {"wind_off", "wind_on", "wind"}
+            if _gtype.loc[i] in {"wind_off", "wind_on", "wind"}
         }
-        self._idx_be_solar: set[int] = {
+        self._idx_rt_solar: set[int] = {
             int(i) for i in grid.generator.index
-            if str(grid.generator.loc[i, "node"]).startswith("BE")
-            and _gtype.loc[i] == "solar"
+            if _gtype.loc[i] == "solar"
         }
-        self._idx_be_nuclear: set[int] = {
+        self._idx_rt_nuclear: set[int] = {
             int(i) for i in grid.generator.index
-            if str(grid.generator.loc[i, "node"]).startswith("BE")
-            and _gtype.loc[i] == "nuclear"
+            if _gtype.loc[i] == "nuclear"
         }
-        self._idx_be_biomass: set[int] = {
+        self._idx_rt_biomass: set[int] = {
             int(i) for i in grid.generator.index
-            if str(grid.generator.loc[i, "node"]).startswith("BE")
-            and _gtype.loc[i] == "biomass"
+            if _gtype.loc[i] == "biomass"
         }
-        self._idx_be_fossil_other: set[int] = {
+        self._idx_rt_fossil_other: set[int] = {
             int(i) for i in grid.generator.index
-            if str(grid.generator.loc[i, "node"]).startswith("BE")
-            and _gtype.loc[i] == "fossil_other"
+            if _gtype.loc[i] == "fossil_other"
         }
-        self._idx_be_storage_gens: set[int] = {
-            int(i) for i in grid.generator.index
-            if str(grid.generator.loc[i, "node"]).startswith("BE")
-            and int(i) in self._idx_generatorsWithStorage
-        }
-        self._idx_be_hydro_ror: set[int] = {
+        self._idx_rt_storage_gens: set[int] = set(_storage_gens_set)
+        self._idx_rt_hydro_ror: set[int] = {
             int(i)
             for i in grid.generator.index
-            if str(grid.generator.loc[i, "node"]).startswith("BE")
-            and _gtype.loc[i] == "hydro"
-            and int(i) not in self._idx_be_storage_gens
+            if _gtype.loc[i] == "hydro"
+            and int(i) not in _storage_gens_set
             and float(pd.to_numeric(grid.generator.loc[i, "pump_cap"], errors="coerce") or 0.0) <= 0.0
             and float(pd.to_numeric(grid.generator.loc[i, "storage_cap"], errors="coerce") or 0.0) <= 0.0
         }
-        self._idx_be_border_ac = {
-            int(idx)
-            for idx, row in grid.branch.iterrows()
-            if (
-                str(row.get("node_from", "")).startswith("BE")
-                and not str(row.get("node_to", "")).startswith("BE")
-            )
-            or (
-                str(row.get("node_to", "")).startswith("BE")
-                and not str(row.get("node_from", "")).startswith("BE")
-            )
-        }
-        self._idx_be_border_dc = {
-            int(idx)
-            for idx, row in grid.dcbranch.iterrows()
-            if (
-                str(row.get("node_from", "")).startswith("BE")
-                and not str(row.get("node_to", "")).startswith("BE")
-            )
-            or (
-                str(row.get("node_to", "")).startswith("BE")
-                and not str(row.get("node_from", "")).startswith("BE")
-            )
-        }
-        self._be_border_ac_sign = {
-            int(idx): (
-                1.0 if str(grid.branch.loc[idx, "node_from"]).startswith("BE") else -1.0
-            )
-            for idx in self._idx_be_border_ac
-        }
-        self._be_border_dc_sign = {
-            int(idx): (
-                1.0 if str(grid.dcbranch.loc[idx, "node_from"]).startswith("BE") else -1.0
-            )
-            for idx in self._idx_be_border_dc
-        }
+        # Border branches: branches that cross between different areas (used for border-flow locking).
+        # Identified by the presence of border flow lock data on the grid object (set externally).
+        # The sign convention: +1 if branch carries flow away from area_from, -1 otherwise.
+        self._idx_border_ac: set[int] = set()
+        self._idx_border_dc: set[int] = set()
+        self._border_ac_sign: dict[int, float] = {}
+        self._border_dc_sign: dict[int, float] = {}
         self._default_ac_flow_bounds = {}
         self._default_dc_flow_bounds = {}
         for b in grid.branch.index:
@@ -420,10 +349,10 @@ class LpProblem(pyo.ConcreteModel):
         """
         gen_path = getattr(grid, "foreign_gen_lock_parquet", "")
         con_path = getattr(grid, "foreign_consumer_lock_parquet", "")
-        ac_border_path = getattr(grid, "be_border_ac_flow_lock_parquet", "")
-        dc_border_path = getattr(grid, "be_border_dc_flow_lock_parquet", "")
-        ac_border_bounds_path = getattr(grid, "be_border_ac_flow_bounds_parquet", "")
-        dc_border_bounds_path = getattr(grid, "be_border_dc_flow_bounds_parquet", "")
+        ac_border_path = getattr(grid, "border_ac_flow_lock_parquet", "")
+        dc_border_path = getattr(grid, "border_dc_flow_lock_parquet", "")
+        ac_border_bounds_path = getattr(grid, "border_ac_flow_bounds_parquet", "")
+        dc_border_bounds_path = getattr(grid, "border_dc_flow_bounds_parquet", "")
 
         if gen_path:
             p = Path(str(gen_path))
@@ -457,7 +386,7 @@ class LpProblem(pyo.ConcreteModel):
                     adf["timestep"] = pd.to_numeric(adf["timestep"], errors="coerce").fillna(-1).astype(int)
                     adf["indx"] = pd.to_numeric(adf["indx"], errors="coerce").fillna(-1).astype(int)
                     adf["flow"] = pd.to_numeric(adf["flow"], errors="coerce").fillna(0.0)
-                    self._be_border_ac_flow_lock = adf.set_index(["timestep", "indx"])["flow"]
+                    self._border_ac_flow_lock = adf.set_index(["timestep", "indx"])["flow"]
                 except Exception as exc:
                     warnings.warn(f"Failed reading BE-border AC flow lock parquet '{p}': {exc}", UserWarning)
 
@@ -469,7 +398,7 @@ class LpProblem(pyo.ConcreteModel):
                     ddf["timestep"] = pd.to_numeric(ddf["timestep"], errors="coerce").fillna(-1).astype(int)
                     ddf["indx"] = pd.to_numeric(ddf["indx"], errors="coerce").fillna(-1).astype(int)
                     ddf["flow"] = pd.to_numeric(ddf["flow"], errors="coerce").fillna(0.0)
-                    self._be_border_dc_flow_lock = ddf.set_index(["timestep", "indx"])["flow"]
+                    self._border_dc_flow_lock = ddf.set_index(["timestep", "indx"])["flow"]
                 except Exception as exc:
                     warnings.warn(f"Failed reading BE-border DC flow lock parquet '{p}': {exc}", UserWarning)
 
@@ -483,8 +412,8 @@ class LpProblem(pyo.ConcreteModel):
                     adf["flow_lb"] = pd.to_numeric(adf["flow_lb"], errors="coerce")
                     adf["flow_ub"] = pd.to_numeric(adf["flow_ub"], errors="coerce")
                     adf_idx = adf.set_index(["timestep", "indx"])
-                    self._be_border_ac_flow_lb = adf_idx["flow_lb"]
-                    self._be_border_ac_flow_ub = adf_idx["flow_ub"]
+                    self._border_ac_flow_lb = adf_idx["flow_lb"]
+                    self._border_ac_flow_ub = adf_idx["flow_ub"]
                 except Exception as exc:
                     warnings.warn(f"Failed reading BE-border AC flow bounds parquet '{p}': {exc}", UserWarning)
 
@@ -498,8 +427,8 @@ class LpProblem(pyo.ConcreteModel):
                     ddf["flow_lb"] = pd.to_numeric(ddf["flow_lb"], errors="coerce")
                     ddf["flow_ub"] = pd.to_numeric(ddf["flow_ub"], errors="coerce")
                     ddf_idx = ddf.set_index(["timestep", "indx"])
-                    self._be_border_dc_flow_lb = ddf_idx["flow_lb"]
-                    self._be_border_dc_flow_ub = ddf_idx["flow_ub"]
+                    self._border_dc_flow_lb = ddf_idx["flow_lb"]
+                    self._border_dc_flow_ub = ddf_idx["flow_ub"]
                 except Exception as exc:
                     warnings.warn(f"Failed reading BE-border DC flow bounds parquet '{p}': {exc}", UserWarning)
 
@@ -930,7 +859,7 @@ class LpProblem(pyo.ConcreteModel):
             return
 
         def _ac_rule(model, b):
-            if int(b) not in self._idx_be_border_ac:
+            if int(b) not in self._idx_border_ac:
                 return pyo.Constraint.Skip
             return (
                 self.p_rt_io_target_active_ac[b] * (model.varAcBranchFlow[b] - self.p_rt_io_target_ac[b])
@@ -938,7 +867,7 @@ class LpProblem(pyo.ConcreteModel):
             )
 
         def _dc_rule(model, b):
-            if int(b) not in self._idx_be_border_dc:
+            if int(b) not in self._idx_border_dc:
                 return pyo.Constraint.Skip
             return (
                 self.p_rt_io_target_active_dc[b] * (model.varDcBranchFlow[b] - self.p_rt_io_target_dc[b])
@@ -1283,16 +1212,16 @@ class LpProblem(pyo.ConcreteModel):
         for hi, ts in enumerate(day_timesteps):
             for b in self.s_branch_ac:
                 key = (int(ts), int(b))
-                if (self._be_border_ac_flow_lb is not None
-                        and key in self._be_border_ac_flow_lb.index
-                        and key in self._be_border_ac_flow_ub.index):
-                    lb = float(self._be_border_ac_flow_lb.loc[key])
-                    ub = float(self._be_border_ac_flow_ub.loc[key])
+                if (self._border_ac_flow_lb is not None
+                        and key in self._border_ac_flow_lb.index
+                        and key in self._border_ac_flow_ub.index):
+                    lb = float(self._border_ac_flow_lb.loc[key])
+                    ub = float(self._border_ac_flow_ub.loc[key])
                     ac_lb[(hi, b)] = lb if np.isfinite(lb) else None
                     ac_ub[(hi, b)] = ub if np.isfinite(ub) else None
-                elif (self._be_border_ac_flow_lock is not None
-                        and key in self._be_border_ac_flow_lock.index):
-                    f = float(self._be_border_ac_flow_lock.loc[key])
+                elif (self._border_ac_flow_lock is not None
+                        and key in self._border_ac_flow_lock.index):
+                    f = float(self._border_ac_flow_lock.loc[key])
                     if np.isfinite(f):
                         ac_lb[(hi, b)] = f; ac_ub[(hi, b)] = f
                     else:
@@ -1303,16 +1232,16 @@ class LpProblem(pyo.ConcreteModel):
                     ac_lb[(hi, b)] = lo; ac_ub[(hi, b)] = hi_
             for b in self.s_branch_dc:
                 key = (int(ts), int(b))
-                if (self._be_border_dc_flow_lb is not None
-                        and key in self._be_border_dc_flow_lb.index
-                        and key in self._be_border_dc_flow_ub.index):
-                    lb = float(self._be_border_dc_flow_lb.loc[key])
-                    ub = float(self._be_border_dc_flow_ub.loc[key])
+                if (self._border_dc_flow_lb is not None
+                        and key in self._border_dc_flow_lb.index
+                        and key in self._border_dc_flow_ub.index):
+                    lb = float(self._border_dc_flow_lb.loc[key])
+                    ub = float(self._border_dc_flow_ub.loc[key])
                     dc_lb[(hi, b)] = lb if np.isfinite(lb) else None
                     dc_ub[(hi, b)] = ub if np.isfinite(ub) else None
-                elif (self._be_border_dc_flow_lock is not None
-                        and key in self._be_border_dc_flow_lock.index):
-                    f = float(self._be_border_dc_flow_lock.loc[key])
+                elif (self._border_dc_flow_lock is not None
+                        and key in self._border_dc_flow_lock.index):
+                    f = float(self._border_dc_flow_lock.loc[key])
                     if np.isfinite(f):
                         dc_lb[(hi, b)] = f; dc_ub[(hi, b)] = f
                     else:
@@ -1952,7 +1881,7 @@ class LpProblem(pyo.ConcreteModel):
 
         storage_rows = []
         da_reference_storage_mismatch_cost = 0.0
-        for i in sorted(int(ii) for ii in self._idx_be_target_storage):
+        for i in sorted(int(ii) for ii in self._rt_storage_target_indices):
             storage_cap = _val(self._grid.generator.loc[i, "storage_cap"]) or 0.0
             pre_storage = _val(self._storage[i]) or 0.0
             soc_rt = (pre_storage / storage_cap) if storage_cap > 0.0 else 0.0
@@ -2019,7 +1948,7 @@ class LpProblem(pyo.ConcreteModel):
         gas_rows = []
         da_replay_unavoidable_gas_dev_cost_lb = 0.0
         da_replay_infeasible_gas_count = 0
-        for i in sorted(int(ii) for ii in self._idx_be_target_generators if int(ii) in (self._idx_be_normal_gas | self._idx_be_peak_gas)):
+        for i in sorted(int(ii) for ii in self._rt_target_gen_indices if int(ii) in (self._idx_rt_normal_gas | self._idx_rt_peak_gen)):
             pmin_now = _val(self.p_gen_pmin[i])
             pmax_now = _val(self.p_gen_pmax[i])
             target_now = _val(self.p_rt_target[i]) or 0.0
@@ -2047,7 +1976,7 @@ class LpProblem(pyo.ConcreteModel):
                     "indx": int(i),
                     "node": str(self._grid.generator.loc[i, "node"]),
                     "desc": str(self._grid.generator.loc[i, "desc"]),
-                    "is_peak_rt_block": bool(int(i) in self._idx_be_peak_gas),
+                    "is_peak_rt_block": bool(int(i) in self._idx_rt_peak_gen),
                     "gen_mw": _val(self.varGeneration[i]) or 0.0,
                     "gen_target_mw": _val(self.p_rt_target[i]) or 0.0,
                     "gen_dev_pos_mw": _val(self.varRtTargetDevPos[i]) or 0.0,
@@ -2091,36 +2020,35 @@ class LpProblem(pyo.ConcreteModel):
             _sum_expr(
                 self.varGeneration[i] - self.p_rt_target[i]
                 for i in self.s_gen
-                if int(i) in self._idx_be_target_generators
+                if int(i) in self._rt_target_gen_indices
             )
             - _sum_expr(
                 self.varPump[i] - self.p_rt_pump_target[i]
                 for i in self.s_gen_pump
-                if int(i) in self._idx_be_target_pumps
+                if int(i) in self._rt_pump_target_gen_indices
             )
             + _sum_expr(
                 self.varLoadShed[j]
                 for j in self.s_load
-                if int(j) in self._idx_be_loads
             )
             - _sum_expr(
                 self.varFlexLoad[j] - self.p_rt_flexload_target[j]
                 for j in self.s_load_flex
-                if int(j) in self._idx_be_target_flexloads
+                if int(j) in self._rt_consumer_target_indices
             )
             + _sum_expr(
-                self._be_border_ac_sign.get(int(b), 0.0)
+                self._border_ac_sign.get(int(b), 0.0)
                 * (_val(self.p_rt_io_target_active_ac[b]) or 0.0)
                 * ((_val(self.varAcBranchFlow[b]) or 0.0) - (_val(self.p_rt_io_target_ac[b]) or 0.0))
                 for b in self.s_branch_ac
-                if int(b) in self._idx_be_border_ac
+                if int(b) in self._idx_border_ac
             )
             + _sum_expr(
-                self._be_border_dc_sign.get(int(b), 0.0)
+                self._border_dc_sign.get(int(b), 0.0)
                 * (_val(self.p_rt_io_target_active_dc[b]) or 0.0)
                 * ((_val(self.varDcBranchFlow[b]) or 0.0) - (_val(self.p_rt_io_target_dc[b]) or 0.0))
                 for b in self.s_branch_dc
-                if int(b) in self._idx_be_border_dc
+                if int(b) in self._idx_border_dc
             )
         )
 
@@ -2141,27 +2069,27 @@ class LpProblem(pyo.ConcreteModel):
         redispatch_mw_attribution: dict[str, dict[str, float]] = {}
 
         def _bucket_for_gen(ii: int) -> str:
-            if ii in self._idx_be_storage_gens:
+            if ii in self._idx_rt_storage_gens:
                 return "storage_generation"
-            if ii in self._idx_be_wind:
+            if ii in self._idx_rt_wind:
                 return "wind"
-            if ii in self._idx_be_solar:
+            if ii in self._idx_rt_solar:
                 return "solar"
-            if ii in (self._idx_be_normal_gas | self._idx_be_peak_gas):
+            if ii in (self._idx_rt_normal_gas | self._idx_rt_peak_gen):
                 return "gas"
-            if ii in self._idx_be_nuclear:
+            if ii in self._idx_rt_nuclear:
                 return "nuclear"
-            if ii in self._idx_be_hydro_ror:
+            if ii in self._idx_rt_hydro_ror:
                 return "hydro_ror"
-            if ii in self._idx_be_biomass:
+            if ii in self._idx_rt_biomass:
                 return "biomass"
-            if ii in self._idx_be_fossil_other:
+            if ii in self._idx_rt_fossil_other:
                 return "fossil_other"
             return "other"
 
         for i in self.s_gen:
             ii = int(i)
-            if ii not in self._idx_be_target_generators:
+            if ii not in self._rt_target_gen_indices:
                 continue
             dev_pos = _val(self.varRtTargetDevPos[i]) or 0.0
             dev_neg = _val(self.varRtTargetDevNeg[i]) or 0.0
@@ -2217,7 +2145,7 @@ class LpProblem(pyo.ConcreteModel):
                 "rt_deviation_objective_active": bool(self._rt_deviation_objective_active),
             },
             "residual": {
-                "be_balancing_deviation_mw": float(be_balancing_dev),
+                "rt_balancing_deviation_mw": float(be_balancing_dev),
             },
             "term_breakdown": {
                 "gen_dev": _sum_expr(
@@ -2247,12 +2175,12 @@ class LpProblem(pyo.ConcreteModel):
                 "da_ref_storage_mismatch_cost": float(da_reference_storage_mismatch_cost),
             },
             "active_channels": {
-                "be_storage_target_count": int(len(self._idx_be_target_storage)),
-                "be_target_gen_count": int(len(self._idx_be_target_generators)),
+                "rt_storage_target_count": int(len(self._rt_storage_target_indices)),
+                "rt_target_gen_count": int(len(self._rt_target_gen_indices)),
                 "foreign_gen_lock_rows": int(sum(1 for i in self.s_gen if self._foreign_gen_lock is not None and (int(timestep), int(i)) in self._foreign_gen_lock.index)),
                 "foreign_cons_lock_rows": int(sum(1 for j in self.s_load if self._foreign_cons_lock is not None and (int(timestep), int(j)) in self._foreign_cons_lock.index)),
-                "be_io_target_active_ac": int(sum(int(_val(self.p_rt_io_target_active_ac[b]) or 0) for b in self.s_branch_ac if int(b) in self._idx_be_border_ac)),
-                "be_io_target_active_dc": int(sum(int(_val(self.p_rt_io_target_active_dc[b]) or 0) for b in self.s_branch_dc if int(b) in self._idx_be_border_dc)),
+                "rt_io_target_active_ac": int(sum(int(_val(self.p_rt_io_target_active_ac[b]) or 0) for b in self.s_branch_ac if int(b) in self._idx_border_ac)),
+                "rt_io_target_active_dc": int(sum(int(_val(self.p_rt_io_target_active_dc[b]) or 0) for b in self.s_branch_dc if int(b) in self._idx_border_dc)),
             },
             "da_injection_check": {
                 "storage_check_available": True,
@@ -2269,8 +2197,8 @@ class LpProblem(pyo.ConcreteModel):
             },
             "redispatch_cost_attribution_eur": redispatch_cost_attribution_eur,
             "redispatch_mw_attribution": redispatch_mw_attribution,
-            "be_storage_rows": storage_rows,
-            "be_gas_rows": gas_rows,
+            "rt_storage_rows": storage_rows,
+            "rt_gen_rows": gas_rows,
         }
 
         self._append_rt_solver_debug_payload(
@@ -2309,7 +2237,7 @@ class LpProblem(pyo.ConcreteModel):
             return None
 
         storage_rows = []
-        for i in sorted(int(ii) for ii in self._idx_be_target_storage):
+        for i in sorted(int(ii) for ii in self._rt_storage_target_indices):
             storage_cap = float(pd.to_numeric(self._grid.generator.loc[i, "storage_cap"], errors="coerce") or 0.0)
             rt_storage_mwh = _val(m.varStorage[i, hi]) if i in self.s_gen_storage else 0.0
             soc_rt = (rt_storage_mwh / storage_cap) if storage_cap > 0.0 else 0.0
@@ -2361,8 +2289,8 @@ class LpProblem(pyo.ConcreteModel):
             )
 
         gas_rows = []
-        be_gas_idx = self._idx_be_normal_gas | self._idx_be_peak_gas
-        for i in sorted(int(ii) for ii in self._idx_be_target_generators if int(ii) in be_gas_idx):
+        rt_gas_idx = self._idx_rt_normal_gas | self._idx_rt_peak_gen
+        for i in sorted(int(ii) for ii in self._rt_target_gen_indices if int(ii) in rt_gas_idx):
             gen_mw = _val(m.varGeneration[i, hi])
             target_mw = 0.0
             if self._rt_target_ref is not None:
@@ -2383,7 +2311,7 @@ class LpProblem(pyo.ConcreteModel):
                     "indx": int(i),
                     "node": str(self._grid.generator.loc[i, "node"]),
                     "desc": str(self._grid.generator.loc[i, "desc"]),
-                    "is_peak_rt_block": bool(int(i) in self._idx_be_peak_gas),
+                    "is_peak_rt_block": bool(int(i) in self._idx_rt_peak_gen),
                     "gen_mw": float(gen_mw),
                     "gen_target_mw": float(target_mw),
                     "gen_dev_pos_mw": float(max(0.0, gen_mw - target_mw)),
@@ -2409,8 +2337,8 @@ class LpProblem(pyo.ConcreteModel):
             },
             "redispatch_cost_attribution_eur": {},
             "redispatch_mw_attribution": {},
-            "be_storage_rows": storage_rows,
-            "be_gas_rows": gas_rows,
+            "rt_storage_rows": storage_rows,
+            "rt_gen_rows": gas_rows,
         }
 
         self._append_rt_solver_debug_payload(
@@ -2681,7 +2609,7 @@ class LpProblem(pyo.ConcreteModel):
                 self.p_rt_deviation_price_gen_neg[i] = 0.0
         for i in self.s_gen_pump:
             if int(i) in self._rt_pump_target_gen_indices:
-                if self._rt_deviation_objective_active and int(i) in self._idx_be_target_pumps:
+                if self._rt_deviation_objective_active and int(i) in self._rt_pump_target_gen_indices:
                     # Pump deviation carries balancing fee even when otherwise unconstrained.
                     self.p_rt_deviation_price_pump[i] = max(0.0, _fee)
                 else:
@@ -2695,7 +2623,7 @@ class LpProblem(pyo.ConcreteModel):
                 self.p_rt_deviation_price_flex[i] = 0.0
         for i in self.s_gen_storage:
             if int(i) in self._rt_storage_target_indices:
-                if self._rt_deviation_objective_active and int(i) in self._idx_be_target_storage:
+                if self._rt_deviation_objective_active and int(i) in self._rt_storage_target_indices:
                     # Storage SOC-window pricing (Option 1):
                     # Use DA trajectory and DA min/max-event windows to define asymmetric
                     # incentive/penalty for storage target deviations.
@@ -2795,8 +2723,8 @@ class LpProblem(pyo.ConcreteModel):
         # 4. Optional hard lock of BE cross-border branch flows to DA values
         for b in self.s_branch_ac:
             key = (int(timestep), int(b))
-            if self._be_border_ac_flow_lock is not None and key in self._be_border_ac_flow_lock.index:
-                da_flow = float(self._be_border_ac_flow_lock.loc[key])
+            if self._border_ac_flow_lock is not None and key in self._border_ac_flow_lock.index:
+                da_flow = float(self._border_ac_flow_lock.loc[key])
                 if np.isfinite(da_flow):
                     self.p_rt_io_target_ac[b] = da_flow
                     self.p_rt_io_target_active_ac[b] = 1
@@ -2807,21 +2735,21 @@ class LpProblem(pyo.ConcreteModel):
                 self.p_rt_io_target_ac[b] = 0.0
                 self.p_rt_io_target_active_ac[b] = 0
             if (
-                self._be_border_ac_flow_lb is not None
-                and self._be_border_ac_flow_ub is not None
-                and key in self._be_border_ac_flow_lb.index
-                and key in self._be_border_ac_flow_ub.index
+                self._border_ac_flow_lb is not None
+                and self._border_ac_flow_ub is not None
+                and key in self._border_ac_flow_lb.index
+                and key in self._border_ac_flow_ub.index
             ):
-                lb = float(self._be_border_ac_flow_lb.loc[key])
-                ub = float(self._be_border_ac_flow_ub.loc[key])
+                lb = float(self._border_ac_flow_lb.loc[key])
+                ub = float(self._border_ac_flow_ub.loc[key])
                 if not np.isfinite(lb):
                     lb = None
                 if not np.isfinite(ub):
                     ub = None
                 self.varAcBranchFlow[b].setlb(lb)
                 self.varAcBranchFlow[b].setub(ub)
-            elif self._be_border_ac_flow_lock is not None and key in self._be_border_ac_flow_lock.index:
-                da_flow = float(self._be_border_ac_flow_lock.loc[key])
+            elif self._border_ac_flow_lock is not None and key in self._border_ac_flow_lock.index:
+                da_flow = float(self._border_ac_flow_lock.loc[key])
                 if not np.isfinite(da_flow):
                     da_flow = 0.0
                 self.varAcBranchFlow[b].setlb(da_flow)
@@ -2833,8 +2761,8 @@ class LpProblem(pyo.ConcreteModel):
 
         for b in self.s_branch_dc:
             key = (int(timestep), int(b))
-            if self._be_border_dc_flow_lock is not None and key in self._be_border_dc_flow_lock.index:
-                da_flow = float(self._be_border_dc_flow_lock.loc[key])
+            if self._border_dc_flow_lock is not None and key in self._border_dc_flow_lock.index:
+                da_flow = float(self._border_dc_flow_lock.loc[key])
                 if np.isfinite(da_flow):
                     self.p_rt_io_target_dc[b] = da_flow
                     self.p_rt_io_target_active_dc[b] = 1
@@ -2845,21 +2773,21 @@ class LpProblem(pyo.ConcreteModel):
                 self.p_rt_io_target_dc[b] = 0.0
                 self.p_rt_io_target_active_dc[b] = 0
             if (
-                self._be_border_dc_flow_lb is not None
-                and self._be_border_dc_flow_ub is not None
-                and key in self._be_border_dc_flow_lb.index
-                and key in self._be_border_dc_flow_ub.index
+                self._border_dc_flow_lb is not None
+                and self._border_dc_flow_ub is not None
+                and key in self._border_dc_flow_lb.index
+                and key in self._border_dc_flow_ub.index
             ):
-                lb = float(self._be_border_dc_flow_lb.loc[key])
-                ub = float(self._be_border_dc_flow_ub.loc[key])
+                lb = float(self._border_dc_flow_lb.loc[key])
+                ub = float(self._border_dc_flow_ub.loc[key])
                 if not np.isfinite(lb):
                     lb = None
                 if not np.isfinite(ub):
                     ub = None
                 self.varDcBranchFlow[b].setlb(lb)
                 self.varDcBranchFlow[b].setub(ub)
-            elif self._be_border_dc_flow_lock is not None and key in self._be_border_dc_flow_lock.index:
-                da_flow = float(self._be_border_dc_flow_lock.loc[key])
+            elif self._border_dc_flow_lock is not None and key in self._border_dc_flow_lock.index:
+                da_flow = float(self._border_dc_flow_lock.loc[key])
                 if not np.isfinite(da_flow):
                     da_flow = 0.0
                 self.varDcBranchFlow[b].setlb(da_flow)
