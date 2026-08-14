@@ -46,8 +46,6 @@ class GridData(object):
             "spill_cap_frac": 1.0,
             "ramp_up_pu": numpy.nan,
             "ramp_down_pu": numpy.nan,
-            "ramp_up_mw": numpy.nan,
-            "ramp_down_mw": numpy.nan,
             "ramp_daily_reset": False,
         },
         "consumer": {
@@ -177,30 +175,8 @@ class GridData(object):
         self._checkGridDataFields(self.keys_powergama)
         self._checkGridData()
         self._addDefaultColumns(keys=self.keys_powergama, remove_extra_columns=remove_extra_columns)
-        self._sync_generator_ramp_columns()
         self._fillEmptyCells(keys=self.keys_powergama)
         self._checkConsistency()
-
-    def _sync_generator_ramp_columns(self):
-        """Convert optional per-unit ramp columns to absolute MW/h using installed pmax."""
-        if self.generator is None or "pmax" not in self.generator.columns:
-            return
-
-        gen = self.generator
-        pmax = pd.to_numeric(gen["pmax"], errors="coerce")
-
-        def _convert_pu_to_mw(pu_col, mw_col):
-            if pu_col not in gen.columns:
-                return
-            pu = pd.to_numeric(gen[pu_col], errors="coerce")
-            if mw_col not in gen.columns:
-                gen[mw_col] = numpy.nan
-            mask = pu.notna() & pmax.notna()
-            if mask.any():
-                gen.loc[mask, mw_col] = pmax.loc[mask] * pu.loc[mask]
-
-        _convert_pu_to_mw("ramp_up_pu", "ramp_up_mw")
-        _convert_pu_to_mw("ramp_down_pu", "ramp_down_mw")
 
     def _fillEmptyCells(self, keys):
         """Use default data where none is given"""

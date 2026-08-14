@@ -180,9 +180,9 @@ class LpProblem(pyo.ConcreteModel):
             and str(self._rt_storage_target_ref.loc[i]).strip()
             and int(i) in self._idx_generatorsWithStorage
         }
-        # Ramp-rate limits (MW per timestep). NaN means unconstrained.
-        self._ramp_up_mw = grid.generator["ramp_up_mw"].values.copy() if "ramp_up_mw" in grid.generator.columns else None
-        self._ramp_down_mw = grid.generator["ramp_down_mw"].values.copy() if "ramp_down_mw" in grid.generator.columns else None
+        # Ramp-rate limits in per-unit of current generation. NaN means unconstrained.
+        self._ramp_up_pu = grid.generator["ramp_up_pu"].values.copy() if "ramp_up_pu" in grid.generator.columns else None
+        self._ramp_down_pu = grid.generator["ramp_down_pu"].values.copy() if "ramp_down_pu" in grid.generator.columns else None
         # If True for a generator, the ramp constraint is released at the start of every 24-hour
         # block (timestep % 24 == 0).  This models plant types (e.g. nuclear) whose output level
         # is decided day-ahead but is held constant throughout the day.
@@ -1393,11 +1393,11 @@ class LpProblem(pyo.ConcreteModel):
         m.cPumpCap = pyo.Constraint(m.s_gen_pump, m.s_h, rule=_pump_cap_rule)
 
         # ── ramp rates within the day ──────────────────────────────────
-        has_ramp = (self._ramp_up_mw is not None) or (self._ramp_down_mw is not None)
+        has_ramp = (self._ramp_up_pu is not None) or (self._ramp_down_pu is not None)
         if has_ramp:
             def _ramp_up_rule(m, i, h):
-                ramp = self._ramp_up_mw[i] if self._ramp_up_mw is not None else np.nan
-                if np.isnan(ramp):
+                ramp_pu = self._ramp_up_pu[i] if self._ramp_up_pu is not None else np.nan
+                if np.isnan(ramp_pu):
                     return pyo.Constraint.Skip
                 # In RT, skip ramp for fully pinned generators (capacity ≈ pmin, e.g.
                 # DA-locked gas and nuclear). Same reasoning as the hourly path.
@@ -1407,13 +1407,13 @@ class LpProblem(pyo.ConcreteModel):
                     prev = self._gen_prev[i]
                     if np.isnan(prev):
                         return pyo.Constraint.Skip
-                    return m.varGeneration[i, 0] <= prev + ramp
-                return m.varGeneration[i, h] <= m.varGeneration[i, h - 1] + ramp
+                    return m.varGeneration[i, 0] <= prev * (1.0 + float(ramp_pu))
+                return m.varGeneration[i, h] <= m.varGeneration[i, h - 1] * (1.0 + float(ramp_pu))
             m.cRampUp = pyo.Constraint(m.s_gen, m.s_h, rule=_ramp_up_rule)
 
             def _ramp_dn_rule(m, i, h):
-                ramp = self._ramp_down_mw[i] if self._ramp_down_mw is not None else np.nan
-                if np.isnan(ramp):
+                ramp_pu = self._ramp_down_pu[i] if self._ramp_down_pu is not None else np.nan
+                if np.isnan(ramp_pu):
                     return pyo.Constraint.Skip
                 # In RT, skip ramp for fully pinned generators — same as ramp-up rule.
                 if self._is_rt and abs(capacity_h.get((h, i), 0.0) - pmin_h.get((h, i), 0.0)) < 1e-6:
@@ -1422,8 +1422,8 @@ class LpProblem(pyo.ConcreteModel):
                     prev = self._gen_prev[i]
                     if np.isnan(prev):
                         return pyo.Constraint.Skip
-                    return m.varGeneration[i, 0] >= prev - ramp
-                return m.varGeneration[i, h] >= m.varGeneration[i, h - 1] - ramp
+                    return m.varGeneration[i, 0] >= prev * (1.0 - float(ramp_pu))
+                return m.varGeneration[i, h] >= m.varGeneration[i, h - 1] * (1.0 - float(ramp_pu))
             m.cRampDn = pyo.Constraint(m.s_gen, m.s_h, rule=_ramp_dn_rule)
 
         # ── flex load ─────────────────────────────────────────────────
@@ -1960,12 +1960,12 @@ class LpProblem(pyo.ConcreteModel):
             da_replay_cost_lb = da_replay_pos_lb * coef_pos + da_replay_neg_lb * coef_neg
             ramp_prev = float(self._gen_prev[i]) if i < len(self._gen_prev) and np.isfinite(self._gen_prev[i]) else None
             ramp_up = None
-            if self._ramp_up_mw is not None:
-                rv = self._ramp_up_mw[i]
+            if self._ramp_up_pu is not None:
+                rv = self._ramp_up_pu[i]
                 ramp_up = float(rv) if np.isfinite(rv) else None
             ramp_down = None
-            if self._ramp_down_mw is not None:
-                rv = self._ramp_down_mw[i]
+            if self._ramp_down_pu is not None:
+                rv = self._ramp_down_pu[i]
                 ramp_down = float(rv) if np.isfinite(rv) else None
             da_replay_reachable = (abs(da_replay_pos_lb) <= 1e-9) and (abs(da_replay_neg_lb) <= 1e-9)
             if not da_replay_reachable:
@@ -1986,8 +1986,8 @@ class LpProblem(pyo.ConcreteModel):
                     "gen_cost_mwh": _val(self.p_gen_cost[i]) or 0.0,
                     "da_replay_target_reachable": bool(da_replay_reachable),
                     "da_replay_prev_gen_mw": ramp_prev,
-                    "da_replay_ramp_up_mw": ramp_up,
-                    "da_replay_ramp_down_mw": ramp_down,
+                    "da_replay_ramp_up_pu": ramp_up,
+                    "da_replay_ramp_down_pu": ramp_down,
                     "da_replay_feasible_pmin_mw": pmin_now,
                     "da_replay_feasible_pmax_mw": pmax_now,
                     "da_replay_target_clipped_mw": float(target_clipped),
@@ -2465,13 +2465,13 @@ class LpProblem(pyo.ConcreteModel):
             for i in self.s_gen:
                 if self._ramp_daily_reset[i]:
                     self._gen_prev[i] = np.nan
-        if self._ramp_up_mw is not None or self._ramp_down_mw is not None:
+        if self._ramp_up_pu is not None or self._ramp_down_pu is not None:
             for i in self.s_gen:
                 prev = self._gen_prev[i]
                 if np.isnan(prev):
                     continue  # first timestep: no ramp constraint
-                ramp_up = self._ramp_up_mw[i] if self._ramp_up_mw is not None else np.nan
-                ramp_dn = self._ramp_down_mw[i] if self._ramp_down_mw is not None else np.nan
+                ramp_up = self._ramp_up_pu[i] if self._ramp_up_pu is not None else np.nan
+                ramp_dn = self._ramp_down_pu[i] if self._ramp_down_pu is not None else np.nan
                 pmax_now = pyo.value(self.p_gen_pmax[i])
                 pmin_now = pyo.value(self.p_gen_pmin[i])
                 # In RT, skip ramp constraints for fully pinned generators (pmin ≈ pmax),
@@ -2482,9 +2482,9 @@ class LpProblem(pyo.ConcreteModel):
                 if self._is_rt and pmax_now - pmin_now < 1e-6:
                     continue
                 if not np.isnan(ramp_up):
-                    pmax_now = min(pmax_now, prev + ramp_up)
+                    pmax_now = min(pmax_now, prev * (1.0 + float(ramp_up)))
                 if not np.isnan(ramp_dn):
-                    pmin_now = max(pmin_now, prev - ramp_dn)
+                    pmin_now = max(pmin_now, prev * (1.0 - float(ramp_dn)))
                 # Guard: pmin must not exceed pmax after ramp clipping
                 pmin_now = min(pmin_now, pmax_now)
                 self.p_gen_pmax[i] = max(pmax_now, 0)
@@ -3202,7 +3202,7 @@ class LpProblem(pyo.ConcreteModel):
                 self._storage_flexload.loc[self._idx_consumersWithFlexLoad] = results.db.getResultFlexloadStorageFillingAll(
                     timestep=timesteps_to_solve[0] - 1
                 )
-                if self._ramp_up_mw is not None or self._ramp_down_mw is not None:
+                if self._ramp_up_pu is not None or self._ramp_down_pu is not None:
                     prev_gen = results.db.getResultGeneratorPowerAll(timestep=timesteps_to_solve[0] - 1)
                     for i in self.s_gen:
                         self._gen_prev[i] = prev_gen.get(i, 0.0)
@@ -3240,7 +3240,7 @@ class LpProblem(pyo.ConcreteModel):
                 timestep=timesteps_to_solve[0] - 1
             )
             # Restore previous-timestep generation for ramp constraints
-            if self._ramp_up_mw is not None or self._ramp_down_mw is not None:
+            if self._ramp_up_pu is not None or self._ramp_down_pu is not None:
                 prev_gen = results.db.getResultGeneratorPowerAll(timestep=timesteps_to_solve[0] - 1)
                 for i in self.s_gen:
                     self._gen_prev[i] = prev_gen.get(i, 0.0)
