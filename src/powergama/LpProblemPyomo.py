@@ -180,9 +180,10 @@ class LpProblem(pyo.ConcreteModel):
             and str(self._rt_storage_target_ref.loc[i]).strip()
             and int(i) in self._idx_generatorsWithStorage
         }
-        # Ramp-rate limits in per-unit of current generation. NaN means unconstrained.
+        # Ramp-rate limits in per-unit of installed generator capacity. NaN means unconstrained.
         self._ramp_up_pu = grid.generator["ramp_up_pu"].values.copy() if "ramp_up_pu" in grid.generator.columns else None
         self._ramp_down_pu = grid.generator["ramp_down_pu"].values.copy() if "ramp_down_pu" in grid.generator.columns else None
+        self._ramp_cap_mw = pd.to_numeric(grid.generator["pmax"], errors="coerce").fillna(0.0).values
         # If True for a generator, the ramp constraint is released at the start of every 24-hour
         # block (timestep % 24 == 0).  This models plant types (e.g. nuclear) whose output level
         # is decided day-ahead but is held constant throughout the day.
@@ -192,6 +193,38 @@ class LpProblem(pyo.ConcreteModel):
             self._ramp_daily_reset = grid.generator["ramp_daily_reset"].fillna(False).astype(bool).values
         else:
             self._ramp_daily_reset = None
+        # Optional bypass for nuclear ramp/daily-reset when nuclear operational
+        # profile limits are active (pmax_ref/pmin_ref runtime binding).
+        # This avoids infeasible day-joint intersections where a constant
+        # intra-day ramp policy conflicts with hour-varying profile bounds.
+        _nuclear_limits_active = str(os.environ.get("T45_NUCLEAR_OPERATIONAL_LIMITS", "")).strip().lower() not in {
+            "",
+            "0",
+            "false",
+            "off",
+            "no",
+        }
+        self._disable_nuclear_ramp_profile_conflict = np.zeros(len(grid.generator), dtype=bool)
+        if _nuclear_limits_active and ("type" in grid.generator.columns):
+            _gtype = grid.generator["type"].astype(str).str.lower().str.strip()
+            _is_nuclear = _gtype.eq("nuclear")
+            _has_pmax_ref = pd.Series(False, index=grid.generator.index)
+            _has_pmin_ref = pd.Series(False, index=grid.generator.index)
+            if self._pmax_ref is not None:
+                _has_pmax_ref = self._pmax_ref.astype(str).str.strip().ne("")
+            if self._pmin_ref is not None:
+                _has_pmin_ref = self._pmin_ref.astype(str).str.strip().ne("")
+            if "nuclear_fully_constrained" in grid.generator.columns:
+                _fully_constrained = grid.generator["nuclear_fully_constrained"].fillna(False).astype(bool)
+            else:
+                # Backward-compatible fallback: matching non-empty pmax/pmin refs
+                # typically indicate a fully pinned nuclear profile.
+                _pmax_txt = self._pmax_ref.astype(str).str.strip() if self._pmax_ref is not None else pd.Series("", index=grid.generator.index)
+                _pmin_txt = self._pmin_ref.astype(str).str.strip() if self._pmin_ref is not None else pd.Series("", index=grid.generator.index)
+                _fully_constrained = _pmax_txt.ne("") & _pmax_txt.eq(_pmin_txt)
+            _disable = _is_nuclear & _has_pmax_ref & _has_pmin_ref & _fully_constrained
+            if _disable.any():
+                self._disable_nuclear_ramp_profile_conflict[_disable.values] = True
         # Previous-timestep generation dispatch; NaN signals first timestep (no ramp constraint).
         self._gen_prev = np.full(len(grid.generator), np.nan)
         self._idx_branchesWithConstraints = grid.getIdxBranchesWithFlowConstraints()
@@ -1396,6 +1429,8 @@ class LpProblem(pyo.ConcreteModel):
         has_ramp = (self._ramp_up_pu is not None) or (self._ramp_down_pu is not None)
         if has_ramp:
             def _ramp_up_rule(m, i, h):
+                if self._disable_nuclear_ramp_profile_conflict[int(i)]:
+                    return pyo.Constraint.Skip
                 ramp_pu = self._ramp_up_pu[i] if self._ramp_up_pu is not None else np.nan
                 if np.isnan(ramp_pu):
                     return pyo.Constraint.Skip
@@ -1407,11 +1442,13 @@ class LpProblem(pyo.ConcreteModel):
                     prev = self._gen_prev[i]
                     if np.isnan(prev):
                         return pyo.Constraint.Skip
-                    return m.varGeneration[i, 0] <= prev * (1.0 + float(ramp_pu))
-                return m.varGeneration[i, h] <= m.varGeneration[i, h - 1] * (1.0 + float(ramp_pu))
+                    return m.varGeneration[i, 0] <= prev + float(ramp_pu) * float(self._ramp_cap_mw[i])
+                return m.varGeneration[i, h] <= m.varGeneration[i, h - 1] + float(ramp_pu) * float(self._ramp_cap_mw[i])
             m.cRampUp = pyo.Constraint(m.s_gen, m.s_h, rule=_ramp_up_rule)
 
             def _ramp_dn_rule(m, i, h):
+                if self._disable_nuclear_ramp_profile_conflict[int(i)]:
+                    return pyo.Constraint.Skip
                 ramp_pu = self._ramp_down_pu[i] if self._ramp_down_pu is not None else np.nan
                 if np.isnan(ramp_pu):
                     return pyo.Constraint.Skip
@@ -1422,8 +1459,8 @@ class LpProblem(pyo.ConcreteModel):
                     prev = self._gen_prev[i]
                     if np.isnan(prev):
                         return pyo.Constraint.Skip
-                    return m.varGeneration[i, 0] >= prev * (1.0 - float(ramp_pu))
-                return m.varGeneration[i, h] >= m.varGeneration[i, h - 1] * (1.0 - float(ramp_pu))
+                    return m.varGeneration[i, 0] >= prev - float(ramp_pu) * float(self._ramp_cap_mw[i])
+                return m.varGeneration[i, h] >= m.varGeneration[i, h - 1] - float(ramp_pu) * float(self._ramp_cap_mw[i])
             m.cRampDn = pyo.Constraint(m.s_gen, m.s_h, rule=_ramp_dn_rule)
 
         # ── flex load ─────────────────────────────────────────────────
@@ -2417,7 +2454,7 @@ class LpProblem(pyo.ConcreteModel):
                 self.p_rt_target_active[i] = 0
                 self.p_rt_target[i] = 0.0
 
-        # 1b. Apply ramp-rate limits based on previous-timestep dispatch.
+        # 1b. Apply ramp-rate limits (PU of installed capacity) around previous dispatch.
         # Update pump (charging) DA targets for DA-target deviation penalties.
         if self._rt_pump_target_ref is not None and self._rt_pump_target_gen_indices:
             for i in self.s_gen_pump:
@@ -2457,16 +2494,21 @@ class LpProblem(pyo.ConcreteModel):
                 else:
                     self.p_rt_storage_target[i] = 0.0
         
-        # 1b. Apply ramp-rate limits based on previous-timestep dispatch.
+        # 1b. Apply ramp-rate limits around previous-timestep dispatch,
+        #     with delta caps scaled by installed capacity (ramp_pu * pmax_installed).
         #     Generators with NaN ramp values or NaN _gen_prev (first timestep) are unconstrained.
         # Daily-reset generators have their _gen_prev cleared at the start of each 24-hour window,
         # so they are free to choose a new level at midnight while staying fixed intra-day.
         if self._ramp_daily_reset is not None and timestep % 24 == 0:
             for i in self.s_gen:
+                if self._disable_nuclear_ramp_profile_conflict[int(i)]:
+                    continue
                 if self._ramp_daily_reset[i]:
                     self._gen_prev[i] = np.nan
         if self._ramp_up_pu is not None or self._ramp_down_pu is not None:
             for i in self.s_gen:
+                if self._disable_nuclear_ramp_profile_conflict[int(i)]:
+                    continue
                 prev = self._gen_prev[i]
                 if np.isnan(prev):
                     continue  # first timestep: no ramp constraint
@@ -2482,9 +2524,9 @@ class LpProblem(pyo.ConcreteModel):
                 if self._is_rt and pmax_now - pmin_now < 1e-6:
                     continue
                 if not np.isnan(ramp_up):
-                    pmax_now = min(pmax_now, prev * (1.0 + float(ramp_up)))
+                    pmax_now = min(pmax_now, prev + float(ramp_up) * float(self._ramp_cap_mw[i]))
                 if not np.isnan(ramp_dn):
-                    pmin_now = max(pmin_now, prev * (1.0 - float(ramp_dn)))
+                    pmin_now = max(pmin_now, prev - float(ramp_dn) * float(self._ramp_cap_mw[i]))
                 # Guard: pmin must not exceed pmax after ramp clipping
                 pmin_now = min(pmin_now, pmax_now)
                 self.p_gen_pmax[i] = max(pmax_now, 0)
@@ -3225,6 +3267,8 @@ class LpProblem(pyo.ConcreteModel):
                 # For daily_reset generators, clear _gen_prev at commit boundary (same rule intent as hourly)
                 if self._ramp_daily_reset is not None:
                     for i in self.s_gen:
+                        if self._disable_nuclear_ramp_profile_conflict[int(i)]:
+                            continue
                         if self._ramp_daily_reset[i]:
                             self._gen_prev[i] = np.nan
                 self._solve_and_store_day_joint(win, results, solver, commit_hours=commit_h)
