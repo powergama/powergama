@@ -58,8 +58,8 @@ class LpProblem(pyo.ConcreteModel):
         storage_initial_fill_scale=1.0,
         rt_dispatch_objective_mode="deviation",
         rt_balancing_fee_eur_per_mwh=1.0,
-        rt_res_surplus_override_active=True,
-        rt_p_res_surplus=0.0,
+        rt_p_res_curtailment_factor=2.0,
+        rt_xborder_flow_penalty_eur_per_mwh=0.0,
         is_rt=False,
     ):
         # 1.
@@ -82,11 +82,9 @@ class LpProblem(pyo.ConcreteModel):
         self._objective_day_commit_hours = int(max(1, int(objective_day_commit_hours)))
         self._is_rt = bool(is_rt)
         self._rt_dispatch_objective_mode = "deviation" if self._is_rt else str(rt_dispatch_objective_mode).strip().lower()
-        self._rt_deviation_objective_active = bool(
-            self._is_rt and self._rt_dispatch_objective_mode == "deviation"
-        )
-        self._rt_res_surplus_override_active = bool(rt_res_surplus_override_active)
-        self._rt_p_res_surplus = float(rt_p_res_surplus)
+        self._rt_deviation_objective_active = bool(self._is_rt)
+        self._rt_p_res_curtailment_factor = float(rt_p_res_curtailment_factor)
+        self._rt_xborder_flow_penalty_eur_per_mwh = max(0.0, float(rt_xborder_flow_penalty_eur_per_mwh))
         # Fixed balancing fee to discourage frivolous RT redispatch (€/MWh).
         self._rt_balancing_fee_eur_per_mwh: float = float(rt_balancing_fee_eur_per_mwh)
         self._rt_solver_debug_path: Path | None = None
@@ -135,18 +133,6 @@ class LpProblem(pyo.ConcreteModel):
             and str(self._rt_target_ref.loc[i]).strip()
         }
         # Ramp-rate limits (MW per timestep). NaN means unconstrained.
-        # Optional pump (charging) DA target references for DA-target deviation penalties.
-        # Only applies to generators in s_gen_pump that have a non-empty rt_pump_target_ref.
-        self._rt_pump_target_ref = grid.generator["rt_pump_target_ref"] if "rt_pump_target_ref" in grid.generator.columns else None
-        _pump_idx_set = {int(j) for j in self._idx_generatorsWithPumping}
-        self._rt_pump_target_gen_indices = {
-            int(i)
-            for i in grid.generator.index
-            if int(i) in _pump_idx_set
-            and self._rt_pump_target_ref is not None
-            and isinstance(self._rt_pump_target_ref.loc[i], str)
-            and str(self._rt_pump_target_ref.loc[i]).strip()
-        }
         # Optional consumer (flexible load) DA target references for DA-target deviation penalties.
         self._rt_consumer_target_ref = grid.consumer["rt_target_ref"] if "rt_target_ref" in grid.consumer.columns else None
         self._rt_consumer_target_indices = {
@@ -160,18 +146,6 @@ class LpProblem(pyo.ConcreteModel):
         # Optional storage (reservoir/battery filling) DA target references for DA-target deviation penalties.
         # Stores normalized filling fraction [0, 1] to ensure storage state continuity matches DA.
         self._rt_storage_target_ref = grid.generator["rt_storage_target_ref"] if "rt_storage_target_ref" in grid.generator.columns else None
-        self._rt_storage_soc_da_pricing_ref = (
-            grid.generator["rt_storage_soc_da_pricing_ref"] if "rt_storage_soc_da_pricing_ref" in grid.generator.columns else None
-        )
-        self._rt_storage_pmax_ref = grid.generator["rt_storage_pmax_ref"] if "rt_storage_pmax_ref" in grid.generator.columns else None
-        self._rt_storage_pmin_ref = grid.generator["rt_storage_pmin_ref"] if "rt_storage_pmin_ref" in grid.generator.columns else None
-        self._rt_storage_soc_min_da_ref = (
-            grid.generator["rt_storage_soc_min_da_ref"] if "rt_storage_soc_min_da_ref" in grid.generator.columns else None
-        )
-        self._rt_storage_soc_max_da_ref = (
-            grid.generator["rt_storage_soc_max_da_ref"] if "rt_storage_soc_max_da_ref" in grid.generator.columns else None
-        )
-        self._rt_storage_soc_pricing_da_lag_hours = int(max(0, int(getattr(grid, "rt_storage_soc_pricing_da_lag_hours", 0) or 0)))
         self._rt_storage_target_indices = {
             int(i)
             for i in grid.generator.index
@@ -237,15 +211,8 @@ class LpProblem(pyo.ConcreteModel):
         self._border_ac_flow_ub = None
         self._border_dc_flow_lb = None
         self._border_dc_flow_ub = None
-        # DA nodal prices: dict {(timestep, node_id): price} for wind/gas deviation pricing.
-        self._da_nodal_prices: dict[tuple[int, str], float] = {}
         # DA storage marginalprice: dict {(timestep, storage_indx): value} for storage deviation pricing.
         self._da_storage_marginalprice: dict[tuple[int, int], float] = {}
-        # Per-generator node map for deviation price lookup.
-        self._gen_node: dict[int, str] = {
-            int(i): str(grid.generator.loc[i, "node"])
-            for i in grid.generator.index
-        }
         # Classify BE generators by type/tag for differentiated deviation pricing.
         _gtype = grid.generator["type"].astype(str).str.lower() if "type" in grid.generator.columns else pd.Series("", index=grid.generator.index)
         _gdesc = grid.generator["desc"].astype(str) if "desc" in grid.generator.columns else pd.Series("", index=grid.generator.index)
@@ -366,7 +333,6 @@ class LpProblem(pyo.ConcreteModel):
         self._create_constraint_rt_target_tracking()
         self._create_constraint_generator_pump(grid)
         self._create_constraint_load_flex(grid)
-        self._create_constraint_rt_pump_target_tracking()
         self._create_constraint_rt_flexload_target_tracking()
         self._create_constraint_rt_storage_target_tracking()
         self._create_constraint_rt_io_target_tracking()
@@ -465,21 +431,6 @@ class LpProblem(pyo.ConcreteModel):
                 except Exception as exc:
                     warnings.warn(f"Failed reading BE-border DC flow bounds parquet '{p}': {exc}", UserWarning)
 
-        da_nodal_prices_path = getattr(grid, "da_nodal_prices_parquet", "")
-        if da_nodal_prices_path:
-            p = Path(str(da_nodal_prices_path))
-            if p.exists():
-                try:
-                    ndf = pd.read_parquet(p)
-                    ndf["timestep"] = pd.to_numeric(ndf["timestep"], errors="coerce").fillna(-1).astype(int)
-                    ndf["nodalprice"] = pd.to_numeric(ndf["nodalprice"], errors="coerce").fillna(0.0)
-                    self._da_nodal_prices = {
-                        (int(row["timestep"]), str(row["node_id"])): float(row["nodalprice"])
-                        for _, row in ndf.iterrows()
-                    }
-                except Exception as exc:
-                    warnings.warn(f"Failed reading DA nodal prices parquet '{p}': {exc}", UserWarning)
-
         da_storage_marginalprice_path = getattr(grid, "da_storage_marginalprice_parquet", "")
         if da_storage_marginalprice_path:
             p = Path(str(da_storage_marginalprice_path))
@@ -495,6 +446,52 @@ class LpProblem(pyo.ConcreteModel):
                     }
                 except Exception as exc:
                     warnings.warn(f"Failed reading DA storage marginalprice parquet '{p}': {exc}", UserWarning)
+
+        def _extract_loaded_branch_indices(series_obj):
+            if series_obj is None:
+                return set()
+            idx_obj = getattr(series_obj, "index", None)
+            if idx_obj is None:
+                return set()
+            if hasattr(idx_obj, "names") and "indx" in list(idx_obj.names):
+                try:
+                    return {int(v) for v in idx_obj.get_level_values("indx").unique().tolist()}
+                except Exception:
+                    return set()
+            return set()
+
+        def _be_oriented_sign(branch_df, branch_idx: int) -> float:
+            try:
+                row = branch_df.loc[int(branch_idx)]
+            except Exception:
+                return 0.0
+            node_from = str(row.get("node_from", ""))
+            node_to = str(row.get("node_to", ""))
+            if node_from.startswith("BE") and (not node_to.startswith("BE")):
+                return 1.0
+            if node_to.startswith("BE") and (not node_from.startswith("BE")):
+                return -1.0
+            return 0.0
+
+        loaded_ac_idx = set()
+        loaded_ac_idx |= _extract_loaded_branch_indices(self._border_ac_flow_lock)
+        loaded_ac_idx |= _extract_loaded_branch_indices(self._border_ac_flow_lb)
+        loaded_ac_idx |= _extract_loaded_branch_indices(self._border_ac_flow_ub)
+        self._idx_border_ac = {int(i) for i in loaded_ac_idx if int(i) in set(self._grid.branch.index.tolist())}
+        self._border_ac_sign = {
+            int(i): _be_oriented_sign(self._grid.branch, int(i))
+            for i in self._idx_border_ac
+        }
+
+        loaded_dc_idx = set()
+        loaded_dc_idx |= _extract_loaded_branch_indices(self._border_dc_flow_lock)
+        loaded_dc_idx |= _extract_loaded_branch_indices(self._border_dc_flow_lb)
+        loaded_dc_idx |= _extract_loaded_branch_indices(self._border_dc_flow_ub)
+        self._idx_border_dc = {int(i) for i in loaded_dc_idx if int(i) in set(self._grid.dcbranch.index.tolist())}
+        self._border_dc_sign = {
+            int(i): _be_oriented_sign(self._grid.dcbranch, int(i))
+            for i in self._idx_border_dc
+        }
 
     def _create_sets_and_parameters(self, grid_data):
         """Create pyomo model sets"""
@@ -546,12 +543,12 @@ class LpProblem(pyo.ConcreteModel):
         self.p_rt_deviation_price_gen_pos = pyo.Param(self.s_gen, within=pyo.Reals, default=0, mutable=True)
         self.p_rt_deviation_price_gen_neg = pyo.Param(self.s_gen, within=pyo.Reals, default=0, mutable=True)
         self.p_demand = pyo.Param(self.s_load, within=pyo.Reals, default=0, mutable=True)
-        self.p_rt_pump_target = pyo.Param(self.s_gen_pump, within=pyo.NonNegativeReals, default=0, mutable=True)
-        self.p_rt_deviation_price_pump = pyo.Param(self.s_gen_pump, within=pyo.NonNegativeReals, default=0, mutable=True)
         # Consumer (flexible load) RT DA target for DA-target deviation penalties
         self.p_rt_flexload_target = pyo.Param(self.s_load_flex, within=pyo.NonNegativeReals, default=0, mutable=True)
         self.p_rt_flexload_target_active = pyo.Param(self.s_load_flex, within=pyo.Binary, default=0, mutable=True)
         self.p_rt_deviation_price_flex = pyo.Param(self.s_load_flex, within=pyo.NonNegativeReals, default=0, mutable=True)
+        self.p_rt_deviation_price_flex_pos = pyo.Param(self.s_load_flex, within=pyo.Reals, default=0, mutable=True)
+        self.p_rt_deviation_price_flex_neg = pyo.Param(self.s_load_flex, within=pyo.Reals, default=0, mutable=True)
         self.p_rt_storage_target = pyo.Param(self.s_gen_storage, within=pyo.NonNegativeReals, default=0, mutable=True)
         self.p_rt_storage_balance_rhs = pyo.Param(self.s_gen_storage, within=pyo.NonNegativeReals, default=0, mutable=True)
         self.p_rt_deviation_price_storage = pyo.Param(self.s_gen_storage, within=pyo.NonNegativeReals, default=0, mutable=True)
@@ -609,8 +606,6 @@ class LpProblem(pyo.ConcreteModel):
         self.varRtTargetDevPos = pyo.Var(self.s_gen, within=pyo.NonNegativeReals)
         self.varRtTargetDevNeg = pyo.Var(self.s_gen, within=pyo.NonNegativeReals)
         self.varFlexLoad = pyo.Var(self.s_load_flex, within=pyo.NonNegativeReals)
-        self.varRtPumpTargetDevPos = pyo.Var(self.s_gen_pump, within=pyo.NonNegativeReals)
-        self.varRtPumpTargetDevNeg = pyo.Var(self.s_gen_pump, within=pyo.NonNegativeReals)
         self.varLoadShed = pyo.Var(self.s_load, within=pyo.NonNegativeReals)
         # Flexible load DA target tracking deviations (soft penalty)
         self.varRtFlexLoadTargetDevPos = pyo.Var(self.s_load_flex, within=pyo.NonNegativeReals)
@@ -835,23 +830,6 @@ class LpProblem(pyo.ConcreteModel):
 
         self.cRtTargetTracking = pyo.Constraint(self.s_gen, rule=rt_target_rule)
 
-    def _create_constraint_rt_pump_target_tracking(self):
-        """Constraint: RT DA pump (charging) target deviation accounting.
-
-        Mirrors _create_constraint_rt_target_tracking but for varPump (charging side).
-        Without this, storage can freely charge in RT even when DA did not plan for it,
-        causing independent energy accumulation and subsequent wind curtailment cascades.
-        """
-        if not self._rt_target_tracking_active:
-            return
-
-        def rt_pump_target_rule(model, i):
-            if int(i) not in self._rt_pump_target_gen_indices:
-                return pyo.Constraint.Skip
-            return model.varPump[i] - self.p_rt_pump_target[i] == model.varRtPumpTargetDevPos[i] - model.varRtPumpTargetDevNeg[i]
-
-        self.cRtPumpTargetTracking = pyo.Constraint(self.s_gen_pump, rule=rt_pump_target_rule)
-
     def _create_constraint_rt_flexload_target_tracking(self):
         """Constraint: RT DA flexible load (consumer) target deviation accounting.
 
@@ -1030,13 +1008,16 @@ class LpProblem(pyo.ConcreteModel):
 
             # Operational costs phase 1 (if stage2DeltaTime>0)
             if self._rt_deviation_objective_active:
-                cost = 0
+                # Load shedding must remain expensive even in pure RT deviation mode;
+                # otherwise the solver can bypass tracked balancing channels by
+                # dropping demand instead of redispatching generation, storage, or flex load.
+                cost = sum(model.varLoadShed[i] * const.loadshedcost for i in model.s_load)
             else:
                 cost = sum(model.varGeneration[i] * self.p_gen_cost[i] for i in model.s_gen)
                 cost -= sum(model.varPump[i] * self.p_genpump_cost[i] for i in model.s_gen_pump)
                 cost -= sum(model.varFlexLoad[i] * self.p_loadflex_cost[i] for i in model.s_load_flex)
-            cost += sum(model.varLoadShed[i] * const.loadshedcost for i in model.s_load)
-            cost += sum(model.varCurtailment[i] * self.p_curtail_cost[i] for i in model.s_gen)
+                cost += sum(model.varLoadShed[i] * const.loadshedcost for i in model.s_load)
+                cost += sum(model.varCurtailment[i] * self.p_curtail_cost[i] for i in model.s_gen)
 
             if self._rt_deviation_objective_active:
                 cost += sum(
@@ -1046,14 +1027,8 @@ class LpProblem(pyo.ConcreteModel):
                     if int(i) in self._rt_target_gen_indices
                 )
                 cost += sum(
-                    self.p_rt_deviation_price_pump[i]
-                    * (model.varRtPumpTargetDevPos[i] + model.varRtPumpTargetDevNeg[i])
-                    for i in model.s_gen_pump
-                    if int(i) in self._rt_pump_target_gen_indices
-                )
-                cost += sum(
-                    self.p_rt_deviation_price_flex[j]
-                    * (model.varRtFlexLoadTargetDevPos[j] + model.varRtFlexLoadTargetDevNeg[j])
+                    self.p_rt_deviation_price_flex_pos[j] * model.varRtFlexLoadTargetDevPos[j]
+                    + self.p_rt_deviation_price_flex_neg[j] * model.varRtFlexLoadTargetDevNeg[j]
                     for j in model.s_load_flex
                     if int(j) in self._rt_consumer_target_indices
                 )
@@ -1063,6 +1038,19 @@ class LpProblem(pyo.ConcreteModel):
                     for i in model.s_gen_storage
                     if int(i) in self._rt_storage_target_indices
                 )
+                if self._rt_xborder_flow_penalty_eur_per_mwh > 0.0:
+                    cost += self._rt_xborder_flow_penalty_eur_per_mwh * (
+                        sum(
+                            model.varRtIoTargetDevPosAc[b] + model.varRtIoTargetDevNegAc[b]
+                            for b in model.s_branch_ac
+                            if int(b) in self._idx_border_ac
+                        )
+                        + sum(
+                            model.varRtIoTargetDevPosDc[b] + model.varRtIoTargetDevNegDc[b]
+                            for b in model.s_branch_dc
+                            if int(b) in self._idx_border_dc
+                        )
+                    )
             return cost
         self.OBJ = pyo.Objective(rule=cost_rule, sense=pyo.minimize)
 
@@ -1252,14 +1240,6 @@ class LpProblem(pyo.ConcreteModel):
                     ub = float(self._border_ac_flow_ub.loc[key])
                     ac_lb[(hi, b)] = lb if np.isfinite(lb) else None
                     ac_ub[(hi, b)] = ub if np.isfinite(ub) else None
-                elif (self._border_ac_flow_lock is not None
-                        and key in self._border_ac_flow_lock.index):
-                    f = float(self._border_ac_flow_lock.loc[key])
-                    if np.isfinite(f):
-                        ac_lb[(hi, b)] = f; ac_ub[(hi, b)] = f
-                    else:
-                        lo, hi_ = self._default_ac_flow_bounds.get(int(b), (None, None))
-                        ac_lb[(hi, b)] = lo; ac_ub[(hi, b)] = hi_
                 else:
                     lo, hi_ = self._default_ac_flow_bounds.get(int(b), (None, None))
                     ac_lb[(hi, b)] = lo; ac_ub[(hi, b)] = hi_
@@ -1272,14 +1252,6 @@ class LpProblem(pyo.ConcreteModel):
                     ub = float(self._border_dc_flow_ub.loc[key])
                     dc_lb[(hi, b)] = lb if np.isfinite(lb) else None
                     dc_ub[(hi, b)] = ub if np.isfinite(ub) else None
-                elif (self._border_dc_flow_lock is not None
-                        and key in self._border_dc_flow_lock.index):
-                    f = float(self._border_dc_flow_lock.loc[key])
-                    if np.isfinite(f):
-                        dc_lb[(hi, b)] = f; dc_ub[(hi, b)] = f
-                    else:
-                        lo, hi_ = self._default_dc_flow_bounds.get(int(b), (None, None))
-                        dc_lb[(hi, b)] = lo; dc_ub[(hi, b)] = hi_
                 else:
                     lo, hi_ = self._default_dc_flow_bounds.get(int(b), (None, None))
                     dc_lb[(hi, b)] = lo; dc_ub[(hi, b)] = hi_
@@ -1861,7 +1833,7 @@ class LpProblem(pyo.ConcreteModel):
                 "dispatch_objective_mode": self._rt_dispatch_objective_mode,
                 "rt_target_tracking_active": bool(self._rt_target_tracking_active),
                 "rt_balancing_fee_eur_per_mwh": float(self._rt_balancing_fee_eur_per_mwh),
-                "rt_storage_soc_pricing_da_lag_hours": int(max(0, int(getattr(grid, "rt_storage_soc_pricing_da_lag_hours", 0) or 0))),
+                "rt_xborder_flow_penalty_eur_per_mwh": float(self._rt_xborder_flow_penalty_eur_per_mwh),
             }
             self._append_rt_solver_debug_payload(
                 _meta,
@@ -1923,16 +1895,10 @@ class LpProblem(pyo.ConcreteModel):
             pre_storage = _val(self._storage[i]) or 0.0
             soc_rt = (pre_storage / storage_cap) if storage_cap > 0.0 else 0.0
             ref_target = self._rt_storage_target_ref.iloc[int(i)] if self._rt_storage_target_ref is not None else ""
-            ref_soc_pricing = (
-                self._rt_storage_soc_da_pricing_ref.iloc[int(i)]
-                if self._rt_storage_soc_da_pricing_ref is not None
-                else ref_target
-            )
             soc_da_target = _prof(timestep, ref_target)
-            soc_da_pricing = _prof(timestep, ref_soc_pricing)
             dt_h = float(self.timeDelta) if np.isfinite(self.timeDelta) and self.timeDelta > 0.0 else 1.0
             da_gen_target_mw = _val(self.p_rt_target[i]) or 0.0
-            da_pump_target_mw = (_val(self.p_rt_pump_target[i]) or 0.0) if int(i) in self.s_gen_pump else 0.0
+            da_pump_target_mw = 0.0
             eff = float(pd.to_numeric(self._grid.generator.loc[i, "pump_efficiency"], errors="coerce") or 0.0) if int(i) in self.s_gen_pump else 0.0
             lhs_da_mwh = (_val(self.p_rt_storage_balance_rhs[i]) or 0.0) - dt_h * da_gen_target_mw
             if int(i) in self.s_gen_pump:
@@ -1959,26 +1925,15 @@ class LpProblem(pyo.ConcreteModel):
                 "gen_mw": _val(self.varGeneration[i]) or 0.0,
                 "pump_mw": (_val(self.varPump[i]) or 0.0) if int(i) in self.s_gen_pump else 0.0,
                 "gen_target_mw": _val(self.p_rt_target[i]) or 0.0,
-                "pump_target_mw": (_val(self.p_rt_pump_target[i]) or 0.0) if int(i) in self.s_gen_pump else 0.0,
+                "pump_target_mw": 0.0,
                 "gen_cost_mwh": _val(self.p_gen_cost[i]) or 0.0,
                 "pump_cost_mwh": (_val(self.p_genpump_cost[i]) or 0.0) if int(i) in self.s_gen_pump else 0.0,
                 "rt_storage_target_ref": str(ref_target) if isinstance(ref_target, str) else "",
-                "rt_storage_soc_da_pricing_ref": str(ref_soc_pricing) if isinstance(ref_soc_pricing, str) else "",
                 "soc_da_target_profile": float(soc_da_target) if soc_da_target is not None else None,
-                "soc_da_pricing_profile": float(soc_da_pricing) if soc_da_pricing is not None else None,
-                "soc_pricing_gap_da_minus_rt": (
-                    float(soc_da_pricing - soc_rt)
-                    if soc_da_pricing is not None
-                    else None
-                ),
                 "da_ref_storage_balance_lhs_mwh": float(lhs_da_mwh),
                 "da_ref_storage_target_mwh": float(target_mwh),
                 "da_ref_storage_balance_mismatch_mwh": float(mismatch_da_mwh),
                 "da_ref_storage_mismatch_cost": float(mismatch_da_cost),
-                "storage_soc_pricing_da_lag_hours": int(self._rt_storage_soc_pricing_da_lag_hours),
-                "storage_soc_pricing_da_source_timestep": (
-                    int(timestep) - int(self._rt_storage_soc_pricing_da_lag_hours)
-                ),
             }
             storage_rows.append(row)
 
@@ -2058,11 +2013,6 @@ class LpProblem(pyo.ConcreteModel):
                 self.varGeneration[i] - self.p_rt_target[i]
                 for i in self.s_gen
                 if int(i) in self._rt_target_gen_indices
-            )
-            - _sum_expr(
-                self.varPump[i] - self.p_rt_pump_target[i]
-                for i in self.s_gen_pump
-                if int(i) in self._rt_pump_target_gen_indices
             )
             + _sum_expr(
                 self.varLoadShed[j]
@@ -2148,15 +2098,9 @@ class LpProblem(pyo.ConcreteModel):
             redispatch_mw_attribution[bucket]["down_dev_mw"] += float(dev_neg)
 
         redispatch_cost_attribution_eur["storage_soc"] = float(storage_actual_dev_cost)
-        redispatch_cost_attribution_eur["pump_dev"] = _sum_expr(
-            self.p_rt_deviation_price_pump[i]
-            * (self.varRtPumpTargetDevPos[i] + self.varRtPumpTargetDevNeg[i])
-            for i in self.s_gen_pump
-            if int(i) in self._rt_pump_target_gen_indices
-        )
         redispatch_cost_attribution_eur["flex_dev"] = _sum_expr(
-            self.p_rt_deviation_price_flex[j]
-            * (self.varRtFlexLoadTargetDevPos[j] + self.varRtFlexLoadTargetDevNeg[j])
+            self.p_rt_deviation_price_flex_pos[j] * self.varRtFlexLoadTargetDevPos[j]
+            + self.p_rt_deviation_price_flex_neg[j] * self.varRtFlexLoadTargetDevNeg[j]
             for j in self.s_load_flex
             if int(j) in self._rt_consumer_target_indices
         )
@@ -2185,21 +2129,19 @@ class LpProblem(pyo.ConcreteModel):
                 "rt_balancing_deviation_mw": float(be_balancing_dev),
             },
             "term_breakdown": {
+                "loadshed": _sum_expr(
+                    const.loadshedcost * self.varLoadShed[j]
+                    for j in self.s_load
+                ),
                 "gen_dev": _sum_expr(
                     self.p_rt_deviation_price_gen_pos[i] * self.varRtTargetDevPos[i]
                     + self.p_rt_deviation_price_gen_neg[i] * self.varRtTargetDevNeg[i]
                     for i in self.s_gen
                     if int(i) in self._rt_target_gen_indices
                 ),
-                "pump_dev": _sum_expr(
-                    self.p_rt_deviation_price_pump[i]
-                    * (self.varRtPumpTargetDevPos[i] + self.varRtPumpTargetDevNeg[i])
-                    for i in self.s_gen_pump
-                    if int(i) in self._rt_pump_target_gen_indices
-                ),
                 "flex_dev": _sum_expr(
-                    self.p_rt_deviation_price_flex[j]
-                    * (self.varRtFlexLoadTargetDevPos[j] + self.varRtFlexLoadTargetDevNeg[j])
+                    self.p_rt_deviation_price_flex_pos[j] * self.varRtFlexLoadTargetDevPos[j]
+                    + self.p_rt_deviation_price_flex_neg[j] * self.varRtFlexLoadTargetDevNeg[j]
                     for j in self.s_load_flex
                     if int(j) in self._rt_consumer_target_indices
                 ),
@@ -2281,13 +2223,7 @@ class LpProblem(pyo.ConcreteModel):
 
             target_storage_mwh = 0.0
             ref_target = self._rt_storage_target_ref.iloc[int(i)] if self._rt_storage_target_ref is not None else ""
-            ref_soc_pricing = (
-                self._rt_storage_soc_da_pricing_ref.iloc[int(i)]
-                if self._rt_storage_soc_da_pricing_ref is not None
-                else ref_target
-            )
             soc_da_target = _prof(timestep, ref_target)
-            soc_da_pricing = _prof(timestep, ref_soc_pricing)
             if self._rt_storage_target_ref is not None:
                 ref = self._rt_storage_target_ref.iloc[int(i)]
                 rv = _prof(timestep, ref)
@@ -2308,18 +2244,7 @@ class LpProblem(pyo.ConcreteModel):
                     "storage_dev_neg_mwh": float(max(0.0, target_storage_mwh - rt_storage_mwh)),
                     "soc_rt": float(max(0.0, min(1.0, soc_rt))),
                     "rt_storage_target_ref": str(ref_target) if isinstance(ref_target, str) else "",
-                    "rt_storage_soc_da_pricing_ref": str(ref_soc_pricing) if isinstance(ref_soc_pricing, str) else "",
                     "soc_da_target_profile": float(soc_da_target) if soc_da_target is not None else None,
-                    "soc_da_pricing_profile": float(soc_da_pricing) if soc_da_pricing is not None else None,
-                    "soc_pricing_gap_da_minus_rt": (
-                        float(soc_da_pricing - soc_rt)
-                        if soc_da_pricing is not None
-                        else None
-                    ),
-                    "storage_soc_pricing_da_lag_hours": int(self._rt_storage_soc_pricing_da_lag_hours),
-                    "storage_soc_pricing_da_source_timestep": (
-                        int(timestep) - int(self._rt_storage_soc_pricing_da_lag_hours)
-                    ),
                     "gen_mw": float(gen_mw),
                     "pump_mw": float(pump_mw),
                 }
@@ -2455,16 +2380,6 @@ class LpProblem(pyo.ConcreteModel):
                 self.p_rt_target[i] = 0.0
 
         # 1b. Apply ramp-rate limits (PU of installed capacity) around previous dispatch.
-        # Update pump (charging) DA targets for DA-target deviation penalties.
-        if self._rt_pump_target_ref is not None and self._rt_pump_target_gen_indices:
-            for i in self.s_gen_pump:
-                rt_pump_ref = self._rt_pump_target_ref.iloc[int(i)]
-                if isinstance(rt_pump_ref, str) and rt_pump_ref in self._grid.profiles.columns:
-                    pump_cap = float(self._grid.generator.loc[i, "pump_cap"])
-                    self.p_rt_pump_target[i] = max(0.0, pump_cap * float(self._grid.profiles.loc[timestep, rt_pump_ref]))
-                else:
-                    self.p_rt_pump_target[i] = 0.0
-
         # Update consumer (flexible load) DA targets for DA-target deviation penalties
         if self._rt_consumer_target_ref is not None and self._rt_consumer_target_indices:
             for j in self.s_load_flex:
@@ -2632,15 +2547,23 @@ class LpProblem(pyo.ConcreteModel):
 
         for i in self.s_gen:
             if int(i) in self._rt_target_gen_indices:
-                if self._rt_deviation_objective_active:
-                    _gen_cost = max(0.0, float(pyo.value(self.p_gen_cost[i])))
-                    _dev_price = max(0.0, _gen_cost + _fee)
-                    _dev_price_pos = _dev_price
-                    _dev_price_neg = _dev_price
+                _gen_cost = float(pyo.value(self.p_gen_cost[i]))
+                _is_res = (
+                    int(i) in self._idx_rt_wind
+                    or int(i) in self._idx_rt_solar
+                    or int(i) in self._idx_rt_hydro_ror
+                )
+                if _is_res:
+                    # RES: reward upward and penalize curtailment with a tunable factor.
+                    # c+ = -c0
+                    # c- = rt_p_res_curtailment_factor * c0
+                    _dev_price_pos = -_fee
+                    _dev_price_neg = self._rt_p_res_curtailment_factor * _fee
                 else:
-                    _legacy_dev_price = max(0.0, float(pyo.value(self.p_gen_cost[i])) + _fee)
-                    _dev_price_pos = _legacy_dev_price
-                    _dev_price_neg = _legacy_dev_price
+                    # Non-RES: c+ = c0 + cDA, c- = c0 - cDA
+                    # c- may be negative when cDA > c0 (incentive to reduce generation).
+                    _dev_price_pos = _fee + _gen_cost
+                    _dev_price_neg = _fee - _gen_cost
                 _dev_price_pos, _dev_price_neg = _enforce_split_sum_guard(_dev_price_pos, _dev_price_neg)
                 self.p_rt_deviation_price_gen_pos[i] = _dev_price_pos
                 self.p_rt_deviation_price_gen_neg[i] = _dev_price_neg
@@ -2649,114 +2572,36 @@ class LpProblem(pyo.ConcreteModel):
                 self.p_rt_deviation_price_gen[i] = 0.0
                 self.p_rt_deviation_price_gen_pos[i] = 0.0
                 self.p_rt_deviation_price_gen_neg[i] = 0.0
-        for i in self.s_gen_pump:
-            if int(i) in self._rt_pump_target_gen_indices:
-                if self._rt_deviation_objective_active and int(i) in self._rt_pump_target_gen_indices:
-                    # Pump deviation carries balancing fee even when otherwise unconstrained.
-                    self.p_rt_deviation_price_pump[i] = max(0.0, _fee)
-                else:
-                    self.p_rt_deviation_price_pump[i] = max(0.0, float(pyo.value(self.p_genpump_cost[i])) + _fee)
-            else:
-                self.p_rt_deviation_price_pump[i] = 0.0
         for i in self.s_load_flex:
             if int(i) in self._rt_consumer_target_indices:
-                self.p_rt_deviation_price_flex[i] = max(0.0, float(pyo.value(self.p_loadflex_cost[i])) + _fee)
+                # Flex load / load-shedding: c+ = c0 + c_flex, c- = c0 - c_flex
+                _flex_cost = float(pyo.value(self.p_loadflex_cost[i]))
+                _c_flex_pos = _fee + _flex_cost
+                _c_flex_neg = _fee - _flex_cost
+                _c_flex_pos, _c_flex_neg = _enforce_split_sum_guard(_c_flex_pos, _c_flex_neg)
+                self.p_rt_deviation_price_flex_pos[i] = _c_flex_pos
+                self.p_rt_deviation_price_flex_neg[i] = _c_flex_neg
+                self.p_rt_deviation_price_flex[i] = 0.5 * (_c_flex_pos + _c_flex_neg)
             else:
                 self.p_rt_deviation_price_flex[i] = 0.0
+                self.p_rt_deviation_price_flex_pos[i] = 0.0
+                self.p_rt_deviation_price_flex_neg[i] = 0.0
         for i in self.s_gen_storage:
             if int(i) in self._rt_storage_target_indices:
-                if self._rt_deviation_objective_active and int(i) in self._rt_storage_target_indices:
-                    # Storage SOC-window pricing (Option 1):
-                    # Use DA trajectory and DA min/max-event windows to define asymmetric
-                    # incentive/penalty for storage target deviations.
-                    storage_cap = float(pd.to_numeric(self._grid.generator.loc[i, "storage_cap"], errors="coerce"))
-                    soc_rt = 0.0 if storage_cap <= 0.0 else float(self._storage[i]) / storage_cap
-                    soc_rt = max(0.0, min(1.0, soc_rt))
-
-                    soc_da = 0.0
-                    pmax_da = 0.0
-                    pmin_da = 0.0
-                    soc_min_da = 0.0
-                    soc_max_da = 1.0
-
-                    ref_soc = (
-                        self._rt_storage_soc_da_pricing_ref.iloc[int(i)]
-                        if self._rt_storage_soc_da_pricing_ref is not None
-                        else (
-                            self._rt_storage_target_ref.iloc[int(i)]
-                            if self._rt_storage_target_ref is not None
-                            else ""
-                        )
-                    )
-                    if isinstance(ref_soc, str) and ref_soc in self._grid.profiles.columns:
-                        soc_da = float(pd.to_numeric(self._grid.profiles.loc[timestep, ref_soc], errors="coerce"))
-                    ref_pmax = self._rt_storage_pmax_ref.iloc[int(i)] if self._rt_storage_pmax_ref is not None else ""
-                    if isinstance(ref_pmax, str) and ref_pmax in self._grid.profiles.columns:
-                        pmax_da = float(pd.to_numeric(self._grid.profiles.loc[timestep, ref_pmax], errors="coerce"))
-                    ref_pmin = self._rt_storage_pmin_ref.iloc[int(i)] if self._rt_storage_pmin_ref is not None else ""
-                    if isinstance(ref_pmin, str) and ref_pmin in self._grid.profiles.columns:
-                        pmin_da = float(pd.to_numeric(self._grid.profiles.loc[timestep, ref_pmin], errors="coerce"))
-                    ref_soc_min = self._rt_storage_soc_min_da_ref.iloc[int(i)] if self._rt_storage_soc_min_da_ref is not None else ""
-                    if isinstance(ref_soc_min, str) and ref_soc_min in self._grid.profiles.columns:
-                        soc_min_da = float(pd.to_numeric(self._grid.profiles.loc[timestep, ref_soc_min], errors="coerce"))
-                    ref_soc_max = self._rt_storage_soc_max_da_ref.iloc[int(i)] if self._rt_storage_soc_max_da_ref is not None else ""
-                    if isinstance(ref_soc_max, str) and ref_soc_max in self._grid.profiles.columns:
-                        soc_max_da = float(pd.to_numeric(self._grid.profiles.loc[timestep, ref_soc_max], errors="coerce"))
-
-                    soc_da = soc_da if np.isfinite(soc_da) else 0.0
-                    soc_min_da = soc_min_da if np.isfinite(soc_min_da) else 0.0
-                    # RT policy: always make full storage range available.
-                    # Keep DA soc_max profile reading for traceability, but do not
-                    # let it tighten RT availability/pricing behavior.
-                    soc_max_da = 1.0
-                    soc_da = max(0.0, min(1.0, soc_da))
-                    soc_min_da = max(0.0, min(1.0, soc_min_da))
-                    soc_max_da = max(0.0, min(1.0, soc_max_da))
-                    pmax_da = float(pmax_da) if np.isfinite(pmax_da) else 0.0
-                    pmin_da = float(pmin_da) if np.isfinite(pmin_da) else 0.0
-
-                    # Storage DA-tracking uses storage-balance deviation (not generation deviation):
-                    #   lhs - target = DevPos - DevNeg,
-                    # with lhs = balance_rhs - gen + pump*eff.
-                    # Therefore:
-                    # - charging tendency increases lhs  -> DevPos,
-                    # - discharging tendency decreases lhs -> DevNeg.
-                    #
-                    # Underfill pricing shape (user convention):
-                    #   delta_soc = max(SOC_DA - SOC_RT - SOC_min_DA, 0)
-                    #   pmaxtilde = pmax_da_price * delta_soc * (tau / dt)
-                    # where tau = Ecap / Pcap [h], dt = timestep duration [h].
-                    # Then:
-                    #   c_pos = p0 - pmaxtilde  (reward restore / charging side)
-                    #   c_neg = p0 + pmaxtilde  (penalize deviate / discharging side)
-                    # In overfill, keep both at fee.
-                    if soc_da > soc_rt:
-                        delta_soc = max(soc_da - soc_rt - soc_min_da, 0.0)
-                        ecap = float(pd.to_numeric(self._grid.generator.loc[i, "storage_cap"], errors="coerce"))
-                        pcap = float(pd.to_numeric(self._grid.generator.loc[i, "pmax"], errors="coerce"))
-                        if not np.isfinite(ecap) or ecap <= 0.0 or not np.isfinite(pcap) or pcap <= 0.0:
-                            tau_over_dt = 1.0
-                        else:
-                            dt_h = float(self.timeDelta) if np.isfinite(self.timeDelta) and self.timeDelta > 0.0 else 1.0
-                            tau_over_dt = (ecap / pcap) / dt_h
-                        pmaxtilde = pmax_da * delta_soc * max(0.0, tau_over_dt)
-                        c_pos = -pmaxtilde + _fee
-                        c_neg = +pmaxtilde + _fee
-                    else:
-                        c_pos = _fee
-                        c_neg = _fee
-
-                    c_pos, c_neg = _enforce_split_sum_guard(c_pos, c_neg)
-
-                    self.p_rt_deviation_price_storage_pos[i] = c_pos
-                    self.p_rt_deviation_price_storage_neg[i] = c_neg
-                    # Keep aggregate param for debug/output compatibility.
-                    self.p_rt_deviation_price_storage[i] = 0.5 * (c_pos + c_neg)
+                # Storage DA-marginal pricing: c+ = c0 + c_DA, c- = c0 - c_DA
+                # c_DA is the DA marginal storage value (from da_storage_marginalprice parquet),
+                # falling back to current storagevalue (p_gen_cost[i]) if not available.
+                _c_da_storage = self._da_storage_marginalprice.get((int(timestep), int(i)), None)
+                if _c_da_storage is None:
+                    _c_da_storage = float(pyo.value(self.p_gen_cost[i]))
                 else:
-                    _c = max(0.0, float(pyo.value(self.p_gen_cost[i])) + _fee)
-                    self.p_rt_deviation_price_storage[i] = _c
-                    self.p_rt_deviation_price_storage_pos[i] = _c
-                    self.p_rt_deviation_price_storage_neg[i] = _c
+                    _c_da_storage = float(_c_da_storage)
+                c_pos = _fee + _c_da_storage
+                c_neg = _fee - _c_da_storage
+                c_pos, c_neg = _enforce_split_sum_guard(c_pos, c_neg)
+                self.p_rt_deviation_price_storage_pos[i] = c_pos
+                self.p_rt_deviation_price_storage_neg[i] = c_neg
+                self.p_rt_deviation_price_storage[i] = 0.5 * (c_pos + c_neg)
             else:
                 self.p_rt_deviation_price_storage[i] = 0.0
                 self.p_rt_deviation_price_storage_pos[i] = 0.0
@@ -2790,12 +2635,6 @@ class LpProblem(pyo.ConcreteModel):
                     ub = None
                 self.varAcBranchFlow[b].setlb(lb)
                 self.varAcBranchFlow[b].setub(ub)
-            elif self._border_ac_flow_lock is not None and key in self._border_ac_flow_lock.index:
-                da_flow = float(self._border_ac_flow_lock.loc[key])
-                if not np.isfinite(da_flow):
-                    da_flow = 0.0
-                self.varAcBranchFlow[b].setlb(da_flow)
-                self.varAcBranchFlow[b].setub(da_flow)
             else:
                 lb, ub = self._default_ac_flow_bounds.get(int(b), (None, None))
                 self.varAcBranchFlow[b].setlb(lb)
@@ -2828,12 +2667,6 @@ class LpProblem(pyo.ConcreteModel):
                     ub = None
                 self.varDcBranchFlow[b].setlb(lb)
                 self.varDcBranchFlow[b].setub(ub)
-            elif self._border_dc_flow_lock is not None and key in self._border_dc_flow_lock.index:
-                da_flow = float(self._border_dc_flow_lock.loc[key])
-                if not np.isfinite(da_flow):
-                    da_flow = 0.0
-                self.varDcBranchFlow[b].setlb(da_flow)
-                self.varDcBranchFlow[b].setub(da_flow)
             else:
                 lb, ub = self._default_dc_flow_bounds.get(int(b), (None, None))
                 self.varDcBranchFlow[b].setlb(lb)
@@ -2965,8 +2798,8 @@ class LpProblem(pyo.ConcreteModel):
             pumpedIn[i] = Ppump * self._grid.generator["pump_efficiency"][i] * self.timeDelta
         energyStorable = self._storage + energyIn + pumpedIn - energyOut
         storagecapacity = self._grid.generator["storage_cap"]
-        # self._storage[i] = min(storagecapacity,energyStorable)
-        self._storage = np.vstack((storagecapacity, energyStorable)).min(axis=0)
+        # Keep storage state inside physical bounds for the next timestep.
+        self._storage = np.clip(energyStorable, 0.0, storagecapacity)
         self._energyspilled = energyStorable - self._storage
 
         # 2. Update flexible load storage
