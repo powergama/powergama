@@ -16,6 +16,59 @@ class DatabaseBaseClass(object):
     SQLITE_MAX_VARIABLE_NUMBER = 990
     SQLITE_MAX_COLUMNS_SOFT = 1800
 
+    def _profile_table_name(self, chunk_idx: int) -> str:
+        if chunk_idx <= 0:
+            return "data_profiles"
+        return f"data_profiles_aux_{chunk_idx}"
+
+    def _collect_profile_refs(self, data) -> set[str]:
+        """Collect all profile references that SQL diagnostics may need."""
+        refs: set[str] = set()
+
+        def _scan(df, cols):
+            if df is None:
+                return
+            for col in cols:
+                if col in df.columns:
+                    for ref in df[col].dropna().astype(str).unique():
+                        v = ref.strip()
+                        if v and v.lower() != "nan":
+                            refs.add(v)
+
+        _scan(getattr(data, "consumer", None), ["demand_ref", "rt_target_ref"])
+        _scan(
+            getattr(data, "generator", None),
+            ["inflow_ref", "pmin_ref", "pmax_ref", "rt_target_ref", "rt_storage_target_ref"],
+        )
+        return refs
+
+    def _collect_optional_profile_utility_cols(self, data) -> set[str]:
+        """Collect optional utility profile columns to keep when present."""
+        profile_set = set(getattr(data, "profiles").columns)
+        optional = {
+            "const",
+            "flexdemand",
+            "be_da_net_export_mw",
+            "be_da_lock_share",
+            "rt_residual_pos_cap_mw",
+            "rt_residual_neg_cap_mw",
+        }
+        return {c for c in optional if c in profile_set}
+
+    def _validate_profile_refs_exist(self, data):
+        """Fail fast when referenced profile channels are absent from data.profiles."""
+        profile_set = set(getattr(data, "profiles").columns)
+        required = self._collect_profile_refs(data)
+        missing = sorted(ref for ref in required if ref not in profile_set)
+        if missing:
+            sample = ", ".join(missing[:12])
+            tail = "" if len(missing) <= 12 else f" ... (+{len(missing) - 12} more)"
+            raise RuntimeError(
+                "Missing required profile columns referenced by data_generator/data_consumer: "
+                + sample
+                + tail
+            )
+
     def __init__(self, filename):
         self.filename = os.path.abspath(filename)
         self.sqlite_version = db.sqlite_version
@@ -40,7 +93,17 @@ class DatabaseBaseClass(object):
             os.remove(self.filename)
             # Must use a new file
             # raise IOError('Cannot append existing file. Choose new file name.')
-        con = db.connect(self.filename)
+        db_parent = os.path.dirname(self.filename)
+        if db_parent:
+            os.makedirs(db_parent, exist_ok=True)
+        try:
+            con = db.connect(self.filename)
+        except db.OperationalError as exc:
+            parent_exists = os.path.isdir(db_parent) if db_parent else True
+            raise db.OperationalError(
+                "unable to open database file "
+                f"(path={self.filename}, parent={db_parent}, parent_exists={parent_exists})"
+            ) from exc
         with con:
             # Write grid_data dataframes to database:
             data.node.to_sql("data_node", con, if_exists="replace", index=True)
@@ -48,6 +111,7 @@ class DatabaseBaseClass(object):
             data.dcbranch.to_sql("data_dcbranch", con, if_exists="replace", index=True)
             data.generator.to_sql("data_generator", con, if_exists="replace", index=True)
             data.consumer.to_sql("data_consumer", con, if_exists="replace", index=True)
+            self._validate_profile_refs_exist(data)
             prof_cols = list(data.profiles.columns)
             if len(prof_cols) <= self.SQLITE_MAX_COLUMNS_SOFT:
                 data.profiles.to_sql("data_profiles", con, if_exists="replace", index=True)
@@ -56,21 +120,27 @@ class DatabaseBaseClass(object):
                 # The full profile matrix is not needed for solving (solve uses in-memory grid),
                 # but SQL postprocessing needs stable load/inflow/lock references.
                 keep = self._select_profiles_for_sql(data)
-                if len(keep) > self.SQLITE_MAX_COLUMNS_SOFT:
-                    raise RuntimeError(
-                        "data_profiles still has too many required columns for SQLite output "
-                        f"({len(keep)} > {self.SQLITE_MAX_COLUMNS_SOFT}). "
-                        "Refusing silent truncation. Reduce profile references in PREPARE_RT "
-                        "or add an alternate non-wide export for diagnostics."
-                    )
+                chunks = [
+                    keep[i : i + self.SQLITE_MAX_COLUMNS_SOFT]
+                    for i in range(0, len(keep), self.SQLITE_MAX_COLUMNS_SOFT)
+                ]
+                if not chunks:
+                    chunks = [[]]
+                dropped = len(prof_cols) - len(keep)
                 print(
                     "INFO: data_profiles reduced for SQL output: "
                     + str(len(prof_cols))
                     + " -> "
                     + str(len(keep))
-                    + " columns (no silent truncation)."
+                    + " columns; split across "
+                    + str(len(chunks))
+                    + " table(s); dropped "
+                    + str(max(0, dropped))
+                    + " non-required columns."
                 )
-                data.profiles.loc[:, keep].to_sql("data_profiles", con, if_exists="replace", index=True)
+                for chunk_idx, cols in enumerate(chunks):
+                    table_name = self._profile_table_name(chunk_idx)
+                    data.profiles.loc[:, cols].to_sql(table_name, con, if_exists="replace", index=True)
             if getattr(data, "inter_area_ntc", None) is not None:
                 data.inter_area_ntc.to_sql("data_inter_area_ntc", con, if_exists="replace", index=True)
             if data.storagevalue_filling is not None:
@@ -90,7 +160,7 @@ class DatabaseBaseClass(object):
             )
             cur.execute(
                 f"CREATE TABLE Res_Nodes({self.timestep_str}, indx INT,"
-                + "angle DOUBLE, nodalprice DOUBLE, loadshed DOUBLE)"
+                + "angle DOUBLE, nodalprice DOUBLE, loadshed DOUBLE, dumpload DOUBLE)"
             )
             cur.execute(
                 f"CREATE TABLE Res_Generators({self.timestep_str}, indx INT," + "output DOUBLE, inflow_spilled DOUBLE)"
@@ -110,39 +180,15 @@ class DatabaseBaseClass(object):
         """Select profile columns that are required for SQL-based diagnostics.
 
         Keep demand and inflow references (used by postprocessing), lock-transfer and
-        residual-cap helper columns, and common constants.
+        residual-cap helper columns, generator/consumer constraint references, and
+        common constants.
         """
         profile_cols = list(data.profiles.columns)
-        profile_set = set(profile_cols)
-        keep = []
-
-        def _add(col):
-            if isinstance(col, str) and col in profile_set and col not in keep:
-                keep.append(col)
-
-        # Core utility columns used across datasets.
-        for c in [
-            "const",
-            "flexdemand",
-            "be_da_net_export_mw",
-            "be_da_lock_share",
-            "rt_residual_pos_cap_mw",
-            "rt_residual_neg_cap_mw",
-        ]:
-            _add(c)
-
-        # Consumer demand profiles drive BE/system load reconstruction.
-        if getattr(data, "consumer", None) is not None and "demand_ref" in data.consumer.columns:
-            for ref in data.consumer["demand_ref"].dropna().astype(str).unique():
-                _add(ref)
-
-        # Generator inflow profiles are used for availability and wind-speed proxies.
-        if getattr(data, "generator", None) is not None and "inflow_ref" in data.generator.columns:
-            for ref in data.generator["inflow_ref"].dropna().astype(str).unique():
-                _add(ref)
+        required_refs = self._collect_profile_refs(data)
+        required_refs.update(self._collect_optional_profile_utility_cols(data))
 
         # Preserve original dataframe order for deterministic output.
-        ordered = [c for c in profile_cols if c in set(keep)]
+        ordered = [c for c in profile_cols if c in required_refs]
         return ordered
 
     def get_grid_data(self):
@@ -153,6 +199,24 @@ class DatabaseBaseClass(object):
             for k in ["node", "branch", "dcbranch", "generator", "consumer", "profiles"]:
                 data[k] = pd.read_sql(f"SELECT * FROM data_{k}", con, index_col="index")  # nosec B608
                 data[k].index.name = None
+
+            aux_tables = pd.read_sql(
+                "SELECT name FROM sqlite_master WHERE type='table' "
+                "AND (name='data_profiles_aux' OR name LIKE 'data_profiles_aux_%') "
+                "ORDER BY name",
+                con,
+            )
+            if not aux_tables.empty:
+                profiles = data["profiles"]
+                for table_name in aux_tables["name"].astype(str).tolist():
+                    aux = pd.read_sql(f"SELECT * FROM {table_name}", con, index_col="index")  # nosec B608
+                    aux.index.name = None
+                    overlap = [c for c in aux.columns if c in profiles.columns]
+                    if overlap:
+                        aux = aux.drop(columns=overlap)
+                    if not aux.empty:
+                        profiles = profiles.join(aux, how="left")
+                data["profiles"] = profiles
 
             df_ntc = pd.read_sql("SELECT name FROM sqlite_master WHERE type='table' AND name='data_inter_area_ntc'", con)
             if not df_ntc.empty:
@@ -202,6 +266,7 @@ class DatabaseBaseClass(object):
         storage,
         inflow_spilled,
         loadshed_power,
+        dumpload_power,
         marginalprice,
         flexload_power,
         flexload_storage,
@@ -243,6 +308,8 @@ class DatabaseBaseClass(object):
             spilled power inflow of generators
         loadshed_power (list of floats)
             unmet power demand at nodes
+        dumpload_power (list of floats)
+            forced demand sink power at nodes (surplus absorption)
         marginalprice
             price of generators with storage
         flexload_power (list of floats)
@@ -275,9 +342,9 @@ class DatabaseBaseClass(object):
             cur = con.cursor()
             cur.execute(f"INSERT INTO Res_ObjFunc VALUES({self.timestep_qs},?)", timestep_tuple + (objective_function,))
             cur.executemany(
-                f"INSERT INTO Res_Nodes VALUES({self.timestep_qs},?,?,?,?)",
+                f"INSERT INTO Res_Nodes VALUES({self.timestep_qs},?,?,?,?,?)",
                 tuple(
-                    timestep_tuple + (i, node_angle[i], sensitivity_node_power[i], loadshed_power[i])
+                    timestep_tuple + (i, node_angle[i], sensitivity_node_power[i], loadshed_power[i], dumpload_power[i])
                     for i in range(len(sensitivity_node_power))
                 ),
             )
@@ -1011,6 +1078,23 @@ class Database(DatabaseBaseClass):
             values = [row[0] for row in rows]
         return values
 
+    def getResultDumpLoadInArea(self, area, timeMaxMin):
+        """Aggregated dump-load timeseries for specified area."""
+        con = db.connect(self.filename)
+        with con:
+            cur = con.cursor()
+            cur.execute(
+                "SELECT SUM(dumpload) FROM Res_Nodes "
+                " WHERE timestep>=? AND timestep<? AND indx IN "
+                " (SELECT indx FROM Grid_Nodes WHERE area IN (?))"
+                " GROUP BY timestep"
+                " ORDER BY timestep",
+                (timeMaxMin[0], timeMaxMin[-1], area),
+            )
+            rows = cur.fetchall()
+            values = [row[0] for row in rows]
+        return values
+
     def getResultLoadheddingSum(self, timeMaxMin, average=False):
         """Sum of loadshedding timeseries per node"""
         if average:
@@ -1020,6 +1104,24 @@ class Database(DatabaseBaseClass):
         else:
             query = (
                 "SELECT indx,SUM(loadshed) FROM Res_Nodes  WHERE timestep>=? AND timestep<? GROUP BY indx ORDER BY indx"
+            )
+        con = db.connect(self.filename)
+        with con:
+            cur = con.cursor()
+            cur.execute(query, (timeMaxMin[0], timeMaxMin[-1]))
+            rows = cur.fetchall()
+            values = [row[1] for row in rows]
+        return values
+
+    def getResultDumpLoadSum(self, timeMaxMin, average=False):
+        """Sum of dump-load timeseries per node."""
+        if average:
+            query = (
+                "SELECT indx,AVG(dumpload) FROM Res_Nodes  WHERE timestep>=? AND timestep<? GROUP BY indx ORDER BY indx"
+            )
+        else:
+            query = (
+                "SELECT indx,SUM(dumpload) FROM Res_Nodes  WHERE timestep>=? AND timestep<? GROUP BY indx ORDER BY indx"
             )
         con = db.connect(self.filename)
         with con:

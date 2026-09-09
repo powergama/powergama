@@ -607,6 +607,7 @@ class LpProblem(pyo.ConcreteModel):
         self.varRtTargetDevNeg = pyo.Var(self.s_gen, within=pyo.NonNegativeReals)
         self.varFlexLoad = pyo.Var(self.s_load_flex, within=pyo.NonNegativeReals)
         self.varLoadShed = pyo.Var(self.s_load, within=pyo.NonNegativeReals)
+        self.varDumpLoad = pyo.Var(self.s_load, within=pyo.NonNegativeReals)
         # Flexible load DA target tracking deviations (soft penalty)
         self.varRtFlexLoadTargetDevPos = pyo.Var(self.s_load_flex, within=pyo.NonNegativeReals)
         self.varRtFlexLoadTargetDevNeg = pyo.Var(self.s_load_flex, within=pyo.NonNegativeReals)
@@ -924,6 +925,7 @@ class LpProblem(pyo.ConcreteModel):
             for lod in self._loads_at_node[n]:
                 lhs -= self.p_demand[lod]
                 lhs += model.varLoadShed[lod]
+                lhs -= model.varDumpLoad[lod]
                 if lod in model.s_load_flex:
                     lhs -= model.varFlexLoad[lod]
             for b in self._dcbranch_to_node[n]:
@@ -1012,11 +1014,13 @@ class LpProblem(pyo.ConcreteModel):
                 # otherwise the solver can bypass tracked balancing channels by
                 # dropping demand instead of redispatching generation, storage, or flex load.
                 cost = sum(model.varLoadShed[i] * const.loadshedcost for i in model.s_load)
+                cost += sum(model.varDumpLoad[i] * const.loadshedcost for i in model.s_load)
             else:
                 cost = sum(model.varGeneration[i] * self.p_gen_cost[i] for i in model.s_gen)
                 cost -= sum(model.varPump[i] * self.p_genpump_cost[i] for i in model.s_gen_pump)
                 cost -= sum(model.varFlexLoad[i] * self.p_loadflex_cost[i] for i in model.s_load_flex)
                 cost += sum(model.varLoadShed[i] * const.loadshedcost for i in model.s_load)
+                cost += sum(model.varDumpLoad[i] * const.loadshedcost for i in model.s_load)
                 cost += sum(model.varCurtailment[i] * self.p_curtail_cost[i] for i in model.s_gen)
 
             if self._rt_deviation_objective_active:
@@ -1285,6 +1289,7 @@ class LpProblem(pyo.ConcreteModel):
         m.varStorage = pyo.Var(m.s_gen_storage, m.s_h, within=pyo.NonNegativeReals)
         m.varSpill = pyo.Var(m.s_gen_storage, m.s_h, within=pyo.NonNegativeReals)
         m.varLoadShed = pyo.Var(m.s_load, m.s_h, within=pyo.NonNegativeReals)
+        m.varDumpLoad = pyo.Var(m.s_load, m.s_h, within=pyo.NonNegativeReals)
         m.varCurtailment = pyo.Var(m.s_gen, m.s_h, within=pyo.NonNegativeReals)
         m.varFlexLoad = pyo.Var(m.s_load_flex, m.s_h, within=pyo.NonNegativeReals)
         m.varAcBranchFlow = pyo.Var(m.s_branch_ac, m.s_h, within=pyo.Reals)
@@ -1302,6 +1307,8 @@ class LpProblem(pyo.ConcreteModel):
                 cost -= sum(m.varFlexLoad[j, h] * flexload_cost_h.get((h, j), 0.0)
                             for j in m.s_load_flex)
                 cost += sum(m.varLoadShed[j, h] * const.loadshedcost
+                            for j in m.s_load)
+                cost += sum(m.varDumpLoad[j, h] * const.loadshedcost
                             for j in m.s_load)
                 cost += sum(m.varCurtailment[i, h] * curtail_cost.get(i, 0.0)
                             for i in m.s_gen)
@@ -1457,6 +1464,7 @@ class LpProblem(pyo.ConcreteModel):
             for j in self._loads_at_node.get(n, []):
                 lhs -= demand_h.get((h, j), 0.0)
                 lhs += m.varLoadShed[j, h]
+                lhs -= m.varDumpLoad[j, h]
                 if j in flex_set:
                     lhs -= m.varFlexLoad[j, h]
             for b in self._dcbranch_to_node.get(n, []):
@@ -1613,9 +1621,11 @@ class LpProblem(pyo.ConcreteModel):
 
             # Load shedding aggregated to nodes
             Ploadshed = pd.Series(index=grid.node.id, data=0.0, dtype=float)
+            Pdumpload = pd.Series(index=grid.node.id, data=0.0, dtype=float)
             for j in self.s_load:
                 node_j = grid.consumer["node"][j]
                 Ploadshed[node_j] += float(pyo.value(m.varLoadShed[j, hi]) or 0.0)
+                Pdumpload[node_j] += float(pyo.value(m.varDumpLoad[j, hi]) or 0.0)
 
             # Per-hour objective (cost for this timestep only)
             obj_h = (
@@ -1627,6 +1637,8 @@ class LpProblem(pyo.ConcreteModel):
                       for fi in range(len(flex_list)))
                 + sum(float(pyo.value(m.varLoadShed[j, hi]) or 0.0) * const.loadshedcost
                       for j in self.s_load)
+                    + sum(float(pyo.value(m.varDumpLoad[j, hi]) or 0.0) * const.loadshedcost
+                        for j in self.s_load)
             )
 
             # Storage levels and spilled energy
@@ -1699,6 +1711,7 @@ class LpProblem(pyo.ConcreteModel):
                 storage=stor_levels,
                 inflow_spilled=energy_spilled.tolist(),
                 loadshed_power=Ploadshed.tolist(),
+                dumpload_power=Pdumpload.tolist(),
                 marginalprice=storageprice,
                 flexload_power=Pflexload,
                 flexload_storage=flexload_storagelevel.tolist(),
@@ -2019,6 +2032,10 @@ class LpProblem(pyo.ConcreteModel):
                 for j in self.s_load
             )
             - _sum_expr(
+                self.varDumpLoad[j]
+                for j in self.s_load
+            )
+            - _sum_expr(
                 self.varFlexLoad[j] - self.p_rt_flexload_target[j]
                 for j in self.s_load_flex
                 if int(j) in self._rt_consumer_target_indices
@@ -2131,6 +2148,10 @@ class LpProblem(pyo.ConcreteModel):
             "term_breakdown": {
                 "loadshed": _sum_expr(
                     const.loadshedcost * self.varLoadShed[j]
+                    for j in self.s_load
+                ),
+                "dumpload": _sum_expr(
+                    const.loadshedcost * self.varDumpLoad[j]
                     for j in self.s_load
                 ),
                 "gen_dev": _sum_expr(
@@ -2825,9 +2846,11 @@ class LpProblem(pyo.ConcreteModel):
         theta = [self.varVoltageAngle[i].value * const.baseAngle for i in self.s_node]
         # load shedding is aggregated to nodes (due to old code)
         Ploadshed = pd.Series(index=self._grid.node.id, data=[0] * len(self._grid.node.id), dtype=float)
+        Pdumpload = pd.Series(index=self._grid.node.id, data=[0] * len(self._grid.node.id), dtype=float)
         for j in self.s_load:
             node = self._grid.consumer["node"][j]
             Ploadshed[node] += self.varLoadShed[j].value
+            Pdumpload[node] += self.varDumpLoad[j].value
 
         # 4 Collect dual values
         # 4a. branch capacity sensitivity (whether pos or neg flow)
@@ -2893,6 +2916,7 @@ class LpProblem(pyo.ConcreteModel):
             storage=storagelevel.tolist(),
             inflow_spilled=energyspilled.tolist(),
             loadshed_power=Ploadshed.tolist(),
+            dumpload_power=Pdumpload.tolist(),
             marginalprice=storageprice,
             flexload_power=Pflexload,
             flexload_storage=flexload_storagelevel.tolist(),

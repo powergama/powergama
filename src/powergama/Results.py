@@ -89,6 +89,7 @@ class ResultsBaseClass(object):
         flexload_power,
         flexload_storage,
         flexload_storagevalue,
+        dumpload_power=None,
         branch_ac_losses=None,
         branch_dc_losses=None,
         fault_start=None,
@@ -121,6 +122,8 @@ class ResultsBaseClass(object):
             spileld power (list of same length and order as generators)
         loadshed_power : list
             same length and order as nodes
+        dumpload_power : list
+            same length and order as nodes
         marginalprice : list
             position according to grid.getIdxGeneratorsWithStorage()
         flexload_power : list
@@ -142,6 +145,8 @@ class ResultsBaseClass(object):
             branch_ac_losses = [0] * len(branch_power)
         if branch_dc_losses is None:
             branch_dc_losses = [0] * len(dcbranch_power)
+        if dumpload_power is None:
+            dumpload_power = [0.0] * len(loadshed_power)
         # Store results in sqlite database on disk (to avoid memory problems)
         self.db.appendResults(
             timestep=timestep,
@@ -157,6 +162,7 @@ class ResultsBaseClass(object):
             storage=storage,
             inflow_spilled=inflow_spilled,
             loadshed_power=loadshed_power,
+            dumpload_power=dumpload_power,
             marginalprice=marginalprice,
             flexload_power=flexload_power,
             flexload_storage=flexload_storage,
@@ -346,6 +352,20 @@ class Results(ResultsBaseClass):
 
         loadshed_per_node = self.db.getResultLoadheddingSum(timeMaxMin, average=average)
         return loadshed_per_node
+
+    def getDumpLoadInArea(self, area, timeMaxMin=None):
+        """Get aggregated dump-load timeseries for one area."""
+        if timeMaxMin is None:
+            timeMaxMin = [self.timerange[0], self.timerange[-1] + 1]
+        dumpload = self.db.getResultDumpLoadInArea(area, timeMaxMin)
+        dumpload = np.asarray(dumpload, dtype=float)
+        return dumpload
+
+    def getDumpLoadPerNode(self, timeMaxMin=None, average=False):
+        """Get dump-load sum per node."""
+        timeMaxMin = [self.timerange[0], self.timerange[-1] + 1]
+        dumpload_per_node = self.db.getResultDumpLoadSum(timeMaxMin, average=average)
+        return dumpload_per_node
 
     def getLoadheddingSums(self, timeMaxMin=None, average=False):
         """get loadshedding sum per area"""
