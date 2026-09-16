@@ -1382,11 +1382,14 @@ class Results(ResultsBaseClass):
             nodeidx = self.grid.node["id"].tolist().index(self.grid.generator.node[genindx])
             storagevalue = self.db.getResultStorageValue(genindx, timeMaxMin)
             nodalprice = self.db.getResultNodalPrice(nodeidx, timeMaxMin)
-            pumpprice = [x - self.grid.generator.pump_deadband[genindx] for x in storagevalue]
             plt.figure()
             (p,) = plt.plot(timerange, storagevalue, "-b", label="storage value")
             if genindx in self.pump_idx_generators:
-                pumpprice = [x - self.grid.generator.pump_deadband[genindx] for x in storagevalue]
+                pumpprice = [
+                    x * self.grid.generator.pump_efficiency[genindx]
+                    - self.grid.generator.pump_deadband[genindx]
+                    for x in storagevalue
+                ]
                 plt.plot(timerange, pumpprice, ":", color=p.get_color(), label="pump threshold")
             plt.plot(timerange, nodalprice, "--r", label="nodal price")
             plt.legend()
