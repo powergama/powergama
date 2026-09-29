@@ -2,61 +2,71 @@ name: Create Release
 
 on:
   push:
-    # Run when a tag matches v*, i.e. v0.1.0, v.1.30, etc.
+    # Run when a tag matches v*, e.g. v0.1.0, v1.30.0
     tags:
-      - 'v*'
+      - "v*"
+
+permissions:
+  contents: write
 
 jobs:
   autorelease:
     name: Create Release
-    runs-on: 'ubuntu-latest'
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - name: Setup Python 3.14
-        uses: actions/setup-python@v5
+      - name: Setup Python
+        uses: actions/setup-python@v7
         with:
-          python-version: '3.14'
+          python-version: "3.14"
+          cache: poetry
+          cache-dependency-path: poetry.lock
 
-      - uses: snok/install-poetry@v1.3.3
-        with:
-          virtualenvs-create: true
+      - name: Install Poetry
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install poetry==2.5.1
 
-      - name: Add project version to environment vars
+      - name: Check Poetry version
+        run: poetry --version
+
+      - name: Configure Poetry
+        run: |
+          poetry config virtualenvs.create true
+          poetry config virtualenvs.in-project true
+
+      - name: Add project version to environment
         run: |
           PROJECT_VERSION=$(poetry version --short)
-          echo "PROJECT_VERSION=$PROJECT_VERSION" >> $GITHUB_ENV
+          echo "PROJECT_VERSION=$PROJECT_VERSION" >> "$GITHUB_ENV"
 
-      - name: Check if tag version matches project version
+      - name: Check tag version matches project version
         run: |
-          TAG=$(git describe HEAD --tags --abbrev=0)
-          echo $TAG
-          echo $PROJECT_VERSION
-          if [[ "$TAG" != "v$PROJECT_VERSION" ]]; then exit 1; fi
+          TAG="${GITHUB_REF_NAME}"
+
+          echo "Tag: $TAG"
+          echo "Project version: $PROJECT_VERSION"
+
+          if [[ "$TAG" != "v$PROJECT_VERSION" ]]; then
+            echo "Tag version does not match project version."
+            exit 1
+          fi
 
       - name: Check pyproject.toml validity
-        run: poetry check --no-interaction
+        run: poetry check
 
-      - name: Cache dependencies
-        id: cache-deps
-        uses: actions/cache@v4
-        with:
-          path: ${{github.workspace}}/.venv
-          key: poetry-${{ hashFiles('**/poetry.lock') }}
-          restore-keys: poetry-
+      - name: Install dependencies
+        run: poetry install --no-interaction
 
-      - name: Install dependencies  # if cache has changed
-        if: steps.cache-deps.cache-hit != 'true'
+      - name: Setup GLPK
         run: |
-          poetry config virtualenvs.in-project true
-          poetry install --no-interaction
-
-      - name: Setup GLPK on ubuntu
-        run: sudo apt-get install glpk-utils
+          sudo apt-get update
+          sudo apt-get install -y glpk-utils
 
       - name: Run tests
         run: poetry run pytest -v
@@ -64,16 +74,27 @@ jobs:
       - name: Build
         run: poetry build
 
-      - name: Release Notes
-        run: git log $(git describe HEAD~ --tags --abbrev=0)..HEAD --pretty='format:* %h %s%n  * %an <%ae>' --no-merges >> ".github/release_template.md"
+      - name: Generate release notes
+        run: |
+          PREVIOUS_TAG=$(git describe --tags --abbrev=0 "${GITHUB_SHA}^" 2>/dev/null || true)
+
+          if [[ -n "$PREVIOUS_TAG" ]]; then
+            git log "$PREVIOUS_TAG..$GITHUB_SHA" \
+              --pretty='format:* %h %s%n  * %an <%ae>' \
+              --no-merges \
+              > .github/release_template.md
+          else
+            git log "$GITHUB_SHA" \
+              --pretty='format:* %h %s%n  * %an <%ae>' \
+              --no-merges \
+              > .github/release_template.md
+          fi
 
       - name: Create Release Draft
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v3
         with:
-          body_path: ".github/release_template.md"
+          body_path: .github/release_template.md
           draft: true
           files: |
-            dist/random_standup-${{env.PROJECT_VERSION}}-py3-none-any.whl
-            dist/random-standup-${{env.PROJECT_VERSION}}.tar.gz
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            dist/random_standup-${{ env.PROJECT_VERSION }}-py3-none-any.whl
+            dist/random-standup-${{ env.PROJECT_VERSION }}.tar.gz

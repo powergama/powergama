@@ -8,6 +8,9 @@ on:
     tags-ignore:
       - "**"
 
+permissions:
+  contents: read
+
 defaults:
   run:
     shell: bash
@@ -17,11 +20,12 @@ jobs:
     name: Build matrix
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os:
-          - "ubuntu-latest"
-          - "macos-latest"
-          - "windows-latest"
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
         python-version:
           - "3.12"
           - "3.14"
@@ -29,66 +33,64 @@ jobs:
       last_python_version: "3.14"
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
-          python-version: ${{matrix.python-version}}
+          python-version: ${{ matrix.python-version }}
+          cache: poetry
+          cache-dependency-path: poetry.lock
 
-      - uses: snok/install-poetry@v1.3.3
-        with:
-          virtualenvs-create: true
-          virtualenvs-in-project: true
-          virtualenvs-path: .venv
-          installer-parallel: true          
+      - name: Install Poetry
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install poetry==2.5.1
+
+      - name: Check Poetry version
+        run: poetry --version
+
+      - name: Configure Poetry
+        run: |
+          poetry config virtualenvs.create true
+          poetry config virtualenvs.in-project true
 
       - name: Check pyproject.toml validity
-        run: poetry check --no-interaction
+        run: poetry check
 
-      - name: Cache dependencies
-        id: cache-deps
-        uses: actions/cache@v4
-        with:
-          path: .venv
-          key: ${{ matrix.os }}-${{ matrix.python-version }}-${{ hashFiles('**/poetry.lock') }}
-          restore-keys: ${{ matrix.os }}-${{ matrix.python-version }}-
-
-
-      - name: Setup GLPK on ubuntu
+      - name: Setup GLPK on Ubuntu
         if: matrix.os == 'ubuntu-latest'
-        run: sudo apt-get install glpk-utils
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y glpk-utils
 
-      - name: Setup GLPK on macos
+      - name: Setup GLPK on macOS
         if: matrix.os == 'macos-latest'
         run: brew install glpk
 
       - name: Setup GLPK on Windows
         if: matrix.os == 'windows-latest'
-        run: choco install glpk
-        shell: bash
+        run: choco install glpk -y
 
-      - name: Install deps
-        if: steps.cache-deps.cache-hit != 'true'
+      - name: Install dependencies
         run: poetry install --no-interaction
 
       - name: Run tests
         run: poetry run pytest -v
 
-      - name: Run notebook tests (ubuntu latest only)
-        if: (matrix.os == 'ubuntu-latest') && (matrix.python-version ==env.last_python_version)
-        run: |
-            poetry run pytest -v --nbmake -k ipynb
+      - name: Run notebook tests
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == env.last_python_version
+        run: poetry run pytest -v --nbmake -k ipynb
 
-      - name: create coverage report (ubuntu latest only)
-        if: (matrix.os == 'ubuntu-latest') && (matrix.python-version ==env.last_python_version)
+      - name: Create coverage report
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == env.last_python_version
         run: |
-            poetry run coverage run -m pytest
-            poetry run coverage xml
+          poetry run coverage run -m pytest
+          poetry run coverage xml
 
-      - name: Upload coverage reports to Codecov (ubuntu latest only)
-        if: (matrix.os == 'ubuntu-latest') && (matrix.python-version ==env.last_python_version)
-        uses: codecov/codecov-action@v5
+      - name: Upload coverage reports to Codecov
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == env.last_python_version
+        uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
 
