@@ -95,6 +95,5 @@ jobs:
         with:
           body_path: .github/release_template.md
           draft: true
-          files: |
-            dist/random_standup-${{ env.PROJECT_VERSION }}-py3-none-any.whl
-            dist/random-standup-${{ env.PROJECT_VERSION }}.tar.gz
+          files: dist/*
+          

@@ -2,10 +2,14 @@
 name = "powergama"
 version = "1.5.2"
 description = "PowerGAMA - Power Grid And Market Analysis tool"
-authors = [{name="Harald G Svendsen", email="harald.svendsen@sintef.no"}]
-license = {text="MIT"}
+authors = [
+    {name = "Harald G Svendsen", email = "harald.svendsen@sintef.no"}
+]
+license = "MIT"
 readme = "README.md"
-classifiers=[
+requires-python = ">=3.11,<3.15"
+
+classifiers = [
     "Development Status :: 4 - Beta",
     "Topic :: Scientific/Engineering",
     "Operating System :: Microsoft :: Windows",
@@ -13,29 +17,25 @@ classifiers=[
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
     "Natural Language :: English",
-    "License :: OSI Approved :: MIT License",
 ]
-requires-python = ">=3.11"
+
 dependencies = [
-    "numpy >=2.3",
-    "pandas >=2.3",
-    "pyomo >=6.9",
-    "scipy >=1.16",
-    "matplotlib >=3.10",
-    "branca >=0.8",
-    "folium >=0.20",
-    "cloudpickle >=3.1",
-    "networkx >=3.5",
-    "geopandas >=1.1",
-    "highspy >=1.12",
-    "tqdm >=4.67",
+    "numpy>=2.3",
+    "pandas>=2.3",
+    "pyomo>=6.9",
+    "scipy>=1.16",
+    "matplotlib>=3.10",
+    "branca>=0.8",
+    "folium>=0.20",
+    "cloudpickle>=3.1",
+    "networkx>=3.5",
+    "geopandas>=1.1",
+    "highspy>=1.12",
+    "tqdm>=4.67",
 ]
 
 [project.urls]
-homepage = "https://github.com/powergama/powergama"
-
-[tool.poetry.dependencies]
-python = ">=3.11,<3.15"
+Homepage = "https://github.com/powergama/powergama"
 
 [tool.poetry.group.dev.dependencies]
 pytest = ">=8.4"
@@ -68,9 +68,7 @@ select = ["E4", "E7", "E9", "F", "I"]
 ignore = []
 fixable = ["ALL"]
 unfixable = []
-# Allow unused variables when underscore-prefixed.
 dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 
 [tool.ruff.format]
-# Like Black, use double quotes for strings.
 quote-style = "double"
