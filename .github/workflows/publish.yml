@@ -18,8 +18,11 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
+
+      - name: Install Poetry
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install poetry==2.5.1
 
       - name: Setup Python
         uses: actions/setup-python@v7
@@ -27,17 +30,6 @@ jobs:
           python-version: "3.14"
           cache: poetry
           cache-dependency-path: poetry.lock
-
-      - name: Install Poetry
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install poetry==2.5.1
-
-      - name: Check Poetry version
-        run: poetry --version
-
-      - name: Check pyproject.toml validity
-        run: poetry check
 
       - name: Build package
         run: poetry build

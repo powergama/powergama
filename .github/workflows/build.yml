@@ -50,11 +50,6 @@ jobs:
           cache: poetry
           cache-dependency-path: poetry.lock
 
-      - name: Configure Poetry
-        run: |
-          poetry config virtualenvs.create true
-          poetry config virtualenvs.in-project true
-
       - name: Check pyproject.toml validity
         run: poetry check
 
