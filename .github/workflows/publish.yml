@@ -5,44 +5,34 @@ on:
     types:
       - published
 
+permissions:
+  contents: read
 jobs:
   publish:
     runs-on: ubuntu-latest
+    environment:
+      name: pypi
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+        uses: actions/checkout@v7
 
-      - name: Setup Python 3.13
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.13'
-
-      - uses: snok/install-poetry@v1.3.3
-        with:
-          virtualenvs-create: true
-
-      - name: Check pyproject.toml validity
-        run: poetry check --no-interaction
-
-      - name: Cache dependencies
-        id: cache-deps
-        uses: actions/cache@v4
-        with:
-          path: ${{github.workspace}}/.venv
-          key: poetry-${{ hashFiles('**/poetry.lock') }}
-          restore-keys: poetry-
-
-      - name: Install dependencies  # if cache has changed
-        if: steps.cache-deps.cache-hit != 'true'
+      - name: Install Poetry
         run: |
-          poetry config virtualenvs.in-project true
-          poetry install --no-interaction
+          python -m pip install --upgrade pip
+          python -m pip install poetry==2.5.1
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+          cache: poetry
+          cache-dependency-path: poetry.lock
+
+      - name: Build package
+        run: poetry build
 
       - name: Publish to PyPI
-        env:
-          PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
-        run: |
-          poetry config pypi-token.pypi $PYPI_TOKEN
-          poetry publish --build
+        uses: pypa/gh-action-pypi-publish@release/v1

@@ -10,6 +10,5 @@ powergama/examples/powergim_doggerbank/.ipynb_checkpoints/
 *.sqlite3
 *.pyc
 lpsolver_log.txt
-poetry.lock
 tests/tmp_files/*
 .coverage
