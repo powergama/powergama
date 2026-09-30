@@ -67,6 +67,8 @@ class ResultsBaseClass(object):
         data_dict = res_db.get_grid_data()
         grid_data = powergama.GridData()
         grid_data.from_dict(data_dict, timedelta=timedelta)
+        # TODO: replace this with grid_data.validate() or something similar
+        grid_data._fillEmptyCells(keys=grid_data.keys_powergama)
         res = cls(grid_data, databasefile, replace=False)
         return res
 

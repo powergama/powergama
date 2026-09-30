@@ -1,4 +1,4 @@
-﻿"""
+"""
 Module containing PowerGAMA LpProblem class
 
  Power flow equations:
@@ -17,10 +17,10 @@ Module containing PowerGAMA LpProblem class
            A = Mx(N-1) node-branch incidence (adjacency) matrix
 """
 
-import warnings
-import os
 import json
+import os
 import uuid
+import warnings
 from pathlib import Path
 
 import networkx as nx
@@ -81,7 +81,9 @@ class LpProblem(pyo.ConcreteModel):
         self._objective_day_horizon_hours = int(max(1, int(objective_day_horizon_hours)))
         self._objective_day_commit_hours = int(max(1, int(objective_day_commit_hours)))
         self._is_rt = bool(is_rt)
-        self._rt_dispatch_objective_mode = "deviation" if self._is_rt else str(rt_dispatch_objective_mode).strip().lower()
+        self._rt_dispatch_objective_mode = (
+            "deviation" if self._is_rt else str(rt_dispatch_objective_mode).strip().lower()
+        )
         self._rt_deviation_objective_active = bool(self._is_rt)
         self._rt_p_res_curtailment_factor = float(rt_p_res_curtailment_factor)
         self._rt_xborder_flow_penalty_eur_per_mwh = max(0.0, float(rt_xborder_flow_penalty_eur_per_mwh))
@@ -134,7 +136,9 @@ class LpProblem(pyo.ConcreteModel):
         }
         # Ramp-rate limits (MW per timestep). NaN means unconstrained.
         # Optional consumer (flexible load) DA target references for DA-target deviation penalties.
-        self._rt_consumer_target_ref = grid.consumer["rt_target_ref"] if "rt_target_ref" in grid.consumer.columns else None
+        self._rt_consumer_target_ref = (
+            grid.consumer["rt_target_ref"] if "rt_target_ref" in grid.consumer.columns else None
+        )
         self._rt_consumer_target_indices = {
             int(i)
             for i in grid.consumer.index
@@ -145,7 +149,9 @@ class LpProblem(pyo.ConcreteModel):
         }
         # Optional storage (reservoir/battery filling) DA target references for DA-target deviation penalties.
         # Stores normalized filling fraction [0, 1] to ensure storage state continuity matches DA.
-        self._rt_storage_target_ref = grid.generator["rt_storage_target_ref"] if "rt_storage_target_ref" in grid.generator.columns else None
+        self._rt_storage_target_ref = (
+            grid.generator["rt_storage_target_ref"] if "rt_storage_target_ref" in grid.generator.columns else None
+        )
         self._rt_storage_target_indices = {
             int(i)
             for i in grid.generator.index
@@ -155,8 +161,12 @@ class LpProblem(pyo.ConcreteModel):
             and int(i) in self._idx_generatorsWithStorage
         }
         # Ramp-rate limits in per-unit of installed generator capacity. NaN means unconstrained.
-        self._ramp_up_pu = grid.generator["ramp_up_pu"].values.copy() if "ramp_up_pu" in grid.generator.columns else None
-        self._ramp_down_pu = grid.generator["ramp_down_pu"].values.copy() if "ramp_down_pu" in grid.generator.columns else None
+        self._ramp_up_pu = (
+            grid.generator["ramp_up_pu"].values.copy() if "ramp_up_pu" in grid.generator.columns else None
+        )
+        self._ramp_down_pu = (
+            grid.generator["ramp_down_pu"].values.copy() if "ramp_down_pu" in grid.generator.columns else None
+        )
         self._ramp_cap_mw = pd.to_numeric(grid.generator["pmax"], errors="coerce").fillna(0.0).values
         # If True for a generator, the ramp constraint is released at the start of every 24-hour
         # block (timestep % 24 == 0).  This models plant types (e.g. nuclear) whose output level
@@ -193,8 +203,16 @@ class LpProblem(pyo.ConcreteModel):
             else:
                 # Backward-compatible fallback: matching non-empty pmax/pmin refs
                 # typically indicate a fully pinned nuclear profile.
-                _pmax_txt = self._pmax_ref.astype(str).str.strip() if self._pmax_ref is not None else pd.Series("", index=grid.generator.index)
-                _pmin_txt = self._pmin_ref.astype(str).str.strip() if self._pmin_ref is not None else pd.Series("", index=grid.generator.index)
+                _pmax_txt = (
+                    self._pmax_ref.astype(str).str.strip()
+                    if self._pmax_ref is not None
+                    else pd.Series("", index=grid.generator.index)
+                )
+                _pmin_txt = (
+                    self._pmin_ref.astype(str).str.strip()
+                    if self._pmin_ref is not None
+                    else pd.Series("", index=grid.generator.index)
+                )
                 _fully_constrained = _pmax_txt.ne("") & _pmax_txt.eq(_pmin_txt)
             _disable = _is_nuclear & _has_pmax_ref & _has_pmin_ref & _fully_constrained
             if _disable.any():
@@ -214,41 +232,32 @@ class LpProblem(pyo.ConcreteModel):
         # DA storage marginalprice: dict {(timestep, storage_indx): value} for storage deviation pricing.
         self._da_storage_marginalprice: dict[tuple[int, int], float] = {}
         # Classify BE generators by type/tag for differentiated deviation pricing.
-        _gtype = grid.generator["type"].astype(str).str.lower() if "type" in grid.generator.columns else pd.Series("", index=grid.generator.index)
-        _gdesc = grid.generator["desc"].astype(str) if "desc" in grid.generator.columns else pd.Series("", index=grid.generator.index)
+        _gtype = (
+            grid.generator["type"].astype(str).str.lower()
+            if "type" in grid.generator.columns
+            else pd.Series("", index=grid.generator.index)
+        )
+        _gdesc = (
+            grid.generator["desc"].astype(str)
+            if "desc" in grid.generator.columns
+            else pd.Series("", index=grid.generator.index)
+        )
         # Generator type classification for RT deviation cost attribution in debug output.
         # These classify by generator type only — no country filter.
         _storage_gens_set = self._idx_generatorsWithStorage
         self._idx_rt_peak_gen: set[int] = {
-            int(i) for i in grid.generator.index
-            if _gtype.loc[i] == "fossil_gas"
-            and "[RT]" in str(_gdesc.loc[i])
+            int(i) for i in grid.generator.index if _gtype.loc[i] == "fossil_gas" and "[RT]" in str(_gdesc.loc[i])
         }
         self._idx_rt_normal_gas: set[int] = {
-            int(i) for i in grid.generator.index
-            if _gtype.loc[i] == "fossil_gas"
-            and "[RT]" not in str(_gdesc.loc[i])
+            int(i) for i in grid.generator.index if _gtype.loc[i] == "fossil_gas" and "[RT]" not in str(_gdesc.loc[i])
         }
         self._idx_rt_wind: set[int] = {
-            int(i) for i in grid.generator.index
-            if _gtype.loc[i] in {"wind_off", "wind_on", "wind"}
+            int(i) for i in grid.generator.index if _gtype.loc[i] in {"wind_off", "wind_on", "wind"}
         }
-        self._idx_rt_solar: set[int] = {
-            int(i) for i in grid.generator.index
-            if _gtype.loc[i] == "solar"
-        }
-        self._idx_rt_nuclear: set[int] = {
-            int(i) for i in grid.generator.index
-            if _gtype.loc[i] == "nuclear"
-        }
-        self._idx_rt_biomass: set[int] = {
-            int(i) for i in grid.generator.index
-            if _gtype.loc[i] == "biomass"
-        }
-        self._idx_rt_fossil_other: set[int] = {
-            int(i) for i in grid.generator.index
-            if _gtype.loc[i] == "fossil_other"
-        }
+        self._idx_rt_solar: set[int] = {int(i) for i in grid.generator.index if _gtype.loc[i] == "solar"}
+        self._idx_rt_nuclear: set[int] = {int(i) for i in grid.generator.index if _gtype.loc[i] == "nuclear"}
+        self._idx_rt_biomass: set[int] = {int(i) for i in grid.generator.index if _gtype.loc[i] == "biomass"}
+        self._idx_rt_fossil_other: set[int] = {int(i) for i in grid.generator.index if _gtype.loc[i] == "fossil_other"}
         self._idx_rt_storage_gens: set[int] = set(_storage_gens_set)
         self._idx_rt_hydro_ror: set[int] = {
             int(i)
@@ -478,20 +487,14 @@ class LpProblem(pyo.ConcreteModel):
         loaded_ac_idx |= _extract_loaded_branch_indices(self._border_ac_flow_lb)
         loaded_ac_idx |= _extract_loaded_branch_indices(self._border_ac_flow_ub)
         self._idx_border_ac = {int(i) for i in loaded_ac_idx if int(i) in set(self._grid.branch.index.tolist())}
-        self._border_ac_sign = {
-            int(i): _be_oriented_sign(self._grid.branch, int(i))
-            for i in self._idx_border_ac
-        }
+        self._border_ac_sign = {int(i): _be_oriented_sign(self._grid.branch, int(i)) for i in self._idx_border_ac}
 
         loaded_dc_idx = set()
         loaded_dc_idx |= _extract_loaded_branch_indices(self._border_dc_flow_lock)
         loaded_dc_idx |= _extract_loaded_branch_indices(self._border_dc_flow_lb)
         loaded_dc_idx |= _extract_loaded_branch_indices(self._border_dc_flow_ub)
         self._idx_border_dc = {int(i) for i in loaded_dc_idx if int(i) in set(self._grid.dcbranch.index.tolist())}
-        self._border_dc_sign = {
-            int(i): _be_oriented_sign(self._grid.dcbranch, int(i))
-            for i in self._idx_border_dc
-        }
+        self._border_dc_sign = {int(i): _be_oriented_sign(self._grid.dcbranch, int(i)) for i in self._idx_border_dc}
 
     def _create_sets_and_parameters(self, grid_data):
         """Create pyomo model sets"""
@@ -546,12 +549,18 @@ class LpProblem(pyo.ConcreteModel):
         # Consumer (flexible load) RT DA target for DA-target deviation penalties
         self.p_rt_flexload_target = pyo.Param(self.s_load_flex, within=pyo.NonNegativeReals, default=0, mutable=True)
         self.p_rt_flexload_target_active = pyo.Param(self.s_load_flex, within=pyo.Binary, default=0, mutable=True)
-        self.p_rt_deviation_price_flex = pyo.Param(self.s_load_flex, within=pyo.NonNegativeReals, default=0, mutable=True)
+        self.p_rt_deviation_price_flex = pyo.Param(
+            self.s_load_flex, within=pyo.NonNegativeReals, default=0, mutable=True
+        )
         self.p_rt_deviation_price_flex_pos = pyo.Param(self.s_load_flex, within=pyo.Reals, default=0, mutable=True)
         self.p_rt_deviation_price_flex_neg = pyo.Param(self.s_load_flex, within=pyo.Reals, default=0, mutable=True)
         self.p_rt_storage_target = pyo.Param(self.s_gen_storage, within=pyo.NonNegativeReals, default=0, mutable=True)
-        self.p_rt_storage_balance_rhs = pyo.Param(self.s_gen_storage, within=pyo.NonNegativeReals, default=0, mutable=True)
-        self.p_rt_deviation_price_storage = pyo.Param(self.s_gen_storage, within=pyo.NonNegativeReals, default=0, mutable=True)
+        self.p_rt_storage_balance_rhs = pyo.Param(
+            self.s_gen_storage, within=pyo.NonNegativeReals, default=0, mutable=True
+        )
+        self.p_rt_deviation_price_storage = pyo.Param(
+            self.s_gen_storage, within=pyo.NonNegativeReals, default=0, mutable=True
+        )
         self.p_rt_deviation_price_storage_pos = pyo.Param(self.s_gen_storage, within=pyo.Reals, default=0, mutable=True)
         self.p_rt_deviation_price_storage_neg = pyo.Param(self.s_gen_storage, within=pyo.Reals, default=0, mutable=True)
         self.p_rt_io_target_ac = pyo.Param(self.s_branch_ac, within=pyo.Reals, default=0, mutable=True)
@@ -602,7 +611,7 @@ class LpProblem(pyo.ConcreteModel):
             self.varLossDc21 = pyo.Var(self.s_branch_dc, within=pyo.NonNegativeReals)
         self.varGeneration = pyo.Var(self.s_gen, within=pyo.NonNegativeReals)
         self.varPump = pyo.Var(self.s_gen_pump, within=pyo.NonNegativeReals)
-        self.varCurtailment = pyo.Var(self.s_gen, within=pyo.NonNegativeReals)
+        self.varCurtailment = pyo.Var(self.s_gen, within=pyo.NonNegativeReals, initialize=0)
         self.varRtTargetDevPos = pyo.Var(self.s_gen, within=pyo.NonNegativeReals)
         self.varRtTargetDevNeg = pyo.Var(self.s_gen, within=pyo.NonNegativeReals)
         self.varFlexLoad = pyo.Var(self.s_load_flex, within=pyo.NonNegativeReals)
@@ -827,7 +836,9 @@ class LpProblem(pyo.ConcreteModel):
         def rt_target_rule(model, i):
             if int(i) not in self._rt_target_gen_indices:
                 return pyo.Constraint.Skip
-            return model.varGeneration[i] - self.p_rt_target[i] == model.varRtTargetDevPos[i] - model.varRtTargetDevNeg[i]
+            return (
+                model.varGeneration[i] - self.p_rt_target[i] == model.varRtTargetDevPos[i] - model.varRtTargetDevNeg[i]
+            )
 
         self.cRtTargetTracking = pyo.Constraint(self.s_gen, rule=rt_target_rule)
 
@@ -843,7 +854,10 @@ class LpProblem(pyo.ConcreteModel):
         def rt_flexload_target_rule(model, j):
             if int(j) not in self._rt_consumer_target_indices:
                 return pyo.Constraint.Skip
-            return model.varFlexLoad[j] - self.p_rt_flexload_target[j] == model.varRtFlexLoadTargetDevPos[j] - model.varRtFlexLoadTargetDevNeg[j]
+            return (
+                model.varFlexLoad[j] - self.p_rt_flexload_target[j]
+                == model.varRtFlexLoadTargetDevPos[j] - model.varRtFlexLoadTargetDevNeg[j]
+            )
 
         self.cRtFlexLoadTargetTracking = pyo.Constraint(self.s_load_flex, rule=rt_flexload_target_rule)
 
@@ -860,7 +874,10 @@ class LpProblem(pyo.ConcreteModel):
             if int(i) in self.s_gen_pump:
                 pump_eff = float(self._grid.generator.loc[i, "pump_efficiency"])
                 lhs += self.timeDelta * pump_eff * model.varPump[i]
-            return lhs - self.p_rt_storage_target[i] == model.varRtStorageTargetDevPos[i] - model.varRtStorageTargetDevNeg[i]
+            return (
+                lhs - self.p_rt_storage_target[i]
+                == model.varRtStorageTargetDevPos[i] - model.varRtStorageTargetDevNeg[i]
+            )
 
         self.cRtStorageTargetTracking = pyo.Constraint(self.s_gen_storage, rule=rt_storage_target_rule)
 
@@ -1056,6 +1073,7 @@ class LpProblem(pyo.ConcreteModel):
                         )
                     )
             return cost
+
         self.OBJ = pyo.Objective(rule=cost_rule, sense=pyo.minimize)
 
     def _get_powerbalance_rhs(self):
@@ -1122,8 +1140,9 @@ class LpProblem(pyo.ConcreteModel):
 
         # ── pre-compute storage capacity and pump parameters ──────────
         storage_ini = {int(i): float(self._storage[i]) for i in self._idx_generatorsWithStorage}
-        storage_cap = {int(i): max(0.0, float(grid.generator.loc[i, "storage_cap"]))
-                       for i in self._idx_generatorsWithStorage}
+        storage_cap = {
+            int(i): max(0.0, float(grid.generator.loc[i, "storage_cap"])) for i in self._idx_generatorsWithStorage
+        }
         spill_frac_series = pd.to_numeric(grid.generator.get("spill_cap_frac", 1.0), errors="coerce")
         if not isinstance(spill_frac_series, pd.Series):
             spill_frac_series = pd.Series(spill_frac_series, index=grid.generator.index)
@@ -1134,13 +1153,11 @@ class LpProblem(pyo.ConcreteModel):
             frac = max(0.0, min(1.0, frac))
             pmax_i = max(0.0, float(grid.generator.loc[i, "pmax"]))
             spill_cap_mw[int(i)] = frac * pmax_i
-        pump_eff_g = {int(i): float(grid.generator.loc[i, "pump_efficiency"])
-                      for i in self._idx_generatorsWithPumping}
-        pump_cap_raw = {int(i): float(grid.generator.loc[i, "pump_cap"])
-                        for i in self._idx_generatorsWithPumping}
+        pump_eff_g = {int(i): float(grid.generator.loc[i, "pump_efficiency"]) for i in self._idx_generatorsWithPumping}
+        pump_cap_raw = {int(i): float(grid.generator.loc[i, "pump_cap"]) for i in self._idx_generatorsWithPumping}
 
         # ── pre-compute storval for each storage gen (BOD filling level) ─
-        gen_cost_h: dict = {}   # (h, i) → total cost including storval
+        gen_cost_h: dict = {}  # (h, i) → total cost including storval
         pump_cost_h: dict = {}  # (h, i) → pump credit
         # Terminal storval: opportunity cost of 1 MWh left in storage at end of day.
         # Evaluated at end-of-day time reference so the solver values conservation of
@@ -1183,9 +1200,9 @@ class LpProblem(pyo.ConcreteModel):
         # ── pre-compute inflow / pmax / pmin per (hour, gen) ─────────
         P_max_base = grid.generator["pmax"]
         P_min_base = grid.generator["pmin"]
-        inflow_h: dict = {}      # (hi, i) → inflow MW
-        capacity_h: dict = {}   # (hi, i) → installed pmax × availability
-        pmin_h: dict = {}        # (hi, i) → pmin lower bound
+        inflow_h: dict = {}  # (hi, i) → inflow MW
+        capacity_h: dict = {}  # (hi, i) → installed pmax × availability
+        pmin_h: dict = {}  # (hi, i) → pmin lower bound
 
         for hi, ts in enumerate(day_timesteps):
             for i in self.s_gen:
@@ -1211,9 +1228,7 @@ class LpProblem(pyo.ConcreteModel):
         demand_h: dict = {}
         for hi, ts in enumerate(day_timesteps):
             for j in self.s_load:
-                avg = float(grid.consumer.loc[j, "demand_avg"]) * (
-                    1 - float(grid.consumer.loc[j, "flex_fraction"])
-                )
+                avg = float(grid.consumer.loc[j, "demand_avg"]) * (1 - float(grid.consumer.loc[j, "flex_fraction"]))
                 prof = grid.consumer.loc[j, "demand_ref"]
                 d_now = float(grid.profiles.loc[ts, prof]) * avg
                 if self._foreign_cons_lock is not None:
@@ -1230,35 +1245,41 @@ class LpProblem(pyo.ConcreteModel):
                 flexload_cost_h[(hi, j)] = float(pyo.value(self.p_loadflex_cost[j]))
 
         # ── pre-compute per-hour branch flow bounds (including DA locks) ─
-        ac_lb: dict = {}   # (hi, b) → lb or None
-        ac_ub: dict = {}   # (hi, b) → ub or None
+        ac_lb: dict = {}  # (hi, b) → lb or None
+        ac_ub: dict = {}  # (hi, b) → ub or None
         dc_lb: dict = {}
         dc_ub: dict = {}
         for hi, ts in enumerate(day_timesteps):
             for b in self.s_branch_ac:
                 key = (int(ts), int(b))
-                if (self._border_ac_flow_lb is not None
-                        and key in self._border_ac_flow_lb.index
-                        and key in self._border_ac_flow_ub.index):
+                if (
+                    self._border_ac_flow_lb is not None
+                    and key in self._border_ac_flow_lb.index
+                    and key in self._border_ac_flow_ub.index
+                ):
                     lb = float(self._border_ac_flow_lb.loc[key])
                     ub = float(self._border_ac_flow_ub.loc[key])
                     ac_lb[(hi, b)] = lb if np.isfinite(lb) else None
                     ac_ub[(hi, b)] = ub if np.isfinite(ub) else None
                 else:
                     lo, hi_ = self._default_ac_flow_bounds.get(int(b), (None, None))
-                    ac_lb[(hi, b)] = lo; ac_ub[(hi, b)] = hi_
+                    ac_lb[(hi, b)] = lo
+                    ac_ub[(hi, b)] = hi_
             for b in self.s_branch_dc:
                 key = (int(ts), int(b))
-                if (self._border_dc_flow_lb is not None
-                        and key in self._border_dc_flow_lb.index
-                        and key in self._border_dc_flow_ub.index):
+                if (
+                    self._border_dc_flow_lb is not None
+                    and key in self._border_dc_flow_lb.index
+                    and key in self._border_dc_flow_ub.index
+                ):
                     lb = float(self._border_dc_flow_lb.loc[key])
                     ub = float(self._border_dc_flow_ub.loc[key])
                     dc_lb[(hi, b)] = lb if np.isfinite(lb) else None
                     dc_ub[(hi, b)] = ub if np.isfinite(ub) else None
                 else:
                     lo, hi_ = self._default_dc_flow_bounds.get(int(b), (None, None))
-                    dc_lb[(hi, b)] = lo; dc_ub[(hi, b)] = hi_
+                    dc_lb[(hi, b)] = lo
+                    dc_ub[(hi, b)] = hi_
 
         # ── foreign gen locks ─────────────────────────────────────────
         foreign_lock: dict = {}  # (hi, i) → fixed MW or None
@@ -1300,25 +1321,19 @@ class LpProblem(pyo.ConcreteModel):
         def _obj_rule(m):
             cost = 0
             for h in range(H):
-                cost += sum(m.varGeneration[i, h] * gen_cost_h.get((h, i), 0.0)
-                            for i in m.s_gen)
-                cost -= sum(m.varPump[i, h] * pump_cost_h.get((h, i), 0.0)
-                            for i in m.s_gen_pump)
-                cost -= sum(m.varFlexLoad[j, h] * flexload_cost_h.get((h, j), 0.0)
-                            for j in m.s_load_flex)
-                cost += sum(m.varLoadShed[j, h] * const.loadshedcost
-                            for j in m.s_load)
-                cost += sum(m.varDumpLoad[j, h] * const.loadshedcost
-                            for j in m.s_load)
-                cost += sum(m.varCurtailment[i, h] * curtail_cost.get(i, 0.0)
-                            for i in m.s_gen)
+                cost += sum(m.varGeneration[i, h] * gen_cost_h.get((h, i), 0.0) for i in m.s_gen)
+                cost -= sum(m.varPump[i, h] * pump_cost_h.get((h, i), 0.0) for i in m.s_gen_pump)
+                cost -= sum(m.varFlexLoad[j, h] * flexload_cost_h.get((h, j), 0.0) for j in m.s_load_flex)
+                cost += sum(m.varLoadShed[j, h] * const.loadshedcost for j in m.s_load)
+                cost += sum(m.varDumpLoad[j, h] * const.loadshedcost for j in m.s_load)
+                cost += sum(m.varCurtailment[i, h] * curtail_cost.get(i, 0.0) for i in m.s_gen)
             # Terminal storage value: reward conservation of stored energy at end of day.
             # Without this, the solver has no incentive to leave storage full at day-end,
             # which would drain it to zero every day and destroy inter-day continuity.
             # Subtracting here (minimisation) means higher end storage → lower effective cost.
-            cost -= sum(terminal_storval.get(i, 0.0) * m.varStorage[i, H - 1]
-                        for i in m.s_gen_storage)
+            cost -= sum(terminal_storval.get(i, 0.0) * m.varStorage[i, H - 1] for i in m.s_gen_storage)
             return cost
+
         m.OBJ = pyo.Objective(rule=_obj_rule, sense=pyo.minimize)
 
         # ── generation bounds (non-storage) ───────────────────────────
@@ -1328,6 +1343,7 @@ class LpProblem(pyo.ConcreteModel):
             locked = foreign_lock.get((h, i))
             pmax = locked if locked is not None else inflow_h.get((h, i), 0.0)
             return m.varGeneration[i, h] <= pmax
+
         m.cGenUbNs = pyo.Constraint(m.s_gen, m.s_h, rule=_gen_ub_ns_rule)
 
         def _gen_lb_ns_rule(m, i, h):
@@ -1339,6 +1355,7 @@ class LpProblem(pyo.ConcreteModel):
             infl = inflow_h.get((h, i), 0.0)
             pmin = pmin_h.get((h, i), 0.0)
             return m.varGeneration[i, h] >= max(0.0, min(infl, pmin))
+
         m.cGenLbNs = pyo.Constraint(m.s_gen, m.s_h, rule=_gen_lb_ns_rule)
 
         # ── generation bounds (storage generators) ────────────────────
@@ -1350,6 +1367,7 @@ class LpProblem(pyo.ConcreteModel):
                 return m.varGeneration[i, h] <= locked
             prev_s = storage_ini[i] if h == 0 else m.varStorage[i, h - 1]
             return m.varGeneration[i, h] <= inflow_h.get((h, i), 0.0) + prev_s / dt
+
         m.cGenUbStorAvail = pyo.Constraint(m.s_gen_storage, m.s_h, rule=_gen_ub_stor_avail_rule)
 
         def _gen_ub_stor_cap_rule(m, i, h):
@@ -1357,6 +1375,7 @@ class LpProblem(pyo.ConcreteModel):
             if locked is not None:
                 return m.varGeneration[i, h] <= locked
             return m.varGeneration[i, h] <= capacity_h.get((h, i), 0.0)
+
         m.cGenUbStorCap = pyo.Constraint(m.s_gen_storage, m.s_h, rule=_gen_ub_stor_cap_rule)
 
         def _gen_lb_stor_rule(m, i, h):
@@ -1366,11 +1385,13 @@ class LpProblem(pyo.ConcreteModel):
             infl = inflow_h.get((h, i), 0.0)
             pmin = pmin_h.get((h, i), 0.0)
             return m.varGeneration[i, h] >= max(0.0, min(infl, pmin))
+
         m.cGenLbStor = pyo.Constraint(m.s_gen_storage, m.s_h, rule=_gen_lb_stor_rule)
 
         # ── storage capacity upper bound ───────────────────────────────
         def _stor_cap_rule(m, i, h):
             return m.varStorage[i, h] <= storage_cap[i]
+
         m.cStorCap = pyo.Constraint(m.s_gen_storage, m.s_h, rule=_stor_cap_rule)
 
         # ── KEY: storage continuity (equality with explicit spill) ─────
@@ -1380,14 +1401,14 @@ class LpProblem(pyo.ConcreteModel):
             infl = inflow_h.get((h, i), 0.0)
             eff = pump_eff_g.get(i, 1.0) if i in gen_pump_set else 1.0
             pump_term = m.varPump[i, h] * eff if i in gen_pump_set else 0
-            return m.varStorage[i, h] == (
-                prev_s + (infl - m.varGeneration[i, h] + pump_term - m.varSpill[i, h]) * dt
-            )
+            return m.varStorage[i, h] == (prev_s + (infl - m.varGeneration[i, h] + pump_term - m.varSpill[i, h]) * dt)
+
         m.cStorCont = pyo.Constraint(m.s_gen_storage, m.s_h, rule=_stor_cont_rule)
 
         # Limit spill power by per-generator fraction of installed generator capacity.
         def _spill_cap_rule(m, i, h):
             return m.varSpill[i, h] <= spill_cap_mw.get(i, 0.0)
+
         m.cSpillCap = pyo.Constraint(m.s_gen_storage, m.s_h, rule=_spill_cap_rule)
 
         # ── pump bounds ────────────────────────────────────────────────
@@ -1398,15 +1419,18 @@ class LpProblem(pyo.ConcreteModel):
                 return m.varPump[i, h] == 0
             prev_s = storage_ini[i] if h == 0 else m.varStorage[i, h - 1]
             return m.varPump[i, h] * eff * dt <= storage_cap[i] - prev_s
+
         m.cPumpRoom = pyo.Constraint(m.s_gen_pump, m.s_h, rule=_pump_room_rule)
 
         def _pump_cap_rule(m, i, h):
             return m.varPump[i, h] <= pump_cap_raw.get(i, 0.0)
+
         m.cPumpCap = pyo.Constraint(m.s_gen_pump, m.s_h, rule=_pump_cap_rule)
 
         # ── ramp rates within the day ──────────────────────────────────
         has_ramp = (self._ramp_up_pu is not None) or (self._ramp_down_pu is not None)
         if has_ramp:
+
             def _ramp_up_rule(m, i, h):
                 if self._disable_nuclear_ramp_profile_conflict[int(i)]:
                     return pyo.Constraint.Skip
@@ -1423,6 +1447,7 @@ class LpProblem(pyo.ConcreteModel):
                         return pyo.Constraint.Skip
                     return m.varGeneration[i, 0] <= prev + float(ramp_pu) * float(self._ramp_cap_mw[i])
                 return m.varGeneration[i, h] <= m.varGeneration[i, h - 1] + float(ramp_pu) * float(self._ramp_cap_mw[i])
+
             m.cRampUp = pyo.Constraint(m.s_gen, m.s_h, rule=_ramp_up_rule)
 
             def _ramp_dn_rule(m, i, h):
@@ -1440,15 +1465,18 @@ class LpProblem(pyo.ConcreteModel):
                         return pyo.Constraint.Skip
                     return m.varGeneration[i, 0] >= prev - float(ramp_pu) * float(self._ramp_cap_mw[i])
                 return m.varGeneration[i, h] >= m.varGeneration[i, h - 1] - float(ramp_pu) * float(self._ramp_cap_mw[i])
+
             m.cRampDn = pyo.Constraint(m.s_gen, m.s_h, rule=_ramp_dn_rule)
 
         # ── flex load ─────────────────────────────────────────────────
         if list(m.s_load_flex):
+
             def _flex_ub_rule(m, j, h):
                 avg = float(grid.consumer.loc[j, "demand_avg"])
                 frac = float(grid.consumer.loc[j, "flex_fraction"])
                 on_off = float(grid.consumer.loc[j, "flex_on_off"])
                 return m.varFlexLoad[j, h] <= avg * frac / on_off
+
             m.cFlexUb = pyo.Constraint(m.s_load_flex, m.s_h, rule=_flex_ub_rule)
 
         # ── power balance (one per node per hour) ─────────────────────
@@ -1482,6 +1510,7 @@ class LpProblem(pyo.ConcreteModel):
             if isinstance(expr, bool) and expr is True:
                 return pyo.Constraint.Skip
             return expr
+
         m.cPowerbalance = pyo.Constraint(m.s_node, m.s_h, rule=_power_balance_rule)
 
         # ── DC power flow (flow-angle relationship) ───────────────────
@@ -1497,6 +1526,7 @@ class LpProblem(pyo.ConcreteModel):
                 n2 = node_list[ni2]
                 rhs += float(row.data[k]) * m.varVoltageAngle[n2, h] * const.baseAngle
             return lhs == rhs
+
         m.cFlowAngle = pyo.Constraint(m.s_branch_ac, m.s_h, rule=_flow_angle_rule)
 
         # ── reference angle = 0 per synchronous area ──────────────────
@@ -1508,27 +1538,29 @@ class LpProblem(pyo.ConcreteModel):
         def _ac_lb_rule(m, b, h):
             lb = ac_lb.get((h, b))
             return m.varAcBranchFlow[b, h] >= lb if lb is not None else pyo.Constraint.Skip
+
         m.cAcFlowLb = pyo.Constraint(m.s_branch_ac, m.s_h, rule=_ac_lb_rule)
 
         def _ac_ub_rule(m, b, h):
             ub = ac_ub.get((h, b))
             return m.varAcBranchFlow[b, h] <= ub if ub is not None else pyo.Constraint.Skip
+
         m.cAcFlowUb = pyo.Constraint(m.s_branch_ac, m.s_h, rule=_ac_ub_rule)
 
         def _dc_lb_rule(m, b, h):
             lb = dc_lb.get((h, b))
             return m.varDcBranchFlow[b, h] >= lb if lb is not None else pyo.Constraint.Skip
+
         m.cDcFlowLb = pyo.Constraint(m.s_branch_dc, m.s_h, rule=_dc_lb_rule)
 
         def _dc_ub_rule(m, b, h):
             ub = dc_ub.get((h, b))
             return m.varDcBranchFlow[b, h] <= ub if ub is not None else pyo.Constraint.Skip
+
         m.cDcFlowUb = pyo.Constraint(m.s_branch_dc, m.s_h, rule=_dc_ub_rule)
 
         # ── inter-area NTC constraints ─────────────────────────────────
-        if (self._inter_area_ntc is not None
-                and len(self._inter_area_ntc) > 0
-                and hasattr(self, "_inter_area_ntc_rows")):
+        if self._inter_area_ntc is not None and len(self._inter_area_ntc) > 0 and hasattr(self, "_inter_area_ntc_rows"):
             ntc_rows = self._inter_area_ntc_rows
             m.s_ntc = pyo.RangeSet(0, len(ntc_rows) - 1)
 
@@ -1546,6 +1578,7 @@ class LpProblem(pyo.ConcreteModel):
                     - sum(m.varDcBranchFlow[b, h] for b in row["dc_neg"])
                 )
                 return net_t <= cap
+
             m.cNtcFwd = pyo.Constraint(m.s_ntc, m.s_h, rule=_ntc_fwd_rule)
 
             def _ntc_bwd_rule(m, cidx, h):
@@ -1562,6 +1595,7 @@ class LpProblem(pyo.ConcreteModel):
                     - sum(m.varDcBranchFlow[b, h] for b in row["dc_neg"])
                 )
                 return net_t >= -cap
+
             m.cNtcBwd = pyo.Constraint(m.s_ntc, m.s_h, rule=_ntc_bwd_rule)
 
         pre_data = {
@@ -1593,13 +1627,13 @@ class LpProblem(pyo.ConcreteModel):
             commit_hours = H
         commit_hours = int(max(1, min(int(commit_hours), int(H))))
         day_timesteps = pre_data["day_timesteps"]
-        inflow_h = pre_data["inflow_h"]
-        storage_ini = pre_data["storage_ini"]
-        storage_cap = pre_data["storage_cap"]
-        pump_eff_g = pre_data["pump_eff_g"]
-        gen_storage_set = pre_data["gen_storage_set"]
-        gen_pump_set = pre_data["gen_pump_set"]
-        flex_set = pre_data["flex_set"]
+        # inflow_h = pre_data["inflow_h"]
+        # storage_ini = pre_data["storage_ini"]
+        # storage_cap = pre_data["storage_cap"]
+        # pump_eff_g = pre_data["pump_eff_g"]
+        # gen_storage_set = pre_data["gen_storage_set"]
+        # gen_pump_set = pre_data["gen_pump_set"]
+        # flex_set = pre_data["flex_set"]
         node_list = pre_data["node_list"]
         gen_list = list(self.s_gen)
         gen_pump_list = list(self.s_gen_pump)
@@ -1616,8 +1650,7 @@ class LpProblem(pyo.ConcreteModel):
             Pflexload = [float(pyo.value(m.varFlexLoad[j, hi]) or 0.0) for j in flex_list]
             Pb = [float(pyo.value(m.varAcBranchFlow[b, hi]) or 0.0) for b in branch_ac_list]
             Pdc = [float(pyo.value(m.varDcBranchFlow[b, hi]) or 0.0) for b in branch_dc_list]
-            theta = [float(pyo.value(m.varVoltageAngle[n, hi]) or 0.0) * const.baseAngle
-                     for n in node_list]
+            theta = [float(pyo.value(m.varVoltageAngle[n, hi]) or 0.0) * const.baseAngle for n in node_list]
 
             # Load shedding aggregated to nodes
             Ploadshed = pd.Series(index=grid.node.id, data=0.0, dtype=float)
@@ -1629,16 +1662,17 @@ class LpProblem(pyo.ConcreteModel):
 
             # Per-hour objective (cost for this timestep only)
             obj_h = (
-                sum(Pgen[gi] * pre_data["gen_cost_h"].get((hi, gen_list[gi]), 0.0)
-                    for gi in range(len(gen_list)))
-                - sum(Ppump[pi] * pre_data["pump_cost_h"].get((hi, gen_pump_list[pi]), 0.0)
-                      for pi in range(len(gen_pump_list)))
-                - sum(Pflexload[fi] * pre_data["flexload_cost_h"].get((hi, flex_list[fi]), 0.0)
-                      for fi in range(len(flex_list)))
-                + sum(float(pyo.value(m.varLoadShed[j, hi]) or 0.0) * const.loadshedcost
-                      for j in self.s_load)
-                    + sum(float(pyo.value(m.varDumpLoad[j, hi]) or 0.0) * const.loadshedcost
-                        for j in self.s_load)
+                sum(Pgen[gi] * pre_data["gen_cost_h"].get((hi, gen_list[gi]), 0.0) for gi in range(len(gen_list)))
+                - sum(
+                    Ppump[pi] * pre_data["pump_cost_h"].get((hi, gen_pump_list[pi]), 0.0)
+                    for pi in range(len(gen_pump_list))
+                )
+                - sum(
+                    Pflexload[fi] * pre_data["flexload_cost_h"].get((hi, flex_list[fi]), 0.0)
+                    for fi in range(len(flex_list))
+                )
+                + sum(float(pyo.value(m.varLoadShed[j, hi]) or 0.0) * const.loadshedcost for j in self.s_load)
+                + sum(float(pyo.value(m.varDumpLoad[j, hi]) or 0.0) * const.loadshedcost for j in self.s_load)
             )
 
             # Storage levels and spilled energy
@@ -1694,8 +1728,7 @@ class LpProblem(pyo.ConcreteModel):
 
             storageprice = [pre_data["gen_cost_h"].get((hi, i), 0.0) for i in storage_gen_list]
             flexload_storagelevel = self._storage_flexload[self._idx_consumersWithFlexLoad]
-            flexload_marginalprice = [pre_data["flexload_cost_h"].get((hi, j), 0.0)
-                                      for j in flex_list]
+            flexload_marginalprice = [pre_data["flexload_cost_h"].get((hi, j), 0.0) for j in flex_list]
 
             results.addResultsFromTimestep(
                 timestep=grid.timerange[0] + ts,
@@ -1747,12 +1780,13 @@ class LpProblem(pyo.ConcreteModel):
         if solve_h < target_horizon:
             tail_note = f", tail-window truncated from target {target_horizon}h"
         print(
-            f"\n[24h joint] window starting at timestep {ts0} "
-            f"({solve_h}h solve, {commit_hours}h commit{tail_note}) ..."
+            f"\n[24h joint] window starting at timestep {ts0} ({solve_h}h solve, {commit_hours}h commit{tail_note}) ..."
         )
         m, pre_data = self._build_day_joint_model(day_timesteps)
-        print(f"  Model built: {len(list(m.s_gen))*len(day_timesteps)} gen×h vars, "
-              f"{len(list(m.s_node))*len(day_timesteps)} node×h power-balance constraints")
+        print(
+            f"  Model built: {len(list(m.s_gen)) * len(day_timesteps)} gen×h vars, "
+            f"{len(list(m.s_node)) * len(day_timesteps)} node×h power-balance constraints"
+        )
 
         # Create solver (only APPSI HiGHS supported for dual extraction)
         if solver_name != "appsi_highs":
@@ -1761,30 +1795,31 @@ class LpProblem(pyo.ConcreteModel):
                 "dual extraction for nodal prices. Proceeding but prices may be zero.",
                 UserWarning,
             )
+
+        def getenv_int(name: str) -> int | None:
+            """Helper to get integer environment value, or None if it does not exist"""
+            value = os.environ.get(name)
+            if value is None:
+                return None
+            try:
+                return int(value.strip())
+            except ValueError:
+                return None
+
         day_opt = appsi.solvers.highs.Highs()
-        seed_raw = str(os.environ.get("POWERGAMA_HIGHS_RANDOM_SEED", "")).strip()
-        if seed_raw:
-            try:
-                day_opt.highs_options["random_seed"] = int(seed_raw)
-            except Exception:
-                pass
-        threads_raw = str(os.environ.get("POWERGAMA_HIGHS_THREADS", "")).strip()
-        if threads_raw:
-            try:
-                t = int(threads_raw)
-                if t >= 1:
-                    day_opt.highs_options["threads"] = t
-            except Exception:
-                pass
+
+        if (seed := getenv_int("POWERGAMA_HIGHS_RANDOM_SEED")) is not None:
+            day_opt.highs_options["random_seed"] = seed
+
+        if (threads := getenv_int("POWERGAMA_HIGHS_THREADS")) is not None and threads >= 1:
+            day_opt.highs_options["threads"] = threads
 
         res = day_opt.solve(m)
         if res.termination_condition != appsi.base.TerminationCondition.optimal:
-            raise RuntimeError(
-                f"[24h joint] non-optimal at timestep {ts0}: {res.termination_condition}"
-            )
+            raise RuntimeError(f"[24h joint] non-optimal at timestep {ts0}: {res.termination_condition}")
         day_opt.load_vars()
         duals = day_opt.get_duals()
-        print(f"  Solved OK. Extracting results ...")
+        print("  Solved OK. Extracting results ...")
         self._extract_and_store_day_joint_results(
             m,
             pre_data,
@@ -1912,7 +1947,11 @@ class LpProblem(pyo.ConcreteModel):
             dt_h = float(self.timeDelta) if np.isfinite(self.timeDelta) and self.timeDelta > 0.0 else 1.0
             da_gen_target_mw = _val(self.p_rt_target[i]) or 0.0
             da_pump_target_mw = 0.0
-            eff = float(pd.to_numeric(self._grid.generator.loc[i, "pump_efficiency"], errors="coerce") or 0.0) if int(i) in self.s_gen_pump else 0.0
+            eff = (
+                float(pd.to_numeric(self._grid.generator.loc[i, "pump_efficiency"], errors="coerce") or 0.0)
+                if int(i) in self.s_gen_pump
+                else 0.0
+            )
             lhs_da_mwh = (_val(self.p_rt_storage_balance_rhs[i]) or 0.0) - dt_h * da_gen_target_mw
             if int(i) in self.s_gen_pump:
                 lhs_da_mwh += dt_h * eff * da_pump_target_mw
@@ -1953,11 +1992,18 @@ class LpProblem(pyo.ConcreteModel):
         gas_rows = []
         da_replay_unavoidable_gas_dev_cost_lb = 0.0
         da_replay_infeasible_gas_count = 0
-        for i in sorted(int(ii) for ii in self._rt_target_gen_indices if int(ii) in (self._idx_rt_normal_gas | self._idx_rt_peak_gen)):
+        for i in sorted(
+            int(ii)
+            for ii in self._rt_target_gen_indices
+            if int(ii) in (self._idx_rt_normal_gas | self._idx_rt_peak_gen)
+        ):
             pmin_now = _val(self.p_gen_pmin[i])
             pmax_now = _val(self.p_gen_pmax[i])
             target_now = _val(self.p_rt_target[i]) or 0.0
-            target_clipped = max(pmin_now if pmin_now is not None else 0.0, min(target_now, pmax_now if pmax_now is not None else target_now))
+            target_clipped = max(
+                pmin_now if pmin_now is not None else 0.0,
+                min(target_now, pmax_now if pmax_now is not None else target_now),
+            )
             da_replay_pos_lb = max(0.0, target_clipped - target_now)
             da_replay_neg_lb = max(0.0, target_now - target_clipped)
             coef_pos = _val(self.p_rt_deviation_price_gen_pos[i]) or 0.0
@@ -2013,28 +2059,18 @@ class LpProblem(pyo.ConcreteModel):
             for row in storage_rows
         )
         storage_da_injected_abs_balance_mismatch_mwh = sum(
-            abs(float(row["da_ref_storage_balance_mismatch_mwh"]))
-            for row in storage_rows
+            abs(float(row["da_ref_storage_balance_mismatch_mwh"])) for row in storage_rows
         )
         storage_da_injected_signed_balance_mismatch_mwh = sum(
-            float(row["da_ref_storage_balance_mismatch_mwh"])
-            for row in storage_rows
+            float(row["da_ref_storage_balance_mismatch_mwh"]) for row in storage_rows
         )
 
         be_balancing_dev = (
             _sum_expr(
-                self.varGeneration[i] - self.p_rt_target[i]
-                for i in self.s_gen
-                if int(i) in self._rt_target_gen_indices
+                self.varGeneration[i] - self.p_rt_target[i] for i in self.s_gen if int(i) in self._rt_target_gen_indices
             )
-            + _sum_expr(
-                self.varLoadShed[j]
-                for j in self.s_load
-            )
-            - _sum_expr(
-                self.varDumpLoad[j]
-                for j in self.s_load
-            )
+            + _sum_expr(self.varLoadShed[j] for j in self.s_load)
+            - _sum_expr(self.varDumpLoad[j] for j in self.s_load)
             - _sum_expr(
                 self.varFlexLoad[j] - self.p_rt_flexload_target[j]
                 for j in self.s_load_flex
@@ -2101,7 +2137,9 @@ class LpProblem(pyo.ConcreteModel):
             coef_neg = _val(self.p_rt_deviation_price_gen_neg[i]) or 0.0
             this_cost = float(dev_pos * coef_pos + dev_neg * coef_neg)
             bucket = _bucket_for_gen(ii)
-            redispatch_cost_attribution_eur[bucket] = float(redispatch_cost_attribution_eur.get(bucket, 0.0) + this_cost)
+            redispatch_cost_attribution_eur[bucket] = float(
+                redispatch_cost_attribution_eur.get(bucket, 0.0) + this_cost
+            )
             if bucket not in redispatch_mw_attribution:
                 redispatch_mw_attribution[bucket] = {
                     "abs_dev_mw": 0.0,
@@ -2129,9 +2167,20 @@ class LpProblem(pyo.ConcreteModel):
             if int(i) in self._rt_target_gen_indices
         )
         redispatch_cost_attribution_eur["meta_be_gen_dev_cost_accounted"] = float(
-            sum(redispatch_cost_attribution_eur.get(k, 0.0) for k in [
-                "wind", "solar", "gas", "nuclear", "hydro_ror", "biomass", "fossil_other", "storage_generation", "other"
-            ])
+            sum(
+                redispatch_cost_attribution_eur.get(k, 0.0)
+                for k in [
+                    "wind",
+                    "solar",
+                    "gas",
+                    "nuclear",
+                    "hydro_ror",
+                    "biomass",
+                    "fossil_other",
+                    "storage_generation",
+                    "other",
+                ]
+            )
         )
         redispatch_cost_attribution_eur["meta_model_gen_dev_cost_total"] = float(gen_dev_cost_total)
 
@@ -2146,14 +2195,8 @@ class LpProblem(pyo.ConcreteModel):
                 "rt_balancing_deviation_mw": float(be_balancing_dev),
             },
             "term_breakdown": {
-                "loadshed": _sum_expr(
-                    const.loadshedcost * self.varLoadShed[j]
-                    for j in self.s_load
-                ),
-                "dumpload": _sum_expr(
-                    const.loadshedcost * self.varDumpLoad[j]
-                    for j in self.s_load
-                ),
+                "loadshed": _sum_expr(const.loadshedcost * self.varLoadShed[j] for j in self.s_load),
+                "dumpload": _sum_expr(const.loadshedcost * self.varDumpLoad[j] for j in self.s_load),
                 "gen_dev": _sum_expr(
                     self.p_rt_deviation_price_gen_pos[i] * self.varRtTargetDevPos[i]
                     + self.p_rt_deviation_price_gen_neg[i] * self.varRtTargetDevNeg[i]
@@ -2177,17 +2220,45 @@ class LpProblem(pyo.ConcreteModel):
             "active_channels": {
                 "rt_storage_target_count": int(len(self._rt_storage_target_indices)),
                 "rt_target_gen_count": int(len(self._rt_target_gen_indices)),
-                "foreign_gen_lock_rows": int(sum(1 for i in self.s_gen if self._foreign_gen_lock is not None and (int(timestep), int(i)) in self._foreign_gen_lock.index)),
-                "foreign_cons_lock_rows": int(sum(1 for j in self.s_load if self._foreign_cons_lock is not None and (int(timestep), int(j)) in self._foreign_cons_lock.index)),
-                "rt_io_target_active_ac": int(sum(int(_val(self.p_rt_io_target_active_ac[b]) or 0) for b in self.s_branch_ac if int(b) in self._idx_border_ac)),
-                "rt_io_target_active_dc": int(sum(int(_val(self.p_rt_io_target_active_dc[b]) or 0) for b in self.s_branch_dc if int(b) in self._idx_border_dc)),
+                "foreign_gen_lock_rows": int(
+                    sum(
+                        1
+                        for i in self.s_gen
+                        if self._foreign_gen_lock is not None
+                        and (int(timestep), int(i)) in self._foreign_gen_lock.index
+                    )
+                ),
+                "foreign_cons_lock_rows": int(
+                    sum(
+                        1
+                        for j in self.s_load
+                        if self._foreign_cons_lock is not None
+                        and (int(timestep), int(j)) in self._foreign_cons_lock.index
+                    )
+                ),
+                "rt_io_target_active_ac": int(
+                    sum(
+                        int(_val(self.p_rt_io_target_active_ac[b]) or 0)
+                        for b in self.s_branch_ac
+                        if int(b) in self._idx_border_ac
+                    )
+                ),
+                "rt_io_target_active_dc": int(
+                    sum(
+                        int(_val(self.p_rt_io_target_active_dc[b]) or 0)
+                        for b in self.s_branch_dc
+                        if int(b) in self._idx_border_dc
+                    )
+                ),
             },
             "da_injection_check": {
                 "storage_check_available": True,
                 "gas_da_injected_dev_cost": 0.0,
                 "storage_da_injected_dev_cost": float(da_reference_storage_mismatch_cost),
                 "storage_da_injected_abs_balance_mismatch_mwh": float(storage_da_injected_abs_balance_mismatch_mwh),
-                "storage_da_injected_signed_balance_mismatch_mwh": float(storage_da_injected_signed_balance_mismatch_mwh),
+                "storage_da_injected_signed_balance_mismatch_mwh": float(
+                    storage_da_injected_signed_balance_mismatch_mwh
+                ),
                 "da_replay_gas_reachable_count": int(len(gas_rows) - da_replay_infeasible_gas_count),
                 "da_replay_gas_infeasible_count": int(da_replay_infeasible_gas_count),
                 "da_replay_unavoidable_gas_dev_cost_lb": float(da_replay_unavoidable_gas_dev_cost_lb),
@@ -2408,7 +2479,9 @@ class LpProblem(pyo.ConcreteModel):
                 if isinstance(rt_cons_ref, str) and rt_cons_ref in self._grid.profiles.columns:
                     self.p_rt_flexload_target_active[j] = 1
                     demand_avg = float(self._grid.consumer.loc[j, "demand_avg"])
-                    self.p_rt_flexload_target[j] = max(0.0, demand_avg * float(self._grid.profiles.loc[timestep, rt_cons_ref]))
+                    self.p_rt_flexload_target[j] = max(
+                        0.0, demand_avg * float(self._grid.profiles.loc[timestep, rt_cons_ref])
+                    )
                 else:
                     self.p_rt_flexload_target_active[j] = 0
                     self.p_rt_flexload_target[j] = 0.0
@@ -2429,7 +2502,7 @@ class LpProblem(pyo.ConcreteModel):
                     self.p_rt_storage_target[i] = max(0.0, storage_cap * max(0.0, min(1.0, target_frac)))
                 else:
                     self.p_rt_storage_target[i] = 0.0
-        
+
         # 1b. Apply ramp-rate limits around previous-timestep dispatch,
         #     with delta caps scaled by installed capacity (ramp_pu * pmax_installed).
         #     Generators with NaN ramp values or NaN _gen_prev (first timestep) are unconstrained.
@@ -2570,9 +2643,7 @@ class LpProblem(pyo.ConcreteModel):
             if int(i) in self._rt_target_gen_indices:
                 _gen_cost = float(pyo.value(self.p_gen_cost[i]))
                 _is_res = (
-                    int(i) in self._idx_rt_wind
-                    or int(i) in self._idx_rt_solar
-                    or int(i) in self._idx_rt_hydro_ror
+                    int(i) in self._idx_rt_wind or int(i) in self._idx_rt_solar or int(i) in self._idx_rt_hydro_ror
                 )
                 if _is_res:
                     # RES: reward upward and penalize curtailment with a tunable factor.
@@ -3087,6 +3158,19 @@ class LpProblem(pyo.ConcreteModel):
                 "n_timesteps": int(len(timesteps_to_solve)),
             }
             self._append_rt_solver_debug_payload(payload)
+
+        if continue_from_last:
+            self._storage.loc[self._idx_generatorsWithStorage] = results.db.getResultStorageFillingAll(
+                timestep=timesteps_to_solve[0] - 1
+            )
+            self._storage_flexload.loc[self._idx_consumersWithFlexLoad] = results.db.getResultFlexloadStorageFillingAll(
+                timestep=timesteps_to_solve[0] - 1
+            )
+            if self._ramp_up_pu is not None or self._ramp_down_pu is not None:
+                prev_gen = results.db.getResultGeneratorPowerAll(timestep=timesteps_to_solve[0] - 1)
+                for i in self.s_gen:
+                    self._gen_prev[i] = prev_gen.get(i, 0.0)
+
         if self._objective_mode == "daily_24h":
             # ── true 24h joint LP path ────────────────────────────────
             if self._lossmethod != 0:
@@ -3094,17 +3178,6 @@ class LpProblem(pyo.ConcreteModel):
                     "daily_24h mode currently ignores lossmethod != 0 (losses not modelled in 24h LP).",
                     UserWarning,
                 )
-            if continue_from_last:
-                self._storage.loc[self._idx_generatorsWithStorage] = results.db.getResultStorageFillingAll(
-                    timestep=timesteps_to_solve[0] - 1
-                )
-                self._storage_flexload.loc[self._idx_consumersWithFlexLoad] = results.db.getResultFlexloadStorageFillingAll(
-                    timestep=timesteps_to_solve[0] - 1
-                )
-                if self._ramp_up_pu is not None or self._ramp_down_pu is not None:
-                    prev_gen = results.db.getResultGeneratorPowerAll(timestep=timesteps_to_solve[0] - 1)
-                    for i in self.s_gen:
-                        self._gen_prev[i] = prev_gen.get(i, 0.0)
 
             # Rolling-horizon solve: optimise over objective horizon, commit only first 24h.
             # This enables next-day lookahead (e.g. 48h solve / 24h commit).
@@ -3116,10 +3189,7 @@ class LpProblem(pyo.ConcreteModel):
                 if win:
                     windows.append(win)
 
-            print(
-                f"Solving (24h joint LP) — {len(windows)} window(s): "
-                f"{solve_h}h lookahead / {commit_h}h commit ..."
-            )
+            print(f"Solving (24h joint LP) — {len(windows)} window(s): {solve_h}h lookahead / {commit_h}h commit ...")
             for win in windows:
                 # For daily_reset generators, clear _gen_prev at commit boundary (same rule intent as hourly)
                 if self._ramp_daily_reset is not None:
@@ -3153,8 +3223,7 @@ class LpProblem(pyo.ConcreteModel):
             if isinstance(res, appsi.solvers.highs.HighsResults):
                 if res.termination_condition != appsi.base.TerminationCondition.optimal:
                     raise RuntimeError(
-                        "APPSI HIGHS non-optimal termination before timestep loop: "
-                        f"{res.termination_condition}"
+                        f"APPSI HIGHS non-optimal termination before timestep loop: {res.termination_condition}"
                     )
                 opt.load_vars()
             # Now, power flow values are computed for the first timestep, and
@@ -3220,8 +3289,7 @@ class LpProblem(pyo.ConcreteModel):
             if isinstance(res, appsi.solvers.highs.HighsResults):
                 if res.termination_condition != appsi.base.TerminationCondition.optimal:
                     raise RuntimeError(
-                        f"APPSI HIGHS non-optimal termination at timestep={timestep}: "
-                        f"{res.termination_condition}"
+                        f"APPSI HIGHS non-optimal termination at timestep={timestep}: {res.termination_condition}"
                     )
                 opt.load_vars()
                 self.dual = opt.get_duals()

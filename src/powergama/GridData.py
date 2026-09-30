@@ -65,7 +65,7 @@ class GridData(object):
         "node": {"id": str, "area": str},
         "branch": {"node_from": str, "node_to": str, "capacity": float},
         "dcbranch": {"node_from": str, "node_to": str, "capacity": float},
-        "generator": {"node": str, "type": str, "pmax": float},
+        "generator": {"node": str, "type": str, "pmax": float, "ramp_daily_reset": bool},
         "consumer": {"node": str},
         "inter_area_ntc": {"area_from": str, "area_to": str, "ntc_forward": float, "ntc_backward": float},
     }
@@ -153,7 +153,9 @@ class GridData(object):
         self.timeDelta = timedelta
         self.timerange = list(self.profiles.index)
 
-    def readGridData(self, nodes, ac_branches, dc_branches, generators, consumers, remove_extra_columns=False, inter_area_ntc=None):
+    def readGridData(
+        self, nodes, ac_branches, dc_branches, generators, consumers, remove_extra_columns=False, inter_area_ntc=None
+    ):
         """Read grid data from files into data variables
 
         nodes: filename or list of filenames or None
