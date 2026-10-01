@@ -1,5 +1,9 @@
 # Changes
 
+## unpublished
+2026-10-01
+- add multi-period and balancing simulation modes
+
 ## v1.5.1
 2026-01-14
 - improve simulation with losses (lossmethod=1)
