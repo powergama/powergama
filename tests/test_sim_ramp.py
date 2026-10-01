@@ -32,7 +32,7 @@ def test_generator_ramp_limit(tmp_path, testcase_9bus_data):
         p_now = res.db.getResultGeneratorPowerAll(t)
         for i, gen in data.generator.iterrows():
             assert p_now[i] - p_prev[i] - gen["ramp_up_pu"] * gen["pmax"] <= TOL
-            assert p_now[i] - p_prev[i] + gen["ramp_down_pu"] * gen["pmax"] >= TOL
+            assert p_now[i] - p_prev[i] + gen["ramp_down_pu"] * gen["pmax"] >= -TOL
 
 
 def test_daily_reset_releases_ramp_constraint(tmp_path, testcase_9bus_data):
@@ -86,4 +86,4 @@ def test_daily_reset_releases_ramp_constraint(tmp_path, testcase_9bus_data):
         else:
             # no violation allowed
             assert max(ramp_jump_up.values()) <= TOL, "ramp up exceeding max value"
-            assert min(ramp_jump_down.values()) >= TOL, "ramp down exceeding max value"
+            assert min(ramp_jump_down.values()) >= -TOL, "ramp down exceeding max value"
