@@ -59,4 +59,4 @@ def test_map_plot2(testcase_9bus_data):
     """Plot using geopandas"""
 
     data = testcase_9bus_data
-    ppl2.plot_map2(pg_data=data, pg_res=None, nodetype="area", branchtype="capacity", zoom_start=5)
+    ppl2.plot_map2(pg_data=data, pg_res=None, nodetype="area", branchtype="capacity")
