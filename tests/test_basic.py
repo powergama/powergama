@@ -84,3 +84,5 @@ def test_result_getters(testcase_9bus_data, testcase_9bus_res):
     res.getNodalPrices(0)
     res.getStorageFillingInAreas([area], gentype)
     res.getSystemCost()
+    res.getDumpLoadInArea(area)
+    res.getDumpLoadPerNode()

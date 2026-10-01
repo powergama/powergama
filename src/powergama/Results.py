@@ -608,10 +608,10 @@ class Results(ResultsBaseClass):
         """
 
         print("Looking for generators of type " + str(generatorType) + ", in " + str(area))
-        print("Number of generator to run through: " + str(self.grid.generator.numGenerators()))
+        print("Number of generator to run through: " + str(self.grid.numGenerators()))
         totalProduction = 0
 
-        for genNumber in range(0, self.grid.generator.numGenerators()):
+        for genNumber in range(0, self.grid.numGenerators()):
             genNode = self.grid.generator.node[genNumber]
             genType = self.grid.generator.type[genNumber]
             genArea = self._node2area(genNode)
@@ -621,20 +621,6 @@ class Results(ResultsBaseClass):
                 genProd = sum(self.db.getResultGeneratorPower(genNumber, timeMaxMin))
                 totalProduction += genProd
                 # print "\tGenerator production = " + str(genProd)
-        return totalProduction
-
-    def getAllGeneratorProductionOBSOLETE(self, timeMaxMin=None):
-        """Returns all production [MWh] for all generators"""
-        if timeMaxMin is None:
-            timeMaxMin = [self.timerange[0], self.timerange[-1] + 1]
-
-        totGenNumbers = self.grid.generator.numGenerators()
-        totalProduction = 0
-        for genNumber in range(0, totGenNumbers):
-            genProd = sum(self.db.getResultGeneratorPower(genNumber, timeMaxMin))
-            print(str(genProd))
-            totalProduction += genProd
-            print("Progression: " + str(genNumber + 1) + " of " + str(totGenNumbers))
         return totalProduction
 
     def _productionOverview(self, areas, types, timeMaxMin, TimeUnitCorrectionFactor):
@@ -1878,9 +1864,8 @@ class Results(ResultsBaseClass):
             if value == "nodalprice":
                 p[a] = self.getAreaPrices(area=a)
             elif value == "demand":
-                # TODO: This is not generally correct. Should use
-                # weighted average for all loads in area
-                p[a] = self.grid.profiles["load_" + a]
+                demand = self.getDemandPerArea(a, timeMaxMin=None)["sum"]
+                p[a] = demand
             elif value[:3] == "gen":
                 # value is now on form "gen_MA_hydro"
                 strval = value.split("%")
@@ -2288,8 +2273,8 @@ class Results(ResultsBaseClass):
                 )
 
         plt.ylabel("Correlation coefficient of inflow to load")
-        plt.xlim(xmin=-0.5, xmax=mainCount + 0.5)
-        plt.xticks(range(mainCount + 1), tickLabel)
+        plt.xlim(xmin=-0.5, xmax=mainCount - 0.5)
+        plt.xticks(range(mainCount), tickLabel)
 
 
 def _myround(x, base=1, method="round"):

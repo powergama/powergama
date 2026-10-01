@@ -199,12 +199,11 @@ def plot_map2(
         else:
             m_gen_keep = gdf_generators["type"].isin(plot_gentypes)
             gdf_gen_plot = gdf_generators[m_gen_keep]
+        m_has_coords = ~gdf_gen_plot[["gen_lon", "gen_lat"]].isna().any(axis=1)
+        gdf_gen_edges = gdf_gen_plot[m_has_coords].copy()
         if not gdf_gen_plot.empty:
             gdf_gen_plot.to_crs(proj).plot(ax=ax, **gen_options)
-            gdf_gen_edges = gdf_gen_plot.copy()
-
-            m_has_coords = ~gdf_gen_edges[["gen_lon", "gen_lat"]].isna().any(axis=1)
-            gdf_gen_edges = gdf_gen_edges[m_has_coords]
+        if not gdf_gen_edges.empty:
             gdf_gen_edges["geometry_x"] = geopandas.points_from_xy(gdf_gen_edges["gen_lon"], gdf_gen_edges["gen_lat"])
             gdf_gen_edges["geometry_y"] = geopandas.points_from_xy(gdf_gen_edges["node_lon"], gdf_gen_edges["node_lat"])
             gdf_gen_edges["geometry"] = gdf_gen_edges.apply(

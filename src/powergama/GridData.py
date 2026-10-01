@@ -43,6 +43,8 @@ class GridData(object):
             "pump_cap": 0.0,
             "pump_efficiency": 0.0,
             "pump_deadband": 0.0,
+            "gen_lat": numpy.nan,
+            "gen_lon": numpy.nan,
             "spill_cap_frac": 1.0,
             "ramp_up_pu": numpy.nan,
             "ramp_down_pu": numpy.nan,

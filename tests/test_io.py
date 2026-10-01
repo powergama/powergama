@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pandas as pd
 import pandas.testing as pdt
-import pytest
 
 import powergama
 
@@ -44,6 +43,18 @@ def test_input():
         consumers=None,
     )
 
+    # single files additional parameters
+    data = powergama.GridData()
+    data.readGridData(
+        nodes=datapath / "9busmod_nodes.csv",
+        ac_branches=datapath / "9busmod_branches.csv",
+        dc_branches=None,
+        generators=datapath / "9busmod_generators.csv",
+        consumers=datapath / "9busmod_consumers.csv",
+        inter_area_ntc=datapath / "ntc_interarea.csv",
+        remove_extra_columns=True,
+    )
+
 
 def test_via_database(testcase_9bus_data, tmp_path):
     data = testcase_9bus_data
@@ -65,8 +76,6 @@ def test_via_database(testcase_9bus_data, tmp_path):
 
 
 def test_input_parquet(tmp_path):
-    pytest.importorskip("pyarrow", reason="Parquet test requires pyarrow")
-
     nodes_csv = datapath / "9busmod_nodes.csv"
     branches_csv = datapath / "9busmod_branches.csv"
     generators_csv = datapath / "9busmod_generators.csv"

@@ -60,3 +60,16 @@ def test_map_plot2(testcase_9bus_data):
 
     data = testcase_9bus_data
     ppl2.plot_map2(pg_data=data, pg_res=None, nodetype="area", branchtype="capacity")
+
+    plot_options = {
+        "branch": {"width_col": ("capacity", 100, 500), "annotation": {"column": "capacity", "color": "blue"}},
+        "dcbranch": {"width_col": ("capacity", 100, 500), "annotation": {"column": "capacity", "color": "blue"}},
+    }
+    ppl2.plot_map2(
+        pg_data=data,
+        pg_res=None,
+        nodetype="area",
+        branchtype="capacity",
+        plot_options=plot_options,
+        plot_gentypes="all",
+    )
