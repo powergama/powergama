@@ -1,6 +1,7 @@
 # PowerGAMA user documentation 
 
 Specific topics: 
+- [Usage](usage.md)
 - [Scenario creation](scenario_generation.md)
 - [Input data](input_data.md)
 - [Output data and result analysis](output_data_and_analysis.md)
