@@ -17,7 +17,7 @@ def test_storage_continuity(tmp_path, testcase_9bus_data):
 
     lp = powergama.LpProblem(data)
     res = powergama.Results(data, tmp_path / "storage.sqlite")
-    lp.solve(res)
+    lp.solve(res, solver="appsi_highs", solve_args={})
 
     gen_ind = 4
     generation = res.db.getResultGeneratorPower(gen_ind, timeMaxMin=[0, 9999])
