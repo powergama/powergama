@@ -5,6 +5,7 @@ import pandas as pd
 import powergama
 
 datapath = Path(__file__).parent / "test_data/data_9bus"
+TOL = 1e-6
 
 
 def test_generator_ramp_limit(tmp_path, testcase_9bus_data):
@@ -30,8 +31,8 @@ def test_generator_ramp_limit(tmp_path, testcase_9bus_data):
         p_prev = p_now
         p_now = res.db.getResultGeneratorPowerAll(t)
         for i, gen in data.generator.iterrows():
-            assert p_now[i] - p_prev[i] <= gen["ramp_up_pu"] * gen["pmax"]
-            assert p_now[i] - p_prev[i] >= -gen["ramp_down_pu"] * gen["pmax"]
+            assert p_now[i] - p_prev[i] - gen["ramp_up_pu"] * gen["pmax"] <= TOL
+            assert p_now[i] - p_prev[i] + gen["ramp_down_pu"] * gen["pmax"] >= TOL
 
 
 def test_daily_reset_releases_ramp_constraint(tmp_path, testcase_9bus_data):
@@ -78,7 +79,6 @@ def test_daily_reset_releases_ramp_constraint(tmp_path, testcase_9bus_data):
 
         print(df)
 
-        TOL = 1e-6
         if tstep % 24 == 0:
             # violation _IS_ allowed
             # assert max(ramp_jump_up.values()) > 0
