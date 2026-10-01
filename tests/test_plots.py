@@ -1,30 +1,62 @@
-from pathlib import Path
+import matplotlib.pyplot as plt
 
-import powergama
 import powergama.plots as ppl
+import powergama.plots2 as ppl2
 
-datapath = Path(__file__).parent / "test_data/data_9bus"
+
+def test_plots(testcase_9bus_data, testcase_9bus_res):
+    """
+    Test PowerGAMA plotting functions
+
+    Parameters
+    ----------
+    data : powergama.GridData object
+        object holding grid model
+    res : powergama.Results object
+        object holding simulation results
+    """
+    data = testcase_9bus_data
+    res = testcase_9bus_res
+
+    plt.switch_backend("Agg")
+
+    area = data.getAllAreas()[0]
+
+    res.plotNodalPrice(0)
+    res.plotAreaPrice([area])
+    indices = data.getIdxGeneratorsWithStorage()
+    if indices:
+        res.plotStorageFilling(indices[0])
+        res.plotStorageValues(indices[0])
+    res.plotGeneratorOutput(0)
+    res.plotDemandAtLoad(0)
+    res.plotStoragePerArea(area)
+    res.plotGenerationPerArea(area)
+    res.plotDemandPerArea([area])
+    indices = data.getIdxConsumersWithFlexibleLoad()
+    if indices:
+        res.plotFlexibleLoadStorageValues(indices[0])
+    res.plotEnergyMix([area])
+    res.plotTimeseriesColour(areas=[area], value="nodalprice")
+
+    # skip these - outdated
+    # res.plotGenerationScatter(area)
+
+    # res.plotMapGrid(nodetype='nodalprice',branchtype='sensitivity',
+    #                dotsize=40,show_node_labels=False,filter_branch=[0,1])
+    # res.plotRelativeLoadDistribution()
+    # res.plotRelativeGenerationCapacity(tech=data.getAllGeneratorTypes()[0])
 
 
-def test_map_plot():
-    # timerange = range(24 * 100, 24 * 101)
-    data = powergama.GridData()
+def test_map_plot(testcase_9bus_data):
+    """Plot using folium"""
 
-    data.readGridData(
-        nodes=datapath / "9busmod_nodes.csv",
-        ac_branches=datapath / "9busmod_branches.csv",
-        dc_branches=None,
-        generators=datapath / "9busmod_generators.csv",
-        consumers=datapath / "9busmod_consumers.csv",
-    )
-    # data.readProfileData(
-    #    filename=datapath / "9busmod_profiles.csv",
-    #    storagevalue_filling=datapath / "9busmod_profiles_storval_filling.csv",
-    #    storagevalue_time=datapath / "9busmod_profiles_storval_time.csv",
-    #    timerange=timerange,
-    #    timedelta=1.0,
-    # )
-
-    # lp = powergama.LpProblem(data)
-
+    data = testcase_9bus_data
     ppl.plotMap(pg_data=data, pg_res=None, nodetype="area", branchtype="capacity", zoom_start=5)
+
+
+def test_map_plot2(testcase_9bus_data):
+    """Plot using geopandas"""
+
+    data = testcase_9bus_data
+    ppl2.plot_map2(pg_data=data, pg_res=None, nodetype="area", branchtype="capacity", zoom_start=5)

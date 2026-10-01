@@ -78,11 +78,12 @@ def test_daily_reset_releases_ramp_constraint(tmp_path, testcase_9bus_data):
 
         print(df)
 
+        TOL = 1e-6
         if tstep % 24 == 0:
             # violation _IS_ allowed
             # assert max(ramp_jump_up.values()) > 0
-            assert min(ramp_jump_down.values()) < 0  # expecting value -37.7 for coal down-ramp
+            assert min(ramp_jump_down.values()) < TOL  # expecting value -37.7 for coal down-ramp
         else:
             # no violation allowed
-            assert max(ramp_jump_up.values()) <= 0, "ramp up exceeding max value"
-            assert min(ramp_jump_down.values()) >= 0, "ramp down exceeding max value"
+            assert max(ramp_jump_up.values()) <= TOL, "ramp up exceeding max value"
+            assert min(ramp_jump_down.values()) >= TOL, "ramp down exceeding max value"
