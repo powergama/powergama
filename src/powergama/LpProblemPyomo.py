@@ -598,8 +598,6 @@ class LpProblem(pyo.ConcreteModel):
             initialize=grid_data.generator["fuelcost"].values,
         )
         self.p_genpump_cost = pyo.Param(self.s_gen, within=pyo.Reals, default=0, mutable=True)
-        # Optional per-generator curtailment cost. Defaults to zero = curtailment is free.
-        self.p_curtail_cost = pyo.Param(self.s_gen, within=pyo.NonNegativeReals, default=0, mutable=True)
         self.p_pump_pmax = pyo.Param(
             self.s_gen_pump,
             within=pyo.NonNegativeReals,
@@ -674,7 +672,6 @@ class LpProblem(pyo.ConcreteModel):
             self.varLossDc21 = pyo.Var(self.s_branch_dc, within=pyo.NonNegativeReals)
         self.varGeneration = pyo.Var(self.s_gen, within=pyo.NonNegativeReals)
         self.varPump = pyo.Var(self.s_gen_pump, within=pyo.NonNegativeReals)
-        self.varCurtailment = pyo.Var(self.s_gen, within=pyo.NonNegativeReals, initialize=0)
         self.varRtTargetDevPos = pyo.Var(self.s_gen, within=pyo.NonNegativeReals)
         self.varRtTargetDevNeg = pyo.Var(self.s_gen, within=pyo.NonNegativeReals)
         self.varFlexLoad = pyo.Var(self.s_load_flex, within=pyo.NonNegativeReals)
@@ -1086,7 +1083,7 @@ class LpProblem(pyo.ConcreteModel):
         """Create pyomo model objective function"""
 
         def cost_rule(model):
-            """Operational costs: cost of gen, load shed and curtailment"""
+            """Operational costs: cost of generation, pumping, flexible load and load shed"""
 
             # Operational costs phase 1 (if stage2DeltaTime>0)
             if self._rt_deviation_objective_active:
@@ -1101,7 +1098,6 @@ class LpProblem(pyo.ConcreteModel):
                 cost -= sum(model.varFlexLoad[i] * self.p_loadflex_cost[i] for i in model.s_load_flex)
                 cost += sum(model.varLoadShed[i] * const.loadshedcost for i in model.s_load)
                 cost += sum(model.varDumpLoad[i] * const.loadshedcost for i in model.s_load)
-                cost += sum(model.varCurtailment[i] * self.p_curtail_cost[i] for i in model.s_gen)
 
             if self._rt_deviation_objective_active:
                 cost += sum(
@@ -1267,8 +1263,6 @@ class LpProblem(pyo.ConcreteModel):
                 for hi in range(H):
                     gen_cost_h[(hi, i)] = base_cost
 
-        curtail_cost = {int(i): float(pyo.value(self.p_curtail_cost[i])) for i in self.s_gen}
-
         # ── pre-compute inflow / pmax / pmin per (hour, gen) ─────────
         P_max_base = grid.generator["pmax"]
         P_min_base = grid.generator["pmin"]
@@ -1407,7 +1401,6 @@ class LpProblem(pyo.ConcreteModel):
         m.varSpill = pyo.Var(m.s_gen_storage, m.s_h, within=pyo.NonNegativeReals)
         m.varLoadShed = pyo.Var(m.s_load, m.s_h, within=pyo.NonNegativeReals)
         m.varDumpLoad = pyo.Var(m.s_load, m.s_h, within=pyo.NonNegativeReals)
-        m.varCurtailment = pyo.Var(m.s_gen, m.s_h, within=pyo.NonNegativeReals)
         m.varFlexLoad = pyo.Var(m.s_load_flex, m.s_h, within=pyo.NonNegativeReals)
         # Reservoir level, in MWh. Reals, not NonNegativeReals: the floor is a
         # constraint rather than a domain because it has to be skipped for a consumer
@@ -1428,7 +1421,6 @@ class LpProblem(pyo.ConcreteModel):
                 cost -= sum(m.varFlexLoad[j, h] * flexload_cost_h.get((h, j), 0.0) for j in m.s_load_flex)
                 cost += sum(m.varLoadShed[j, h] * const.loadshedcost for j in m.s_load)
                 cost += sum(m.varDumpLoad[j, h] * const.loadshedcost for j in m.s_load)
-                cost += sum(m.varCurtailment[i, h] * curtail_cost.get(i, 0.0) for i in m.s_gen)
             # Terminal storage value: reward conservation of stored energy at end of day.
             # Without this, the solver has no incentive to leave storage full at day-end,
             # which would drain it to zero every day and destroy inter-day continuity.
