@@ -31,6 +31,7 @@ from tqdm import tqdm
 
 from . import constants as const
 from . import rt_diagnostics
+from .timestep_result import TimestepResult, aggregate_to_nodes
 
 
 class LpProblem(pyo.ConcreteModel):
@@ -1692,9 +1693,9 @@ class LpProblem(pyo.ConcreteModel):
     def _extract_and_store_day_joint_results(self, m, pre_data, results, duals, commit_hours=None):
         """Extract results from a solved 24h joint model and store to results DB.
 
-        Replicates the data contract of _storeResultsAndUpdateStorage for each
-        committed hour in the optimisation window, then updates self._storage
-        to end-of-commit levels.
+        Emits one TimestepResult per committed hour in the optimisation window --
+        the same contract the hourly path uses -- then updates self._storage to
+        end-of-commit levels.
         """
         H = pre_data["H"]
         if commit_hours is None:
@@ -1727,12 +1728,8 @@ class LpProblem(pyo.ConcreteModel):
             theta = [float(pyo.value(m.varVoltageAngle[n, hi]) or 0.0) * const.baseAngle for n in node_list]
 
             # Load shedding aggregated to nodes
-            Ploadshed = pd.Series(index=grid.node.id, data=0.0, dtype=float)
-            Pdumpload = pd.Series(index=grid.node.id, data=0.0, dtype=float)
-            for j in self.s_load:
-                node_j = grid.consumer["node"][j]
-                Ploadshed[node_j] += float(pyo.value(m.varLoadShed[j, hi]) or 0.0)
-                Pdumpload[node_j] += float(pyo.value(m.varDumpLoad[j, hi]) or 0.0)
+            Ploadshed = aggregate_to_nodes(grid, self.s_load, lambda j: float(pyo.value(m.varLoadShed[j, hi]) or 0.0))
+            Pdumpload = aggregate_to_nodes(grid, self.s_load, lambda j: float(pyo.value(m.varDumpLoad[j, hi]) or 0.0))
 
             # Per-hour objective (cost for this timestep only)
             obj_h = (
@@ -1803,7 +1800,7 @@ class LpProblem(pyo.ConcreteModel):
             flexload_storagelevel = self._storage_flexload[self._idx_consumersWithFlexLoad]
             flexload_marginalprice = [pre_data["flexload_cost_h"].get((hi, j), 0.0) for j in flex_list]
 
-            results.addResultsFromTimestep(
+            TimestepResult(
                 timestep=grid.timerange[0] + ts,
                 objective_function=obj_h,
                 generator_power=Pgen,
@@ -1822,10 +1819,12 @@ class LpProblem(pyo.ConcreteModel):
                 flexload_power=Pflexload,
                 flexload_storage=flexload_storagelevel.tolist(),
                 flexload_storagevalue=flexload_marginalprice,
+                # Losses are not modelled in this path; lossmethod != 0 is rejected in __init__.
                 branch_ac_losses=[0.0] * len(branch_ac_list),
                 branch_dc_losses=[0.0] * len(branch_dc_list),
+                # Fault scenarios run the hourly path only -- see LpFaultProblem.__init__.
                 fault_start=None,
-            )
+            ).store(results)
 
             rt_diagnostics.append_multi_period_debug(self, m, hi, grid.timerange[0] + ts)
 
@@ -2423,12 +2422,8 @@ class LpProblem(pyo.ConcreteModel):
         Pdc = [self.varDcBranchFlow[i].value for i in self.s_branch_dc]
         theta = [self.varVoltageAngle[i].value * const.baseAngle for i in self.s_node]
         # load shedding is aggregated to nodes (due to old code)
-        Ploadshed = pd.Series(index=self._grid.node.id, data=[0] * len(self._grid.node.id), dtype=float)
-        Pdumpload = pd.Series(index=self._grid.node.id, data=[0] * len(self._grid.node.id), dtype=float)
-        for j in self.s_load:
-            node = self._grid.consumer["node"][j]
-            Ploadshed[node] += self.varLoadShed[j].value
-            Pdumpload[node] += self.varDumpLoad[j].value
+        Ploadshed = aggregate_to_nodes(self._grid, self.s_load, lambda j: self.varLoadShed[j].value)
+        Pdumpload = aggregate_to_nodes(self._grid, self.s_load, lambda j: self.varDumpLoad[j].value)
 
         # 4 Collect dual values
         # 4a. branch capacity sensitivity (whether pos or neg flow)
@@ -2480,7 +2475,7 @@ class LpProblem(pyo.ConcreteModel):
         else:
             raise Exception("Lossmethod must be 0,1 or 2")
 
-        results.addResultsFromTimestep(
+        TimestepResult(
             timestep=self._grid.timerange[0] + timestep,
             objective_function=F,
             generator_power=Pgen,
@@ -2502,7 +2497,7 @@ class LpProblem(pyo.ConcreteModel):
             branch_ac_losses=acPowerLoss,
             branch_dc_losses=dcPowerLoss,
             fault_start=self._get_fault_start(timestep),
-        )
+        ).store(results)
 
         return
 
