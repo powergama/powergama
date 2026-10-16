@@ -197,21 +197,41 @@ def test_flexible_load_storage_evolves_hourly(tmp_path, testcase_9bus_data):
     assert flex["storage"].nunique() > 1, "flexible-load storage never changed"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Flexible load is inert in multi_period mode. p_loadflex_cost has its initialize "
-        "commented out and defaults to 0, and _updateLpProblem never runs in this mode "
-        "(solve() returns before the hourly loop), so flexload_cost_h is identically zero "
-        "in the objective. _storage_flexload is also never written back, so the stored "
-        "filling level stays at its initial value for the whole run."
-    ),
-)
 def test_flexible_load_storage_evolves_multi_period(tmp_path, testcase_9bus_data):
-    """Flexible-load storage should evolve in multi_period mode too."""
+    """Flexible load must be priced, dispatched and accounted for in multi_period too.
+
+    Asserting only that storage moved would also pass if the reservoir merely drained
+    with no charging at all, which is what the inert version did once the write-back
+    was added. So this also requires non-zero demand and a non-zero price.
+    """
     data = _with_flexible_load(testcase_9bus_data)
     res = _solve(data, tmp_path / "flex_multi.sqlite", mode="multi_period")
     flex = _tables(res)["Res_FlexibleLoad"]
 
     assert not flex.empty, "fixture produced no flexible load rows"
     assert flex["storage"].nunique() > 1, "flexible-load storage never changed"
+    assert flex["demand"].max() > TOL, "flexible load was never dispatched"
+    assert flex["value"].abs().max() > TOL, "flexible load was never priced"
+
+
+def test_flexible_load_reservoir_obeys_continuity_multi_period(tmp_path, testcase_9bus_data):
+    """The reservoir must follow level[t] = level[t-1] + (charge - drain) * dt.
+
+    In this mode the level is an LP variable over the window with a hard capacity,
+    rather than a state clipped after each solve, so it must also stay at or below
+    capacity -- including across the window boundary, where it is carried forward
+    through self._storage_flexload.
+    """
+    data = _with_flexible_load(testcase_9bus_data)
+    res = _solve(data, tmp_path / "flex_continuity.sqlite", mode="multi_period")
+    flex = _tables(res)["Res_FlexibleLoad"]
+
+    for indx, rows in flex.groupby("indx"):
+        rows = rows.sort_values("timestep")
+        drain = data.consumer.loc[indx, "flex_fraction"] * data.consumer.loc[indx, "demand_avg"]
+        capacity = data.consumer.loc[indx, "flex_storage"] * drain
+
+        assert rows["storage"].max() <= capacity + TOL, f"consumer {indx}: reservoir exceeded capacity"
+        step = rows["storage"].diff().iloc[1:]
+        expected = (rows["demand"] - drain).iloc[1:]
+        assert (step - expected).abs().max() < 1e-6, f"consumer {indx}: reservoir continuity broken"

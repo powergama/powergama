@@ -151,8 +151,6 @@ def test_dc_branch_within_capacity(tmp_path, two_area_data):
 # ---------------------------------------------------------------------------
 # Multi-period mode. The day-joint cNtcFwd/cNtcBwd and cPumpRoom/cPumpCap rules had
 # never been executed by any test, because the 9-bus case has no NTC and no pumping.
-# Flexible load is deliberately not asserted here -- it is inert in this mode, which
-# test_properties.py pins as a strict xfail.
 # ---------------------------------------------------------------------------
 
 
@@ -184,6 +182,16 @@ def test_multi_period_pumping_and_storage_are_active(two_area_multi_period_res):
 
     assert tables["Res_Pumping"]["output"].max() > TOL, "pumping capacity was never used"
     assert tables["Res_Storage"]["storage"].nunique() > 1, "reservoir level never changed"
+
+
+def test_multi_period_flexible_load_is_active(two_area_multi_period_res):
+    """Same assertion as the hourly case, now that this mode prices flexible load."""
+    _data, res = two_area_multi_period_res
+    flex = _tables(res)["Res_FlexibleLoad"]
+
+    assert not flex.empty, "no flexible load rows stored"
+    assert flex["demand"].max() > TOL, "flexible demand never dispatched"
+    assert flex["storage"].nunique() > 1, "flexible-load storage never changed"
 
 
 def test_multi_period_rolling_window_with_lookahead(tmp_path, two_area_data):

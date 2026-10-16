@@ -59,6 +59,18 @@ lp = powergama.LpProblem(
 )
 ```
 
+`horizon_hours` is the length of the window that is optimised; `commit_hours` is how
+much of each window is kept before the next window starts. Setting `commit_hours`
+below `horizon_hours` gives a rolling horizon with lookahead (e.g. 48/24).
+
+Storage values — both for generators and for flexible load — are evaluated once per
+window from the filling level at the start of it, since the whole window is a single
+LP and the value has to enter as a constant coefficient. The hourly mode instead
+re-prices from the current filling level before every time step. For flexible load
+this also means the reservoir level is a bounded variable within the window rather
+than a level clipped after each solve, so it cannot leave `[0, capacity]` the way it
+can in hourly mode. See [model_description.md](model_description.md).
+
 ## 3. Balancing market (deviations from day-ahead)
 
 This simulation mode can be run after a day-ahead simulation to represent the balancing ("real-time") market, where there may be a cost for devaitions from

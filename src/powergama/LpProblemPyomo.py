@@ -633,13 +633,10 @@ class LpProblem(pyo.ConcreteModel):
         self.p_rt_io_target_dc = pyo.Param(self.s_branch_dc, within=pyo.Reals, default=0, mutable=True)
         self.p_rt_io_target_active_ac = pyo.Param(self.s_branch_ac, within=pyo.Binary, default=0, mutable=True)
         self.p_rt_io_target_active_dc = pyo.Param(self.s_branch_dc, within=pyo.Binary, default=0, mutable=True)
-        self.p_loadflex_cost = pyo.Param(
-            self.s_load_flex,
-            within=pyo.Reals,
-            default=0,
-            mutable=True,
-            # initialize=grid_data.consumer.loc[self.s_load_flex, "flex_basevalue"].values,
-        )
+        # Written each timestep by _updateLpProblem from _flexload_storage_value. Only
+        # the hourly path uses it; the multi-period path prices flexible load per
+        # window in _build_day_joint_model instead.
+        self.p_loadflex_cost = pyo.Param(self.s_load_flex, within=pyo.Reals, default=0, mutable=True)
         if self._lossmethod == 2:
             # for storing power losses until next timestep
             self.p_branch_ac_power_loss = pyo.Param(self.s_branch_ac, within=pyo.Reals, default=0, mutable=True)
@@ -1314,10 +1311,34 @@ class LpProblem(pyo.ConcreteModel):
                             d_now = locked
                 demand_h[(hi, j)] = float(d_now)
 
+        # ── flexible load: reservoir parameters and per-hour value ────
+        # Valued like generator storage in this path: the filling level is frozen at
+        # window start and only the time-of-year factor varies within the window, so
+        # the price stays a constant coefficient in the LP. The hourly path re-prices
+        # from the current level every timestep instead.
         flexload_cost_h: dict = {}
-        for hi in range(H):
-            for j in flex_set:
-                flexload_cost_h[(hi, j)] = float(pyo.value(self.p_loadflex_cost[j]))
+        flex_storage_cap: dict = {}  # j → reservoir size, MWh
+        flex_storage_ini: dict = {}  # j → level at window start, MWh
+        flex_drain_mw: dict = {}  # j → the constant flexible demand it serves, MW
+        flex_has_floor: dict = {}  # j → whether the level can be held at or above zero
+        for j in flex_set:
+            drain = float(grid.consumer.loc[j, "flex_fraction"]) * float(grid.consumer.loc[j, "demand_avg"])
+            cap = float(grid.consumer.loc[j, "flex_storage"]) * drain
+            # The per-hour charge cap is demand_avg * flex_fraction / flex_on_off, so the
+            # drain can be met hour by hour exactly when flex_on_off <= 1. Where it cannot,
+            # no floor can be imposed without making the window infeasible.
+            on_off = float(grid.consumer.loc[j, "flex_on_off"])
+            has_floor = 0.0 < on_off <= 1.0
+            flex_drain_mw[int(j)] = drain
+            flex_storage_cap[int(j)] = cap
+            flex_has_floor[int(j)] = has_floor
+            # Seed inside the bounds the window will enforce, so hour 0 cannot be
+            # infeasible on a level that came from input data (flex_storagelevel_init
+            # outside [0, 1]) or from an earlier window solved without a floor.
+            ini = float(self._storage_flexload[j])
+            flex_storage_ini[int(j)] = min(max(ini, 0.0), cap) if has_floor else min(ini, cap)
+            for hi, ts in enumerate(day_timesteps):
+                flexload_cost_h[(hi, j)] = float(self._flexload_storage_value(j, self._storage_flexload[j], ts))
 
         # ── pre-compute per-hour branch flow bounds (including DA locks) ─
         ac_lb: dict = {}  # (hi, b) → lb or None
@@ -1388,6 +1409,12 @@ class LpProblem(pyo.ConcreteModel):
         m.varDumpLoad = pyo.Var(m.s_load, m.s_h, within=pyo.NonNegativeReals)
         m.varCurtailment = pyo.Var(m.s_gen, m.s_h, within=pyo.NonNegativeReals)
         m.varFlexLoad = pyo.Var(m.s_load_flex, m.s_h, within=pyo.NonNegativeReals)
+        # Reservoir level, in MWh. Reals, not NonNegativeReals: the floor is a
+        # constraint rather than a domain because it has to be skipped for a consumer
+        # whose per-hour charge limit cannot keep up with its drain -- see
+        # cFlexStorFloor. The hourly path has no floor at all; it lets the level go
+        # negative and prices that at flexload_outside_cost.
+        m.varFlexStorage = pyo.Var(m.s_load_flex, m.s_h, within=pyo.Reals)
         m.varAcBranchFlow = pyo.Var(m.s_branch_ac, m.s_h, within=pyo.Reals)
         m.varDcBranchFlow = pyo.Var(m.s_branch_dc, m.s_h, within=pyo.Reals)
         m.varVoltageAngle = pyo.Var(m.s_node, m.s_h, within=pyo.Reals, initialize=0.0)
@@ -1553,6 +1580,32 @@ class LpProblem(pyo.ConcreteModel):
                 return m.varFlexLoad[j, h] <= avg * frac / on_off
 
             m.cFlexUb = pyo.Constraint(m.s_load_flex, m.s_h, rule=_flex_ub_rule)
+
+            # Reservoir continuity, mirroring cStorCont for generator storage:
+            #   level[h] = level[h-1] + (charge - constant drain) * dt
+            def _flex_stor_cont_rule(m, j, h):
+                prev = flex_storage_ini[j] if h == 0 else m.varFlexStorage[j, h - 1]
+                return m.varFlexStorage[j, h] == prev + (m.varFlexLoad[j, h] - flex_drain_mw[j]) * dt
+
+            m.cFlexStorCont = pyo.Constraint(m.s_load_flex, m.s_h, rule=_flex_stor_cont_rule)
+
+            # The window price is a constant coefficient, so the solver would otherwise
+            # run the level to one extreme for the whole window: up to the per-hour
+            # charge limit while the price is positive, or down with no charging at all
+            # while generation costs more than the price is worth. The hourly path needs
+            # no bounds because it re-prices from the level every timestep, and the
+            # curve turns at 0 and at capacity long before the level gets there.
+            def _flex_stor_cap_rule(m, j, h):
+                return m.varFlexStorage[j, h] <= flex_storage_cap[j]
+
+            m.cFlexStorCap = pyo.Constraint(m.s_load_flex, m.s_h, rule=_flex_stor_cap_rule)
+
+            def _flex_stor_floor_rule(m, j, h):
+                if not flex_has_floor[j]:
+                    return pyo.Constraint.Skip
+                return m.varFlexStorage[j, h] >= 0.0
+
+            m.cFlexStorFloor = pyo.Constraint(m.s_load_flex, m.s_h, rule=_flex_stor_floor_rule)
 
         # ── power balance (one per node per hour) ─────────────────────
         Bbus = self._Bbus
@@ -1797,7 +1850,7 @@ class LpProblem(pyo.ConcreteModel):
                 senseN.append(abs(d / const.baseMVA))
 
             storageprice = [pre_data["gen_cost_h"].get((hi, i), 0.0) for i in storage_gen_list]
-            flexload_storagelevel = self._storage_flexload[self._idx_consumersWithFlexLoad]
+            flexload_storagelevel = [float(pyo.value(m.varFlexStorage[j, hi]) or 0.0) for j in flex_list]
             flexload_marginalprice = [pre_data["flexload_cost_h"].get((hi, j), 0.0) for j in flex_list]
 
             TimestepResult(
@@ -1817,7 +1870,7 @@ class LpProblem(pyo.ConcreteModel):
                 dumpload_power=Pdumpload.tolist(),
                 marginalprice=storageprice,
                 flexload_power=Pflexload,
-                flexload_storage=flexload_storagelevel.tolist(),
+                flexload_storage=flexload_storagelevel,
                 flexload_storagevalue=flexload_marginalprice,
                 # Losses are not modelled in this path; lossmethod != 0 is rejected in __init__.
                 branch_ac_losses=[0.0] * len(branch_ac_list),
@@ -1835,6 +1888,12 @@ class LpProblem(pyo.ConcreteModel):
         # Update self._storage to end-of-commit levels
         for i in storage_gen_list:
             self._storage[i] = float(pyo.value(m.varStorage[i, commit_hours - 1]) or 0.0)
+
+        # Same for the flexible-load reservoirs, so the next window is priced from
+        # where this one left off -- the hourly path does this in
+        # _storeResultsAndUpdateStorage.
+        for j in flex_list:
+            self._storage_flexload[j] = float(pyo.value(m.varFlexStorage[j, commit_hours - 1]) or 0.0)
 
     def _solve_and_store_day_joint(self, day_timesteps, results, solver_name, commit_hours=None):
         """Build, solve, and store results for one rolling-horizon LP window.
@@ -2098,27 +2157,7 @@ class LpProblem(pyo.ConcreteModel):
 
         # 3b. flexible load (storage value)
         for i in self._idx_consumersWithFlexLoad:
-            this_type_filling = self._grid.consumer.loc[i, "flex_storval_filling"]
-            this_type_time = self._grid.consumer.loc[i, "flex_storval_time"]
-            # Compute storage capacity in Mwh (from value in hours)
-            storagecapacity_flexload = (
-                self._grid.consumer.loc[i, "flex_storage"]  # h
-                * self._grid.consumer.loc[i, "flex_fraction"]
-                * self._grid.consumer.loc[i, "demand_avg"]
-            )  # MW
-            fillinglevel = self._storage_flexload[i] / storagecapacity_flexload
-            filling_col = int(round(fillinglevel * 100))
-            if fillinglevel > 1:
-                storagevalue_flex = -const.flexload_outside_cost
-            elif fillinglevel < 0:
-                storagevalue_flex = const.flexload_outside_cost
-            else:
-                storagevalue_flex = (
-                    self._grid.consumer.flex_basevalue[i]
-                    * self._grid.storagevalue_filling.loc[filling_col, this_type_filling]
-                    * self._grid.storagevalue_time.loc[timestep, this_type_time]
-                )
-            self.p_loadflex_cost[i] = storagevalue_flex
+            self.p_loadflex_cost[i] = self._flexload_storage_value(i, self._storage_flexload[i], timestep)
 
         # In deviation objective mode, all generation technologies use the same
         # RT-local deviation pricing scheme (no DA-price coupling):
@@ -2371,6 +2410,37 @@ class LpProblem(pyo.ConcreteModel):
                 loss_pu = r_pu * p_pu**2
                 lossMVA = loss_pu * const.baseMVA * dclossmultiplier
                 self.p_branch_dc_power_loss[b] = lossMVA
+
+    def _flexload_storage_value(self, i, storage_level, timestep):
+        """Marginal value of energy in consumer *i*'s flexible-load reservoir, in EUR/MWh.
+
+        The value follows the same filling-level × time-of-year curves used for
+        generator storage, so it falls as the reservoir fills. Outside [0, 1] the
+        curves do not apply and a flat penalty pushes the level back into range.
+
+        Both solve paths price flexible load with this. The hourly loop re-evaluates
+        it every timestep from the level carried in ``self._storage_flexload``; the
+        multi-period path evaluates it once per window from the level at window start,
+        the same approximation it already makes for generator storage.
+        """
+        grid = self._grid
+        # Reservoir size in MWh: flex_storage is given in hours of flexible demand.
+        storagecapacity_flexload = (
+            grid.consumer.loc[i, "flex_storage"]  # h
+            * grid.consumer.loc[i, "flex_fraction"]
+            * grid.consumer.loc[i, "demand_avg"]  # MW
+        )
+        fillinglevel = storage_level / storagecapacity_flexload
+        if fillinglevel > 1:
+            return -const.flexload_outside_cost
+        if fillinglevel < 0:
+            return const.flexload_outside_cost
+        filling_col = int(round(fillinglevel * 100))
+        return (
+            grid.consumer.flex_basevalue[i]
+            * grid.storagevalue_filling.loc[filling_col, grid.consumer.loc[i, "flex_storval_filling"]]
+            * grid.storagevalue_time.loc[timestep, grid.consumer.loc[i, "flex_storval_time"]]
+        )
 
     def _get_fault_start(self, timestep):
         # Used by LpFaultProblem
