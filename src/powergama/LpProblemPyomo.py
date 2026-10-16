@@ -562,6 +562,21 @@ class LpProblem(pyo.ConcreteModel):
         self._idx_border_dc = {int(i) for i in loaded_dc_idx if int(i) in set(self._grid.dcbranch.index.tolist())}
         self._border_dc_sign = {int(i): _be_oriented_sign(self._grid.dcbranch, int(i)) for i in self._idx_border_dc}
 
+    # ------------------------------------------------------------------
+    # Model construction.
+    #
+    # Invariant for every constraint, objective and bound rule below: Pyomo
+    # components (p_*, s_*, var*, c*, OBJ) are read off the rule's `model`
+    # argument, never off `self`; everything else -- grid data, configuration,
+    # the precomputed adjacency and matrix structures -- is closed over from
+    # `self` at build time. `model is self` today, so both spellings work and
+    # the distinction is invisible. It stops being invisible when the model
+    # becomes an attribute rather than the class itself, at which point a
+    # `self.p_x` inside a rule silently reads the wrong object and a
+    # `model._grid` raises at construction time. Enforced by
+    # tests/test_model_invariants.py.
+    # ------------------------------------------------------------------
+
     def _create_sets_and_parameters(self, grid_data):
         """Create pyomo model sets"""
         self.s_node = pyo.Set(ordered=True, initialize=grid_data.node["id"].tolist())
@@ -648,15 +663,16 @@ class LpProblem(pyo.ConcreteModel):
 
     def _create_variables(self):
         """Create pyomo model variables"""
+        grid_data = self._grid
         self.varAcBranchFlow = pyo.Var(self.s_branch_ac, within=pyo.Reals)
         self.varDcBranchFlow = pyo.Var(self.s_branch_dc, within=pyo.Reals)
         if self._lossmethod == 1:
 
             def maxflow(model, j):
-                return (0, model._grid.branch.loc[j, "capacity"])
+                return (0, grid_data.branch.loc[j, "capacity"])
 
             def maxflow_dc(model, j):
-                return (0, model._grid.dcbranch.loc[j, "capacity"])
+                return (0, grid_data.dcbranch.loc[j, "capacity"])
 
             # Ref issue: https://github.com/powergama/powergama/issues/29
             # Adding bounds on 12 and 21 flows reduces the problem with simultaneously large 12 and 21 flows
@@ -879,10 +895,10 @@ class LpProblem(pyo.ConcreteModel):
         # TODO: Check that there are no problems with this.
 
         def genMaxLimit_rule(model, i):
-            return model.varGeneration[i] <= self.p_gen_pmax[i]
+            return model.varGeneration[i] <= model.p_gen_pmax[i]
 
         def genMinLimit_rule(model, i):
-            return model.varGeneration[i] >= self.p_gen_pmin[i]
+            return model.varGeneration[i] >= model.p_gen_pmin[i]
 
         self.cGenMaxLimit = pyo.Constraint(self.s_gen, rule=genMaxLimit_rule)
         self.cGenMinLimit = pyo.Constraint(self.s_gen, rule=genMinLimit_rule)
@@ -897,7 +913,7 @@ class LpProblem(pyo.ConcreteModel):
             if int(i) not in self._rt_target_gen_indices:
                 return pyo.Constraint.Skip
             return (
-                model.varGeneration[i] - self.p_rt_target[i] == model.varRtTargetDevPos[i] - model.varRtTargetDevNeg[i]
+                model.varGeneration[i] - model.p_rt_target[i] == model.varRtTargetDevPos[i] - model.varRtTargetDevNeg[i]
             )
 
         self.cRtTargetTracking = pyo.Constraint(self.s_gen, rule=rt_target_rule)
@@ -915,7 +931,7 @@ class LpProblem(pyo.ConcreteModel):
             if int(j) not in self._rt_consumer_target_indices:
                 return pyo.Constraint.Skip
             return (
-                model.varFlexLoad[j] - self.p_rt_flexload_target[j]
+                model.varFlexLoad[j] - model.p_rt_flexload_target[j]
                 == model.varRtFlexLoadTargetDevPos[j] - model.varRtFlexLoadTargetDevNeg[j]
             )
 
@@ -930,12 +946,12 @@ class LpProblem(pyo.ConcreteModel):
         def rt_storage_target_rule(model, i):
             if int(i) not in self._rt_storage_target_indices:
                 return pyo.Constraint.Skip
-            lhs = self.p_rt_storage_balance_rhs[i] - (self.timeDelta * model.varGeneration[i])
-            if int(i) in self.s_gen_pump:
+            lhs = model.p_rt_storage_balance_rhs[i] - (self.timeDelta * model.varGeneration[i])
+            if int(i) in model.s_gen_pump:
                 pump_eff = float(self._grid.generator.loc[i, "pump_efficiency"])
                 lhs += self.timeDelta * pump_eff * model.varPump[i]
             return (
-                lhs - self.p_rt_storage_target[i]
+                lhs - model.p_rt_storage_target[i]
                 == model.varRtStorageTargetDevPos[i] - model.varRtStorageTargetDevNeg[i]
             )
 
@@ -951,7 +967,7 @@ class LpProblem(pyo.ConcreteModel):
             if int(b) not in self._idx_border_ac:
                 return pyo.Constraint.Skip
             return (
-                self.p_rt_io_target_active_ac[b] * (model.varAcBranchFlow[b] - self.p_rt_io_target_ac[b])
+                model.p_rt_io_target_active_ac[b] * (model.varAcBranchFlow[b] - model.p_rt_io_target_ac[b])
                 == model.varRtIoTargetDevPosAc[b] - model.varRtIoTargetDevNegAc[b]
             )
 
@@ -959,7 +975,7 @@ class LpProblem(pyo.ConcreteModel):
             if int(b) not in self._idx_border_dc:
                 return pyo.Constraint.Skip
             return (
-                self.p_rt_io_target_active_dc[b] * (model.varDcBranchFlow[b] - self.p_rt_io_target_dc[b])
+                model.p_rt_io_target_active_dc[b] * (model.varDcBranchFlow[b] - model.p_rt_io_target_dc[b])
                 == model.varRtIoTargetDevPosDc[b] - model.varRtIoTargetDevNegDc[b]
             )
 
@@ -991,6 +1007,7 @@ class LpProblem(pyo.ConcreteModel):
 
     def _create_constraint_powerbalance(self, grid_data):
         """ConstraintPower balance (power flow equation)  (Pnode = B theta)"""
+        lossmethod = self._lossmethod
 
         def powerbalance_rule(model, n):
             lhs = 0
@@ -1000,24 +1017,24 @@ class LpProblem(pyo.ConcreteModel):
                 if g in model.s_gen_pump:
                     lhs -= model.varPump[g]
             for lod in self._loads_at_node[n]:
-                lhs -= self.p_demand[lod]
+                lhs -= model.p_demand[lod]
                 lhs += model.varLoadShed[lod]
                 lhs -= model.varDumpLoad[lod]
                 if lod in model.s_load_flex:
                     lhs -= model.varFlexLoad[lod]
             for b in self._dcbranch_to_node[n]:
                 lhs += model.varDcBranchFlow[b]
-                if model._lossmethod == 1:
+                if lossmethod == 1:
                     lhs -= model.varLossDc12[b]
-                elif model._lossmethod == 2:
+                elif lossmethod == 2:
                     lhs -= model.p_branch_dc_power_loss[b] / 2
             for b in self._dcbranch_from_node[n]:
                 lhs += -model.varDcBranchFlow[b]
-                if model._lossmethod == 1:
+                if lossmethod == 1:
                     lhs -= model.varLossDc21[b]
-                elif model._lossmethod == 2:
+                elif lossmethod == 2:
                     lhs -= model.p_branch_dc_power_loss[b] / 2
-            if self._lossmethod == 1:
+            if lossmethod == 1:
                 # we define flow12 as flow leaving node 1, and flow21 as flow leaving node 2
                 # so subtract loss at "receiving" node but not at "sending" node
                 # i.e. loss12 at to-node and loss21 at from-node
@@ -1025,7 +1042,7 @@ class LpProblem(pyo.ConcreteModel):
                     lhs += -model.varLossAc12[b]
                 for b in self._branch_from_node[n]:
                     lhs += -model.varLossAc21[b]
-            elif self._lossmethod == 2:
+            elif lossmethod == 2:
                 # add ac branch losses as load, equally split between sending and receiving node
                 for b in self._branch_to_node[n]:
                     # positive sign for flow into node
@@ -1057,7 +1074,7 @@ class LpProblem(pyo.ConcreteModel):
             rhs = 0
             # TODO: This can surely be simplified:
             # node id's are strings, but Bbus and DA matrices need matrix indices (int)
-            idx_branch = list(self.s_branch_ac).index(b)
+            idx_branch = list(model.s_branch_ac).index(b)
             # idx_branch = grid_data.branch.index.get_loc(b)  # Check if this works
             for i in range(len(self._DA[idx_branch].indices)):
                 idx_node2 = self._DA[idx_branch].indices[i]
@@ -1093,28 +1110,28 @@ class LpProblem(pyo.ConcreteModel):
                 cost = sum(model.varLoadShed[i] * const.loadshedcost for i in model.s_load)
                 cost += sum(model.varDumpLoad[i] * const.loadshedcost for i in model.s_load)
             else:
-                cost = sum(model.varGeneration[i] * self.p_gen_cost[i] for i in model.s_gen)
-                cost -= sum(model.varPump[i] * self.p_genpump_cost[i] for i in model.s_gen_pump)
-                cost -= sum(model.varFlexLoad[i] * self.p_loadflex_cost[i] for i in model.s_load_flex)
+                cost = sum(model.varGeneration[i] * model.p_gen_cost[i] for i in model.s_gen)
+                cost -= sum(model.varPump[i] * model.p_genpump_cost[i] for i in model.s_gen_pump)
+                cost -= sum(model.varFlexLoad[i] * model.p_loadflex_cost[i] for i in model.s_load_flex)
                 cost += sum(model.varLoadShed[i] * const.loadshedcost for i in model.s_load)
                 cost += sum(model.varDumpLoad[i] * const.loadshedcost for i in model.s_load)
 
             if self._rt_deviation_objective_active:
                 cost += sum(
-                    self.p_rt_deviation_price_gen_pos[i] * model.varRtTargetDevPos[i]
-                    + self.p_rt_deviation_price_gen_neg[i] * model.varRtTargetDevNeg[i]
+                    model.p_rt_deviation_price_gen_pos[i] * model.varRtTargetDevPos[i]
+                    + model.p_rt_deviation_price_gen_neg[i] * model.varRtTargetDevNeg[i]
                     for i in model.s_gen
                     if int(i) in self._rt_target_gen_indices
                 )
                 cost += sum(
-                    self.p_rt_deviation_price_flex_pos[j] * model.varRtFlexLoadTargetDevPos[j]
-                    + self.p_rt_deviation_price_flex_neg[j] * model.varRtFlexLoadTargetDevNeg[j]
+                    model.p_rt_deviation_price_flex_pos[j] * model.varRtFlexLoadTargetDevPos[j]
+                    + model.p_rt_deviation_price_flex_neg[j] * model.varRtFlexLoadTargetDevNeg[j]
                     for j in model.s_load_flex
                     if int(j) in self._rt_consumer_target_indices
                 )
                 cost += sum(
-                    self.p_rt_deviation_price_storage_pos[i] * model.varRtStorageTargetDevPos[i]
-                    + self.p_rt_deviation_price_storage_neg[i] * model.varRtStorageTargetDevNeg[i]
+                    model.p_rt_deviation_price_storage_pos[i] * model.varRtStorageTargetDevPos[i]
+                    + model.p_rt_deviation_price_storage_neg[i] * model.varRtStorageTargetDevNeg[i]
                     for i in model.s_gen_storage
                     if int(i) in self._rt_storage_target_indices
                 )
