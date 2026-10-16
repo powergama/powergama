@@ -1066,21 +1066,22 @@ class LpProblem(pyo.ConcreteModel):
 
     def _create_constraint_powerflow_equation(self, grid_data):
         """Constraint: Power balance (power flow vs voltage angle)"""
+        # Node and branch ids are strings/labels but the DA matrix needs positions, so
+        # map them once here instead of inside the rule: the branch lookup was a linear
+        # scan per branch, and the node lookup rebuilt the entire node list for every
+        # non-zero of every row.
+        node_list = list(self.s_node)
+        branch_position = {b: i for i, b in enumerate(self.s_branch_ac)}
 
         # 1.
         def flowangle_rule(model, b):
             lhs = model.varAcBranchFlow[b]
             lhs = lhs / const.baseMVA
             rhs = 0
-            # TODO: This can surely be simplified:
-            # node id's are strings, but Bbus and DA matrices need matrix indices (int)
-            idx_branch = list(model.s_branch_ac).index(b)
-            # idx_branch = grid_data.branch.index.get_loc(b)  # Check if this works
-            for i in range(len(self._DA[idx_branch].indices)):
-                idx_node2 = self._DA[idx_branch].indices[i]
-                DA_element = self._DA[idx_branch].data[i]
-                n2 = list(model.s_node)[idx_node2]  # list since pyomo set is 1-based (could probably use +1 instead)
-                rhs += DA_element * model.varVoltageAngle[n2] * const.baseAngle
+            row = self._DA[branch_position[b]]
+            for i in range(len(row.indices)):
+                n2 = node_list[row.indices[i]]
+                rhs += row.data[i] * model.varVoltageAngle[n2] * const.baseAngle
             expr = lhs == rhs
             return expr
 
@@ -1154,17 +1155,18 @@ class LpProblem(pyo.ConcreteModel):
 
     def _get_powerbalance_rhs(self):
         """Get rhs expression in powerbalance constraint"""
-        # This is taken out of the constraint creation function to speed up constraint creation
+        # This is taken out of the constraint creation function to speed up constraint creation.
+        # Node ids are strings but Bbus needs matrix indices, so materialise the ordered set
+        # once: looking a node's position up per node was O(n^2), and rebuilding the whole
+        # list again for every non-zero in its row made that O(n^2) per node.
+        node_list = list(self.s_node)
         rhs = dict()
-        for n in self.s_node:
+        for idx_node, n in enumerate(node_list):
             rhs[n] = 0
-            # node id's are strings, but Bbus and DA matrices need matrix indices (int)
-            idx_node = list(self.s_node).index(n)
-            for i in range(len(self._Bbus[idx_node].indices)):
-                idx_node2 = self._Bbus[idx_node].indices[i]
-                B_element = self._Bbus[idx_node].data[i]
-                n2 = list(self.s_node)[idx_node2]  # list since pyomo set is 1-based (could probably use +1 instead)
-                rhs[n] -= B_element * self.varVoltageAngle[n2] * const.baseAngle
+            row = self._Bbus[idx_node]
+            for i in range(len(row.indices)):
+                n2 = node_list[row.indices[i]]
+                rhs[n] -= row.data[i] * self.varVoltageAngle[n2] * const.baseAngle
         return rhs
 
     def _get_timesteps_to_solve(self, continue_from_last=False, results=None):
@@ -1219,6 +1221,11 @@ class LpProblem(pyo.ConcreteModel):
         dt = float(self.timeDelta)
         node_list = list(self.s_node)
         branch_ac_list = list(self.s_branch_ac)
+        # Positions for the Bbus and DA rows, mapped once rather than scanned per rule
+        # call -- the rules below run once per (entity, hour), so a linear scan there is
+        # quadratic in the entity count and linear again in the horizon.
+        node_position = {n: i for i, n in enumerate(node_list)}
+        branch_ac_position = {b: i for i, b in enumerate(branch_ac_list)}
         gen_storage_set = frozenset(self._idx_generatorsWithStorage)
         gen_pump_set = frozenset(self._idx_generatorsWithPumping)
         flex_set = frozenset(self._idx_consumersWithFlexLoad)
@@ -1620,7 +1627,7 @@ class LpProblem(pyo.ConcreteModel):
         Bbus = self._Bbus
 
         def _power_balance_rule(m, n, h):
-            ni = node_list.index(n)
+            ni = node_position[n]
             lhs = 0
             for g in self._generators_at_node.get(n, []):
                 lhs += m.varGeneration[g, h]
@@ -1654,7 +1661,7 @@ class LpProblem(pyo.ConcreteModel):
         DA = self._DA
 
         def _flow_angle_rule(m, b, h):
-            idx_b = branch_ac_list.index(b)
+            idx_b = branch_ac_position[b]
             lhs = m.varAcBranchFlow[b, h] / const.baseMVA
             rhs = 0
             row = DA[idx_b]
@@ -1778,6 +1785,9 @@ class LpProblem(pyo.ConcreteModel):
         flex_list = list(self._idx_consumersWithFlexLoad)
         branch_ac_list = list(self.s_branch_ac)
         branch_dc_list = list(self.s_branch_dc)
+        # Spill is reported against the full generator list, so storage generators need
+        # their position in it. Mapped once instead of scanned inside the hour loop.
+        gen_position = {i: gi for gi, i in enumerate(gen_list)}
         grid = self._grid
         dt = float(self.timeDelta)
 
@@ -1815,10 +1825,9 @@ class LpProblem(pyo.ConcreteModel):
 
             # Spilled energy per generator (all generators, not just storage)
             energy_spilled = np.zeros(len(gen_list))
-            for si, i in enumerate(storage_gen_list):
+            for i in storage_gen_list:
                 spill_val = float(pyo.value(m.varSpill[i, hi]) or 0.0)
-                gi = gen_list.index(i)
-                energy_spilled[gi] = spill_val * dt
+                energy_spilled[gen_position[i]] = spill_val * dt
 
             # Branch capacity sensitivity (dual of capacity constraint).
             # NOTE: cAcFlowUb/cAcFlowLb/cDcFlowUb are declared as
