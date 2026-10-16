@@ -38,13 +38,23 @@ A simulation is a pipeline of four objects:
   `storval_filling_ref`, and the optional `pmax_ref`/`pmin_ref`/`rt_target_ref`), so a string in a
   grid-data column must match a column in `data.profiles`.
 
-- **[LpProblemPyomo.py](src/powergama/LpProblemPyomo.py)** (`powergama.LpProblem`) subclasses
-  `pyo.ConcreteModel`. The crucial design point: **the model is built once in `__init__` and then
-  mutated in place** by `_updateLpProblem(timestep)` on every iteration — parameters for inflow,
-  demand, storage values and bounds are rewritten rather than the model rebuilt. Results extraction
-  and the storage-state carry-over happen in `_storeResultsAndUpdateStorage`. Storage filling level
-  lives in `self._storage` / `self._storage_flexload` and is what makes the problem sequential.
-  `self._gen_prev` carries previous-timestep output for ramp constraints.
+- **[LpProblemPyomo.py](src/powergama/LpProblemPyomo.py)** (`powergama.LpProblem`) **holds** a
+  `pyo.ConcreteModel` as `self.model`. The crucial design point: **the model is built once in
+  `__init__` and then mutated in place** by `_updateLpProblem(timestep)` on every iteration —
+  parameters for inflow, demand, storage values and bounds are rewritten rather than the model
+  rebuilt. Results extraction and the storage-state carry-over happen in
+  `_storeResultsAndUpdateStorage`. Storage filling level lives in `self._storage` /
+  `self._storage_flexload` (seed them with the public `set_storage_state()`) and is what makes
+  the problem sequential. `self._gen_prev` carries previous-timestep output for ramp constraints.
+
+  Three things to know about the composition:
+  - `__getattr__` falls through to the model, so `lp.varGeneration` still resolves. **Reads
+    only.** `self.cFoo = pyo.Constraint(...)` sets a plain attribute and the component is never
+    added — construction must always say `self.model.cFoo`.
+  - Inside a constraint rule, Pyomo components come off the rule's `model` argument and
+    everything else off `self`. `tests/test_model_invariants.py` enforces both directions.
+  - `self.model`'s object identity must survive the whole of `solve()`: APPSI's incremental
+    update and `gurobi_persistent.set_instance` key off it.
 
 - **[timestep_result.py](src/powergama/timestep_result.py)** holds `TimestepResult`, the dataclass
   that names the 21-field LP→database contract. Both solve paths build one and call `.store(res)`,
