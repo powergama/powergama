@@ -1,6 +1,8 @@
 import time
 from pathlib import Path
 
+import pytest
+
 import powergama
 import powergama.plots
 import powergama.scenarios
@@ -8,6 +10,7 @@ import powergama.scenarios
 datapath = Path(__file__).parent / "test_data/data_europe2014/"
 
 
+@pytest.mark.slow
 def test_integration_europe2014(tmp_path):
     timerange = range(0, 6)
 

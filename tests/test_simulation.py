@@ -102,3 +102,71 @@ def test_simulate_highs_continue(tmp_path, testcase_9bus_data):
     # storage properties are the same (CSP generator with storage)
     pd.testing.assert_frame_equal(res1_loadflex, res2_loadflex, check_exact=False, rtol=1e-6)
     pd.testing.assert_frame_equal(res1_loadflex, res3_loadflex, check_exact=False, rtol=1e-6)
+
+
+def _read_result_tables(res):
+    with sqlite3.connect(res.db.filename) as con:
+        return {
+            "branch": pd.read_sql("SELECT * FROM Res_Branches ORDER BY timestep, indx", con),
+            "gen": pd.read_sql("SELECT * FROM Res_Generators ORDER BY timestep, indx", con),
+            "storage": pd.read_sql("SELECT * FROM Res_Storage ORDER BY timestep, indx", con),
+        }
+
+
+def _run_oneshot_vs_resumed(data, tmp_path, tag, lossmethod):
+    """Solve 0..10 in one go, and as 0..6 then resumed to 10. Return both result sets."""
+    data.timerange = range(0, 10)
+    res1 = powergama.Results(data, tmp_path / f"{tag}_1.sqlite3", replace=True)
+    powergama.LpProblem(data, lossmethod=lossmethod).solve(res1, solver="appsi_highs", solve_args=dict())
+    one_shot = _read_result_tables(res1)
+
+    data.timerange = range(0, 6)
+    res2 = powergama.Results(data, tmp_path / f"{tag}_2.sqlite3", replace=True)
+    powergama.LpProblem(data, lossmethod=lossmethod).solve(res2, solver="appsi_highs", solve_args=dict())
+
+    data.timerange = range(0, 10)
+    res2 = powergama.Results(data, tmp_path / f"{tag}_2.sqlite3", replace=False)
+    powergama.LpProblem(data, lossmethod=lossmethod).solve(
+        res2, solver="appsi_highs", solve_args=dict(), continue_from_last=True
+    )
+    return one_shot, _read_result_tables(res2)
+
+
+def test_continue_from_last_with_ramp_limits(tmp_path, testcase_9bus_data):
+    """Resuming must reproduce a one-shot run when ramp limits are active.
+
+    Covers the `_gen_prev` restore in solve(), which only runs when ramp limits are set
+    and was otherwise untested -- the existing continue test has no ramp limits.
+    """
+    data = testcase_9bus_data
+    data.generator.loc[1, "pmax"] = 250  # avoid load shedding
+    data.generator["ramp_up_pu"] = 0.2
+    data.generator["ramp_down_pu"] = 0.2
+
+    one_shot, resumed = _run_oneshot_vs_resumed(data, tmp_path, "ramp", lossmethod=0)
+    for key in ("branch", "gen", "storage"):
+        pd.testing.assert_frame_equal(one_shot[key], resumed[key], check_exact=False, rtol=1e-6, obj=key)
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "continue_from_last is not exactly resumable with lossmethod=1 or 2. The loss "
+        "linearisation is taken around the previous timestep's flows, which the hourly "
+        "path carries implicitly in Var.value rather than persisting. On resume the "
+        "model is fresh, so the pre-solve in solve() seeds the operating point instead "
+        "of the real preceding solution, and results diverge from the first resumed "
+        "timestep onward (~0.04 MW on 9-bus, and it propagates). Storage and _gen_prev "
+        "restore correctly because they are read back from the database. The fix is the "
+        "same: seed the linearisation from Res_Branches, which already holds the flows."
+    ),
+)
+def test_continue_from_last_with_losses(tmp_path, testcase_9bus_data):
+    """Resuming should reproduce a one-shot run when losses are modelled."""
+    data = testcase_9bus_data
+    data.branch["resistance"] = 0.01
+    data.generator.loc[1, "pmax"] = 250  # avoid load shedding
+
+    one_shot, resumed = _run_oneshot_vs_resumed(data, tmp_path, "loss", lossmethod=1)
+    for key in ("branch", "gen", "storage"):
+        pd.testing.assert_frame_equal(one_shot[key], resumed[key], check_exact=False, rtol=1e-6, obj=key)
