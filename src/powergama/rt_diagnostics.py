@@ -157,20 +157,20 @@ def append_hourly_debug(lp, timestep):
         ref_target = lp._rt_storage_target_ref.iloc[int(i)] if lp._rt_storage_target_ref is not None else ""
         soc_da_target = _prof(timestep, ref_target)
         dt_h = float(lp.timeDelta) if np.isfinite(lp.timeDelta) and lp.timeDelta > 0.0 else 1.0
-        da_gen_target_mw = _val(lp.p_rt_target[i]) or 0.0
+        da_gen_target_mw = _val(lp.model.p_rt_target[i]) or 0.0
         da_pump_target_mw = 0.0
         eff = (
             float(pd.to_numeric(lp._grid.generator.loc[i, "pump_efficiency"], errors="coerce") or 0.0)
-            if int(i) in lp.s_gen_pump
+            if int(i) in lp.model.s_gen_pump
             else 0.0
         )
-        lhs_da_mwh = (_val(lp.p_rt_storage_balance_rhs[i]) or 0.0) - dt_h * da_gen_target_mw
-        if int(i) in lp.s_gen_pump:
+        lhs_da_mwh = (_val(lp.model.p_rt_storage_balance_rhs[i]) or 0.0) - dt_h * da_gen_target_mw
+        if int(i) in lp.model.s_gen_pump:
             lhs_da_mwh += dt_h * eff * da_pump_target_mw
-        target_mwh = _val(lp.p_rt_storage_target[i]) or 0.0
+        target_mwh = _val(lp.model.p_rt_storage_target[i]) or 0.0
         mismatch_da_mwh = lhs_da_mwh - target_mwh
-        c_pos = _val(lp.p_rt_deviation_price_storage_pos[i]) or 0.0
-        c_neg = _val(lp.p_rt_deviation_price_storage_neg[i]) or 0.0
+        c_pos = _val(lp.model.p_rt_deviation_price_storage_pos[i]) or 0.0
+        c_neg = _val(lp.model.p_rt_deviation_price_storage_neg[i]) or 0.0
         mismatch_da_cost = c_pos * max(0.0, mismatch_da_mwh) + c_neg * max(0.0, -mismatch_da_mwh)
         da_reference_storage_mismatch_cost += float(mismatch_da_cost)
         row = {
@@ -181,17 +181,17 @@ def append_hourly_debug(lp, timestep):
             "storage_cap_mwh": float(storage_cap),
             "pre_storage_mwh": float(pre_storage),
             "soc_rt": float(max(0.0, min(1.0, soc_rt))),
-            "target_storage_mwh": _val(lp.p_rt_storage_target[i]) or 0.0,
-            "storage_dev_pos_mwh": _val(lp.varRtStorageTargetDevPos[i]) or 0.0,
-            "storage_dev_neg_mwh": _val(lp.varRtStorageTargetDevNeg[i]) or 0.0,
-            "coef_storage_pos": _val(lp.p_rt_deviation_price_storage_pos[i]) or 0.0,
-            "coef_storage_neg": _val(lp.p_rt_deviation_price_storage_neg[i]) or 0.0,
-            "gen_mw": _val(lp.varGeneration[i]) or 0.0,
-            "pump_mw": (_val(lp.varPump[i]) or 0.0) if int(i) in lp.s_gen_pump else 0.0,
-            "gen_target_mw": _val(lp.p_rt_target[i]) or 0.0,
+            "target_storage_mwh": _val(lp.model.p_rt_storage_target[i]) or 0.0,
+            "storage_dev_pos_mwh": _val(lp.model.varRtStorageTargetDevPos[i]) or 0.0,
+            "storage_dev_neg_mwh": _val(lp.model.varRtStorageTargetDevNeg[i]) or 0.0,
+            "coef_storage_pos": _val(lp.model.p_rt_deviation_price_storage_pos[i]) or 0.0,
+            "coef_storage_neg": _val(lp.model.p_rt_deviation_price_storage_neg[i]) or 0.0,
+            "gen_mw": _val(lp.model.varGeneration[i]) or 0.0,
+            "pump_mw": (_val(lp.model.varPump[i]) or 0.0) if int(i) in lp.model.s_gen_pump else 0.0,
+            "gen_target_mw": _val(lp.model.p_rt_target[i]) or 0.0,
             "pump_target_mw": 0.0,
-            "gen_cost_mwh": _val(lp.p_gen_cost[i]) or 0.0,
-            "pump_cost_mwh": (_val(lp.p_genpump_cost[i]) or 0.0) if int(i) in lp.s_gen_pump else 0.0,
+            "gen_cost_mwh": _val(lp.model.p_gen_cost[i]) or 0.0,
+            "pump_cost_mwh": (_val(lp.model.p_genpump_cost[i]) or 0.0) if int(i) in lp.model.s_gen_pump else 0.0,
             "rt_storage_target_ref": str(ref_target) if isinstance(ref_target, str) else "",
             "soc_da_target_profile": float(soc_da_target) if soc_da_target is not None else None,
             "da_ref_storage_balance_lhs_mwh": float(lhs_da_mwh),
@@ -207,17 +207,17 @@ def append_hourly_debug(lp, timestep):
     for i in sorted(
         int(ii) for ii in lp._rt_target_gen_indices if int(ii) in (lp._idx_rt_normal_gas | lp._idx_rt_peak_gen)
     ):
-        pmin_now = _val(lp.p_gen_pmin[i])
-        pmax_now = _val(lp.p_gen_pmax[i])
-        target_now = _val(lp.p_rt_target[i]) or 0.0
+        pmin_now = _val(lp.model.p_gen_pmin[i])
+        pmax_now = _val(lp.model.p_gen_pmax[i])
+        target_now = _val(lp.model.p_rt_target[i]) or 0.0
         target_clipped = max(
             pmin_now if pmin_now is not None else 0.0,
             min(target_now, pmax_now if pmax_now is not None else target_now),
         )
         da_replay_pos_lb = max(0.0, target_clipped - target_now)
         da_replay_neg_lb = max(0.0, target_now - target_clipped)
-        coef_pos = _val(lp.p_rt_deviation_price_gen_pos[i]) or 0.0
-        coef_neg = _val(lp.p_rt_deviation_price_gen_neg[i]) or 0.0
+        coef_pos = _val(lp.model.p_rt_deviation_price_gen_pos[i]) or 0.0
+        coef_neg = _val(lp.model.p_rt_deviation_price_gen_neg[i]) or 0.0
         da_replay_cost_lb = da_replay_pos_lb * coef_pos + da_replay_neg_lb * coef_neg
         ramp_prev = float(lp._gen_prev[i]) if i < len(lp._gen_prev) and np.isfinite(lp._gen_prev[i]) else None
         ramp_up = None
@@ -238,13 +238,13 @@ def append_hourly_debug(lp, timestep):
                 "node": str(lp._grid.generator.loc[i, "node"]),
                 "desc": str(lp._grid.generator.loc[i, "desc"]),
                 "is_peak_rt_block": bool(int(i) in lp._idx_rt_peak_gen),
-                "gen_mw": _val(lp.varGeneration[i]) or 0.0,
-                "gen_target_mw": _val(lp.p_rt_target[i]) or 0.0,
-                "gen_dev_pos_mw": _val(lp.varRtTargetDevPos[i]) or 0.0,
-                "gen_dev_neg_mw": _val(lp.varRtTargetDevNeg[i]) or 0.0,
+                "gen_mw": _val(lp.model.varGeneration[i]) or 0.0,
+                "gen_target_mw": _val(lp.model.p_rt_target[i]) or 0.0,
+                "gen_dev_pos_mw": _val(lp.model.varRtTargetDevPos[i]) or 0.0,
+                "gen_dev_neg_mw": _val(lp.model.varRtTargetDevNeg[i]) or 0.0,
                 "coef_gen_pos": coef_pos,
                 "coef_gen_neg": coef_neg,
-                "gen_cost_mwh": _val(lp.p_gen_cost[i]) or 0.0,
+                "gen_cost_mwh": _val(lp.model.p_gen_cost[i]) or 0.0,
                 "da_replay_target_reachable": bool(da_replay_reachable),
                 "da_replay_prev_gen_mw": ramp_prev,
                 "da_replay_ramp_up_pu": ramp_up,
@@ -276,26 +276,30 @@ def append_hourly_debug(lp, timestep):
     )
 
     be_balancing_dev = (
-        _sum_expr(lp.varGeneration[i] - lp.p_rt_target[i] for i in lp.s_gen if int(i) in lp._rt_target_gen_indices)
-        + _sum_expr(lp.varLoadShed[j] for j in lp.s_load)
-        - _sum_expr(lp.varDumpLoad[j] for j in lp.s_load)
+        _sum_expr(
+            lp.model.varGeneration[i] - lp.model.p_rt_target[i]
+            for i in lp.model.s_gen
+            if int(i) in lp._rt_target_gen_indices
+        )
+        + _sum_expr(lp.model.varLoadShed[j] for j in lp.model.s_load)
+        - _sum_expr(lp.model.varDumpLoad[j] for j in lp.model.s_load)
         - _sum_expr(
-            lp.varFlexLoad[j] - lp.p_rt_flexload_target[j]
-            for j in lp.s_load_flex
+            lp.model.varFlexLoad[j] - lp.model.p_rt_flexload_target[j]
+            for j in lp.model.s_load_flex
             if int(j) in lp._rt_consumer_target_indices
         )
         + _sum_expr(
             lp._border_ac_sign.get(int(b), 0.0)
-            * (_val(lp.p_rt_io_target_active_ac[b]) or 0.0)
-            * ((_val(lp.varAcBranchFlow[b]) or 0.0) - (_val(lp.p_rt_io_target_ac[b]) or 0.0))
-            for b in lp.s_branch_ac
+            * (_val(lp.model.p_rt_io_target_active_ac[b]) or 0.0)
+            * ((_val(lp.model.varAcBranchFlow[b]) or 0.0) - (_val(lp.model.p_rt_io_target_ac[b]) or 0.0))
+            for b in lp.model.s_branch_ac
             if int(b) in lp._idx_border_ac
         )
         + _sum_expr(
             lp._border_dc_sign.get(int(b), 0.0)
-            * (_val(lp.p_rt_io_target_active_dc[b]) or 0.0)
-            * ((_val(lp.varDcBranchFlow[b]) or 0.0) - (_val(lp.p_rt_io_target_dc[b]) or 0.0))
-            for b in lp.s_branch_dc
+            * (_val(lp.model.p_rt_io_target_active_dc[b]) or 0.0)
+            * ((_val(lp.model.varDcBranchFlow[b]) or 0.0) - (_val(lp.model.p_rt_io_target_dc[b]) or 0.0))
+            for b in lp.model.s_branch_dc
             if int(b) in lp._idx_border_dc
         )
     )
@@ -335,14 +339,14 @@ def append_hourly_debug(lp, timestep):
             return "fossil_other"
         return "other"
 
-    for i in lp.s_gen:
+    for i in lp.model.s_gen:
         ii = int(i)
         if ii not in lp._rt_target_gen_indices:
             continue
-        dev_pos = _val(lp.varRtTargetDevPos[i]) or 0.0
-        dev_neg = _val(lp.varRtTargetDevNeg[i]) or 0.0
-        coef_pos = _val(lp.p_rt_deviation_price_gen_pos[i]) or 0.0
-        coef_neg = _val(lp.p_rt_deviation_price_gen_neg[i]) or 0.0
+        dev_pos = _val(lp.model.varRtTargetDevPos[i]) or 0.0
+        dev_neg = _val(lp.model.varRtTargetDevNeg[i]) or 0.0
+        coef_pos = _val(lp.model.p_rt_deviation_price_gen_pos[i]) or 0.0
+        coef_neg = _val(lp.model.p_rt_deviation_price_gen_neg[i]) or 0.0
         this_cost = float(dev_pos * coef_pos + dev_neg * coef_neg)
         bucket = _bucket_for_gen(ii)
         redispatch_cost_attribution_eur[bucket] = float(redispatch_cost_attribution_eur.get(bucket, 0.0) + this_cost)
@@ -360,16 +364,16 @@ def append_hourly_debug(lp, timestep):
 
     redispatch_cost_attribution_eur["storage_soc"] = float(storage_actual_dev_cost)
     redispatch_cost_attribution_eur["flex_dev"] = _sum_expr(
-        lp.p_rt_deviation_price_flex_pos[j] * lp.varRtFlexLoadTargetDevPos[j]
-        + lp.p_rt_deviation_price_flex_neg[j] * lp.varRtFlexLoadTargetDevNeg[j]
-        for j in lp.s_load_flex
+        lp.model.p_rt_deviation_price_flex_pos[j] * lp.model.varRtFlexLoadTargetDevPos[j]
+        + lp.model.p_rt_deviation_price_flex_neg[j] * lp.model.varRtFlexLoadTargetDevNeg[j]
+        for j in lp.model.s_load_flex
         if int(j) in lp._rt_consumer_target_indices
     )
 
     gen_dev_cost_total = _sum_expr(
-        lp.p_rt_deviation_price_gen_pos[i] * lp.varRtTargetDevPos[i]
-        + lp.p_rt_deviation_price_gen_neg[i] * lp.varRtTargetDevNeg[i]
-        for i in lp.s_gen
+        lp.model.p_rt_deviation_price_gen_pos[i] * lp.model.varRtTargetDevPos[i]
+        + lp.model.p_rt_deviation_price_gen_neg[i] * lp.model.varRtTargetDevNeg[i]
+        for i in lp.model.s_gen
         if int(i) in lp._rt_target_gen_indices
     )
     redispatch_cost_attribution_eur["meta_be_gen_dev_cost_accounted"] = float(
@@ -393,7 +397,7 @@ def append_hourly_debug(lp, timestep):
     payload = {
         "event": "rt_timestep_debug",
         "timestep": int(timestep),
-        "objective": _val(lp.OBJ()),
+        "objective": _val(lp.model.OBJ()),
         "flags": {
             "rt_deviation_objective_active": bool(lp._rt_deviation_objective_active),
         },
@@ -401,24 +405,24 @@ def append_hourly_debug(lp, timestep):
             "rt_balancing_deviation_mw": float(be_balancing_dev),
         },
         "term_breakdown": {
-            "loadshed": _sum_expr(const.loadshedcost * lp.varLoadShed[j] for j in lp.s_load),
-            "dumpload": _sum_expr(const.loadshedcost * lp.varDumpLoad[j] for j in lp.s_load),
+            "loadshed": _sum_expr(const.loadshedcost * lp.model.varLoadShed[j] for j in lp.model.s_load),
+            "dumpload": _sum_expr(const.loadshedcost * lp.model.varDumpLoad[j] for j in lp.model.s_load),
             "gen_dev": _sum_expr(
-                lp.p_rt_deviation_price_gen_pos[i] * lp.varRtTargetDevPos[i]
-                + lp.p_rt_deviation_price_gen_neg[i] * lp.varRtTargetDevNeg[i]
-                for i in lp.s_gen
+                lp.model.p_rt_deviation_price_gen_pos[i] * lp.model.varRtTargetDevPos[i]
+                + lp.model.p_rt_deviation_price_gen_neg[i] * lp.model.varRtTargetDevNeg[i]
+                for i in lp.model.s_gen
                 if int(i) in lp._rt_target_gen_indices
             ),
             "flex_dev": _sum_expr(
-                lp.p_rt_deviation_price_flex_pos[j] * lp.varRtFlexLoadTargetDevPos[j]
-                + lp.p_rt_deviation_price_flex_neg[j] * lp.varRtFlexLoadTargetDevNeg[j]
-                for j in lp.s_load_flex
+                lp.model.p_rt_deviation_price_flex_pos[j] * lp.model.varRtFlexLoadTargetDevPos[j]
+                + lp.model.p_rt_deviation_price_flex_neg[j] * lp.model.varRtFlexLoadTargetDevNeg[j]
+                for j in lp.model.s_load_flex
                 if int(j) in lp._rt_consumer_target_indices
             ),
             "storage_dev": _sum_expr(
-                lp.p_rt_deviation_price_storage_pos[i] * lp.varRtStorageTargetDevPos[i]
-                + lp.p_rt_deviation_price_storage_neg[i] * lp.varRtStorageTargetDevNeg[i]
-                for i in lp.s_gen_storage
+                lp.model.p_rt_deviation_price_storage_pos[i] * lp.model.varRtStorageTargetDevPos[i]
+                + lp.model.p_rt_deviation_price_storage_neg[i] * lp.model.varRtStorageTargetDevNeg[i]
+                for i in lp.model.s_gen_storage
                 if int(i) in lp._rt_storage_target_indices
             ),
             "da_ref_storage_mismatch_cost": float(da_reference_storage_mismatch_cost),
@@ -429,28 +433,28 @@ def append_hourly_debug(lp, timestep):
             "foreign_gen_lock_rows": int(
                 sum(
                     1
-                    for i in lp.s_gen
+                    for i in lp.model.s_gen
                     if lp._foreign_gen_lock is not None and (int(timestep), int(i)) in lp._foreign_gen_lock.index
                 )
             ),
             "foreign_cons_lock_rows": int(
                 sum(
                     1
-                    for j in lp.s_load
+                    for j in lp.model.s_load
                     if lp._foreign_cons_lock is not None and (int(timestep), int(j)) in lp._foreign_cons_lock.index
                 )
             ),
             "rt_io_target_active_ac": int(
                 sum(
-                    int(_val(lp.p_rt_io_target_active_ac[b]) or 0)
-                    for b in lp.s_branch_ac
+                    int(_val(lp.model.p_rt_io_target_active_ac[b]) or 0)
+                    for b in lp.model.s_branch_ac
                     if int(b) in lp._idx_border_ac
                 )
             ),
             "rt_io_target_active_dc": int(
                 sum(
-                    int(_val(lp.p_rt_io_target_active_dc[b]) or 0)
-                    for b in lp.s_branch_dc
+                    int(_val(lp.model.p_rt_io_target_active_dc[b]) or 0)
+                    for b in lp.model.s_branch_dc
                     if int(b) in lp._idx_border_dc
                 )
             ),
@@ -514,7 +518,7 @@ def append_multi_period_debug(lp, m, hi, timestep):
     storage_rows = []
     for i in sorted(int(ii) for ii in lp._rt_storage_target_indices):
         storage_cap = float(pd.to_numeric(lp._grid.generator.loc[i, "storage_cap"], errors="coerce") or 0.0)
-        rt_storage_mwh = _val(m.varStorage[i, hi]) if i in lp.s_gen_storage else 0.0
+        rt_storage_mwh = _val(m.varStorage[i, hi]) if i in lp.model.s_gen_storage else 0.0
         soc_rt = (rt_storage_mwh / storage_cap) if storage_cap > 0.0 else 0.0
 
         target_storage_mwh = 0.0
@@ -527,7 +531,7 @@ def append_multi_period_debug(lp, m, hi, timestep):
                 target_storage_mwh = max(0.0, storage_cap * max(0.0, min(1.0, rv)))
 
         gen_mw = _val(m.varGeneration[i, hi])
-        pump_mw = _val(m.varPump[i, hi]) if i in lp.s_gen_pump else 0.0
+        pump_mw = _val(m.varPump[i, hi]) if i in lp.model.s_gen_pump else 0.0
 
         storage_rows.append(
             {

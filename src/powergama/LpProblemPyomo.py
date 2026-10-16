@@ -34,8 +34,17 @@ from . import rt_diagnostics
 from .timestep_result import TimestepResult, aggregate_to_nodes
 
 
-class LpProblem(pyo.ConcreteModel):
+class LpProblem:
     """LP problem formulation
+
+    Holds the Pyomo model as `self.model` rather than being one. The simulation
+    state that makes the problem sequential -- storage levels, previous dispatch,
+    the loss linearisation operating point -- lives on the LpProblem, and the
+    model is rebuilt or mutated against it. See the note above
+    `_create_sets_and_parameters` for the rule every construction rule follows.
+
+    Attribute access falls through to the model, so `lp.varGeneration` still
+    resolves for existing callers. New code should say `lp.model.varGeneration`.
 
     Parameters
     ==========
@@ -95,8 +104,11 @@ class LpProblem(pyo.ConcreteModel):
         rt_xborder_flow_penalty_eur_per_mwh=0.0,
         is_rt=False,
     ):
-        # 1.
-        super().__init__()
+        # 1. The Pyomo model. Its identity must be preserved for the whole of solve():
+        #    APPSI's incremental update and gurobi_persistent.set_instance both key off
+        #    the object, so rebinding self.model mid-run would silently desynchronise
+        #    the solver from the model it was given.
+        self.model = pyo.ConcreteModel()
 
         # 2. Compute matrices used in power flow equaions
         print("Computing B and DA matrices...")
@@ -414,6 +426,60 @@ class LpProblem(pyo.ConcreteModel):
         self._create_constraint_powerbalance(grid)
         self._create_constraint_powerflow_equation(grid)
 
+    def __getattr__(self, name):
+        """Fall through to the Pyomo model for anything LpProblem does not define.
+
+        Keeps `lp.varAcBranchFlow12.extract_values()` and the like working for callers
+        written when LpProblem *was* the model. Python only calls this when normal
+        lookup fails, so it never shadows real attributes.
+
+        Reads only. Assigning `lp.cFoo = pyo.Constraint(...)` sets a plain attribute on
+        the LpProblem and the component is never added to the model -- construction
+        must say `self.model.cFoo` explicitly. That is why there is no __setattr__
+        counterpart: a write passthrough would make the mistake invisible, whereas
+        without one the constraint simply goes missing from the LP.
+        """
+        # __getattr__ runs before __init__ assigns self.model during unpickling and on
+        # any failed lookup inside __init__ itself; guard against recursing forever.
+        if name == "model":
+            raise AttributeError(name)
+        try:
+            return getattr(self.__dict__["model"], name)
+        except KeyError:
+            raise AttributeError(name) from None
+
+    @property
+    def storage(self):
+        """Generator storage filling levels in MWh, indexed like `grid.generator`."""
+        return self._storage
+
+    @property
+    def storage_flexload(self):
+        """Flexible-load reservoir levels in MWh, indexed like `grid.consumer`."""
+        return self._storage_flexload
+
+    def set_storage_state(self, storage=None, storage_flexload=None):
+        """Seed the simulation state that makes the hourly problem sequential.
+
+        Both are held as pandas Series indexed like the grid data they describe, and
+        this is the only place that guarantees it. It matters because
+        `solve(continue_from_last=True)` assigns into them with `.loc` and
+        `_storeResultsAndUpdateStorage` selects from them by generator and consumer
+        index: a bare numpy array happens to behave the same way while the grid uses a
+        default RangeIndex, and stops doing so without warning if it ever does not.
+
+        A Series argument is aligned on its index; an array is taken positionally.
+
+        Generator storage is clipped into `[0, storage_cap]`. Flexible-load levels are
+        taken as given, because the hourly path lets them leave their range on purpose
+        and prices that through `constants.flexload_outside_cost`.
+        """
+        if storage is not None:
+            values = pd.Series(storage, index=self._grid.generator.index, dtype=float)
+            self._storage = values.clip(lower=0.0, upper=self._grid.generator["storage_cap"])
+        if storage_flexload is not None:
+            self._storage_flexload = pd.Series(storage_flexload, index=self._grid.consumer.index, dtype=float)
+
     def _load_optional_foreign_da_locks(self, grid):
         """Load optional foreign DA lock tables from parquet artifacts.
 
@@ -569,103 +635,138 @@ class LpProblem(pyo.ConcreteModel):
     # components (p_*, s_*, var*, c*, OBJ) are read off the rule's `model`
     # argument, never off `self`; everything else -- grid data, configuration,
     # the precomputed adjacency and matrix structures -- is closed over from
-    # `self` at build time. `model is self` today, so both spellings work and
-    # the distinction is invisible. It stops being invisible when the model
-    # becomes an attribute rather than the class itself, at which point a
-    # `self.p_x` inside a rule silently reads the wrong object and a
-    # `model._grid` raises at construction time. Enforced by
+    # `self` at build time. The model is `self.model`, a separate object, so a
+    # component read off `self` now resolves through __getattr__ to the same
+    # place by accident rather than by design, and would stop resolving the
+    # moment an LpProblem carried more than one model. Enforced by
     # tests/test_model_invariants.py.
+    #
+    # Note the asymmetry on writes: `self.model.cFoo = pyo.Constraint(...)`
+    # registers the component, `self.cFoo = ...` quietly does not. Construction
+    # must always name the model.
     # ------------------------------------------------------------------
 
     def _create_sets_and_parameters(self, grid_data):
         """Create pyomo model sets"""
-        self.s_node = pyo.Set(ordered=True, initialize=grid_data.node["id"].tolist())
-        self.s_branch_ac = pyo.Set(ordered=True, initialize=grid_data.branch.index.tolist())
-        self.s_branch_dc = pyo.Set(ordered=True, initialize=grid_data.dcbranch.index.tolist())
-        self.s_gen = pyo.Set(ordered=True, initialize=grid_data.generator.index.tolist())
-        self.s_gen_pump = pyo.Set(ordered=True, initialize=grid_data.getIdxGeneratorsWithPumping())
-        self.s_gen_storage = pyo.Set(ordered=True, initialize=grid_data.getIdxGeneratorsWithStorage())
-        self.s_load = pyo.Set(ordered=True, initialize=grid_data.consumer.index.tolist())
-        self.s_load_flex = pyo.Set(ordered=True, initialize=grid_data.getIdxConsumersWithFlexibleLoad())
-        self.s_area = pyo.Set(ordered=True, initialize=grid_data.getAllAreas())
+        self.model.s_node = pyo.Set(ordered=True, initialize=grid_data.node["id"].tolist())
+        self.model.s_branch_ac = pyo.Set(ordered=True, initialize=grid_data.branch.index.tolist())
+        self.model.s_branch_dc = pyo.Set(ordered=True, initialize=grid_data.dcbranch.index.tolist())
+        self.model.s_gen = pyo.Set(ordered=True, initialize=grid_data.generator.index.tolist())
+        self.model.s_gen_pump = pyo.Set(ordered=True, initialize=grid_data.getIdxGeneratorsWithPumping())
+        self.model.s_gen_storage = pyo.Set(ordered=True, initialize=grid_data.getIdxGeneratorsWithStorage())
+        self.model.s_load = pyo.Set(ordered=True, initialize=grid_data.consumer.index.tolist())
+        self.model.s_load_flex = pyo.Set(ordered=True, initialize=grid_data.getIdxConsumersWithFlexibleLoad())
+        self.model.s_area = pyo.Set(ordered=True, initialize=grid_data.getAllAreas())
 
         # Mutable parameters
         # Quantities that change from timestep to the next:
-        self.p_gen_pmin = pyo.Param(
-            self.s_gen,
+        self.model.p_gen_pmin = pyo.Param(
+            self.model.s_gen,
             within=pyo.Reals,
             default=0,
             mutable=True,
             initialize=grid_data.generator["pmin"].values,
         )
-        self.p_gen_pmax = pyo.Param(
-            self.s_gen,
+        self.model.p_gen_pmax = pyo.Param(
+            self.model.s_gen,
             within=pyo.Reals,
             default=0,
             mutable=True,
             initialize=grid_data.generator["pmax"].values,
         )
-        self.p_gen_cost = pyo.Param(
-            self.s_gen,
+        self.model.p_gen_cost = pyo.Param(
+            self.model.s_gen,
             within=pyo.Reals,
             default=0,
             mutable=True,
             initialize=grid_data.generator["fuelcost"].values,
         )
-        self.p_genpump_cost = pyo.Param(self.s_gen, within=pyo.Reals, default=0, mutable=True)
-        self.p_pump_pmax = pyo.Param(
-            self.s_gen_pump,
+        self.model.p_genpump_cost = pyo.Param(self.model.s_gen, within=pyo.Reals, default=0, mutable=True)
+        self.model.p_pump_pmax = pyo.Param(
+            self.model.s_gen_pump,
             within=pyo.NonNegativeReals,
             mutable=True,
-            initialize={g: grid_data.generator.loc[g, "pump_cap"] for g in self.s_gen_pump},
+            initialize={g: grid_data.generator.loc[g, "pump_cap"] for g in self.model.s_gen_pump},
         )
-        self.p_rt_target = pyo.Param(self.s_gen, within=pyo.Reals, default=0, mutable=True)
-        self.p_rt_target_active = pyo.Param(self.s_gen, within=pyo.Binary, default=0, mutable=True)
-        self.p_rt_deviation_price_gen = pyo.Param(self.s_gen, within=pyo.NonNegativeReals, default=0, mutable=True)
-        self.p_rt_deviation_price_gen_pos = pyo.Param(self.s_gen, within=pyo.Reals, default=0, mutable=True)
-        self.p_rt_deviation_price_gen_neg = pyo.Param(self.s_gen, within=pyo.Reals, default=0, mutable=True)
-        self.p_demand = pyo.Param(self.s_load, within=pyo.Reals, default=0, mutable=True)
+        self.model.p_rt_target = pyo.Param(self.model.s_gen, within=pyo.Reals, default=0, mutable=True)
+        self.model.p_rt_target_active = pyo.Param(self.model.s_gen, within=pyo.Binary, default=0, mutable=True)
+        self.model.p_rt_deviation_price_gen = pyo.Param(
+            self.model.s_gen, within=pyo.NonNegativeReals, default=0, mutable=True
+        )
+        self.model.p_rt_deviation_price_gen_pos = pyo.Param(self.model.s_gen, within=pyo.Reals, default=0, mutable=True)
+        self.model.p_rt_deviation_price_gen_neg = pyo.Param(self.model.s_gen, within=pyo.Reals, default=0, mutable=True)
+        self.model.p_demand = pyo.Param(self.model.s_load, within=pyo.Reals, default=0, mutable=True)
         # Consumer (flexible load) RT DA target for DA-target deviation penalties
-        self.p_rt_flexload_target = pyo.Param(self.s_load_flex, within=pyo.NonNegativeReals, default=0, mutable=True)
-        self.p_rt_flexload_target_active = pyo.Param(self.s_load_flex, within=pyo.Binary, default=0, mutable=True)
-        self.p_rt_deviation_price_flex = pyo.Param(
-            self.s_load_flex, within=pyo.NonNegativeReals, default=0, mutable=True
+        self.model.p_rt_flexload_target = pyo.Param(
+            self.model.s_load_flex, within=pyo.NonNegativeReals, default=0, mutable=True
         )
-        self.p_rt_deviation_price_flex_pos = pyo.Param(self.s_load_flex, within=pyo.Reals, default=0, mutable=True)
-        self.p_rt_deviation_price_flex_neg = pyo.Param(self.s_load_flex, within=pyo.Reals, default=0, mutable=True)
-        self.p_rt_storage_target = pyo.Param(self.s_gen_storage, within=pyo.NonNegativeReals, default=0, mutable=True)
-        self.p_rt_storage_balance_rhs = pyo.Param(
-            self.s_gen_storage, within=pyo.NonNegativeReals, default=0, mutable=True
+        self.model.p_rt_flexload_target_active = pyo.Param(
+            self.model.s_load_flex, within=pyo.Binary, default=0, mutable=True
         )
-        self.p_rt_deviation_price_storage = pyo.Param(
-            self.s_gen_storage, within=pyo.NonNegativeReals, default=0, mutable=True
+        self.model.p_rt_deviation_price_flex = pyo.Param(
+            self.model.s_load_flex, within=pyo.NonNegativeReals, default=0, mutable=True
         )
-        self.p_rt_deviation_price_storage_pos = pyo.Param(self.s_gen_storage, within=pyo.Reals, default=0, mutable=True)
-        self.p_rt_deviation_price_storage_neg = pyo.Param(self.s_gen_storage, within=pyo.Reals, default=0, mutable=True)
-        self.p_rt_io_target_ac = pyo.Param(self.s_branch_ac, within=pyo.Reals, default=0, mutable=True)
-        self.p_rt_io_target_dc = pyo.Param(self.s_branch_dc, within=pyo.Reals, default=0, mutable=True)
-        self.p_rt_io_target_active_ac = pyo.Param(self.s_branch_ac, within=pyo.Binary, default=0, mutable=True)
-        self.p_rt_io_target_active_dc = pyo.Param(self.s_branch_dc, within=pyo.Binary, default=0, mutable=True)
+        self.model.p_rt_deviation_price_flex_pos = pyo.Param(
+            self.model.s_load_flex, within=pyo.Reals, default=0, mutable=True
+        )
+        self.model.p_rt_deviation_price_flex_neg = pyo.Param(
+            self.model.s_load_flex, within=pyo.Reals, default=0, mutable=True
+        )
+        self.model.p_rt_storage_target = pyo.Param(
+            self.model.s_gen_storage, within=pyo.NonNegativeReals, default=0, mutable=True
+        )
+        self.model.p_rt_storage_balance_rhs = pyo.Param(
+            self.model.s_gen_storage, within=pyo.NonNegativeReals, default=0, mutable=True
+        )
+        self.model.p_rt_deviation_price_storage = pyo.Param(
+            self.model.s_gen_storage, within=pyo.NonNegativeReals, default=0, mutable=True
+        )
+        self.model.p_rt_deviation_price_storage_pos = pyo.Param(
+            self.model.s_gen_storage, within=pyo.Reals, default=0, mutable=True
+        )
+        self.model.p_rt_deviation_price_storage_neg = pyo.Param(
+            self.model.s_gen_storage, within=pyo.Reals, default=0, mutable=True
+        )
+        self.model.p_rt_io_target_ac = pyo.Param(self.model.s_branch_ac, within=pyo.Reals, default=0, mutable=True)
+        self.model.p_rt_io_target_dc = pyo.Param(self.model.s_branch_dc, within=pyo.Reals, default=0, mutable=True)
+        self.model.p_rt_io_target_active_ac = pyo.Param(
+            self.model.s_branch_ac, within=pyo.Binary, default=0, mutable=True
+        )
+        self.model.p_rt_io_target_active_dc = pyo.Param(
+            self.model.s_branch_dc, within=pyo.Binary, default=0, mutable=True
+        )
         # Written each timestep by _updateLpProblem from _flexload_storage_value. Only
         # the hourly path uses it; the multi-period path prices flexible load per
         # window in _build_day_joint_model instead.
-        self.p_loadflex_cost = pyo.Param(self.s_load_flex, within=pyo.Reals, default=0, mutable=True)
+        self.model.p_loadflex_cost = pyo.Param(self.model.s_load_flex, within=pyo.Reals, default=0, mutable=True)
         if self._lossmethod == 2:
             # for storing power losses until next timestep
-            self.p_branch_ac_power_loss = pyo.Param(self.s_branch_ac, within=pyo.Reals, default=0, mutable=True)
-            self.p_branch_dc_power_loss = pyo.Param(self.s_branch_dc, within=pyo.Reals, default=0, mutable=True)
+            self.model.p_branch_ac_power_loss = pyo.Param(
+                self.model.s_branch_ac, within=pyo.Reals, default=0, mutable=True
+            )
+            self.model.p_branch_dc_power_loss = pyo.Param(
+                self.model.s_branch_dc, within=pyo.Reals, default=0, mutable=True
+            )
         elif self._lossmethod == 1:
             # for storing power flow from previous timestep
-            self.p_branch_ac_powerflow12 = pyo.Param(self.s_branch_ac, within=pyo.Reals, initialize=0, mutable=True)
-            self.p_branch_ac_powerflow21 = pyo.Param(self.s_branch_ac, within=pyo.Reals, initialize=0, mutable=True)
-            self.p_branch_dc_powerflow12 = pyo.Param(self.s_branch_dc, within=pyo.Reals, initialize=0, mutable=True)
-            self.p_branch_dc_powerflow21 = pyo.Param(self.s_branch_dc, within=pyo.Reals, initialize=0, mutable=True)
+            self.model.p_branch_ac_powerflow12 = pyo.Param(
+                self.model.s_branch_ac, within=pyo.Reals, initialize=0, mutable=True
+            )
+            self.model.p_branch_ac_powerflow21 = pyo.Param(
+                self.model.s_branch_ac, within=pyo.Reals, initialize=0, mutable=True
+            )
+            self.model.p_branch_dc_powerflow12 = pyo.Param(
+                self.model.s_branch_dc, within=pyo.Reals, initialize=0, mutable=True
+            )
+            self.model.p_branch_dc_powerflow21 = pyo.Param(
+                self.model.s_branch_dc, within=pyo.Reals, initialize=0, mutable=True
+            )
 
     def _create_variables(self):
         """Create pyomo model variables"""
         grid_data = self._grid
-        self.varAcBranchFlow = pyo.Var(self.s_branch_ac, within=pyo.Reals)
-        self.varDcBranchFlow = pyo.Var(self.s_branch_dc, within=pyo.Reals)
+        self.model.varAcBranchFlow = pyo.Var(self.model.s_branch_ac, within=pyo.Reals)
+        self.model.varDcBranchFlow = pyo.Var(self.model.s_branch_dc, within=pyo.Reals)
         if self._lossmethod == 1:
 
             def maxflow(model, j):
@@ -678,31 +779,35 @@ class LpProblem(pyo.ConcreteModel):
             # Adding bounds on 12 and 21 flows reduces the problem with simultaneously large 12 and 21 flows
             # that are not physical (but hard to avoid in circumstances when branch loss is actually beneficial
             # for the optimisation). However, it doesn't eliminate the problem.
-            self.varAcBranchFlow12 = pyo.Var(self.s_branch_ac, within=pyo.NonNegativeReals, bounds=maxflow)
-            self.varAcBranchFlow21 = pyo.Var(self.s_branch_ac, within=pyo.NonNegativeReals, bounds=maxflow)
-            self.varDcBranchFlow12 = pyo.Var(self.s_branch_dc, within=pyo.NonNegativeReals, bounds=maxflow_dc)
-            self.varDcBranchFlow21 = pyo.Var(self.s_branch_dc, within=pyo.NonNegativeReals, bounds=maxflow_dc)
-            self.varLossAc12 = pyo.Var(self.s_branch_ac, within=pyo.NonNegativeReals)
-            self.varLossAc21 = pyo.Var(self.s_branch_ac, within=pyo.NonNegativeReals)
-            self.varLossDc12 = pyo.Var(self.s_branch_dc, within=pyo.NonNegativeReals)
-            self.varLossDc21 = pyo.Var(self.s_branch_dc, within=pyo.NonNegativeReals)
-        self.varGeneration = pyo.Var(self.s_gen, within=pyo.NonNegativeReals)
-        self.varPump = pyo.Var(self.s_gen_pump, within=pyo.NonNegativeReals)
-        self.varRtTargetDevPos = pyo.Var(self.s_gen, within=pyo.NonNegativeReals)
-        self.varRtTargetDevNeg = pyo.Var(self.s_gen, within=pyo.NonNegativeReals)
-        self.varFlexLoad = pyo.Var(self.s_load_flex, within=pyo.NonNegativeReals)
-        self.varLoadShed = pyo.Var(self.s_load, within=pyo.NonNegativeReals)
-        self.varDumpLoad = pyo.Var(self.s_load, within=pyo.NonNegativeReals)
+            self.model.varAcBranchFlow12 = pyo.Var(self.model.s_branch_ac, within=pyo.NonNegativeReals, bounds=maxflow)
+            self.model.varAcBranchFlow21 = pyo.Var(self.model.s_branch_ac, within=pyo.NonNegativeReals, bounds=maxflow)
+            self.model.varDcBranchFlow12 = pyo.Var(
+                self.model.s_branch_dc, within=pyo.NonNegativeReals, bounds=maxflow_dc
+            )
+            self.model.varDcBranchFlow21 = pyo.Var(
+                self.model.s_branch_dc, within=pyo.NonNegativeReals, bounds=maxflow_dc
+            )
+            self.model.varLossAc12 = pyo.Var(self.model.s_branch_ac, within=pyo.NonNegativeReals)
+            self.model.varLossAc21 = pyo.Var(self.model.s_branch_ac, within=pyo.NonNegativeReals)
+            self.model.varLossDc12 = pyo.Var(self.model.s_branch_dc, within=pyo.NonNegativeReals)
+            self.model.varLossDc21 = pyo.Var(self.model.s_branch_dc, within=pyo.NonNegativeReals)
+        self.model.varGeneration = pyo.Var(self.model.s_gen, within=pyo.NonNegativeReals)
+        self.model.varPump = pyo.Var(self.model.s_gen_pump, within=pyo.NonNegativeReals)
+        self.model.varRtTargetDevPos = pyo.Var(self.model.s_gen, within=pyo.NonNegativeReals)
+        self.model.varRtTargetDevNeg = pyo.Var(self.model.s_gen, within=pyo.NonNegativeReals)
+        self.model.varFlexLoad = pyo.Var(self.model.s_load_flex, within=pyo.NonNegativeReals)
+        self.model.varLoadShed = pyo.Var(self.model.s_load, within=pyo.NonNegativeReals)
+        self.model.varDumpLoad = pyo.Var(self.model.s_load, within=pyo.NonNegativeReals)
         # Flexible load DA target tracking deviations (soft penalty)
-        self.varRtFlexLoadTargetDevPos = pyo.Var(self.s_load_flex, within=pyo.NonNegativeReals)
-        self.varRtFlexLoadTargetDevNeg = pyo.Var(self.s_load_flex, within=pyo.NonNegativeReals)
-        self.varRtStorageTargetDevPos = pyo.Var(self.s_gen_storage, within=pyo.NonNegativeReals)
-        self.varRtStorageTargetDevNeg = pyo.Var(self.s_gen_storage, within=pyo.NonNegativeReals)
-        self.varRtIoTargetDevPosAc = pyo.Var(self.s_branch_ac, within=pyo.NonNegativeReals)
-        self.varRtIoTargetDevNegAc = pyo.Var(self.s_branch_ac, within=pyo.NonNegativeReals)
-        self.varRtIoTargetDevPosDc = pyo.Var(self.s_branch_dc, within=pyo.NonNegativeReals)
-        self.varRtIoTargetDevNegDc = pyo.Var(self.s_branch_dc, within=pyo.NonNegativeReals)
-        self.varVoltageAngle = pyo.Var(self.s_node, within=pyo.Reals, initialize=0.0)
+        self.model.varRtFlexLoadTargetDevPos = pyo.Var(self.model.s_load_flex, within=pyo.NonNegativeReals)
+        self.model.varRtFlexLoadTargetDevNeg = pyo.Var(self.model.s_load_flex, within=pyo.NonNegativeReals)
+        self.model.varRtStorageTargetDevPos = pyo.Var(self.model.s_gen_storage, within=pyo.NonNegativeReals)
+        self.model.varRtStorageTargetDevNeg = pyo.Var(self.model.s_gen_storage, within=pyo.NonNegativeReals)
+        self.model.varRtIoTargetDevPosAc = pyo.Var(self.model.s_branch_ac, within=pyo.NonNegativeReals)
+        self.model.varRtIoTargetDevNegAc = pyo.Var(self.model.s_branch_ac, within=pyo.NonNegativeReals)
+        self.model.varRtIoTargetDevPosDc = pyo.Var(self.model.s_branch_dc, within=pyo.NonNegativeReals)
+        self.model.varRtIoTargetDevNegDc = pyo.Var(self.model.s_branch_dc, within=pyo.NonNegativeReals)
+        self.model.varVoltageAngle = pyo.Var(self.model.s_node, within=pyo.Reals, initialize=0.0)
 
     def _create_constraint_powerflow_limit(self, grid_data):
         """Constraint: Power flow limit"""
@@ -723,8 +828,8 @@ class LpProblem(pyo.ConcreteModel):
                 expr = pyo.Constraint.Skip
             return expr
 
-        self.cMaxFlowAc = pyo.Constraint(self.s_branch_ac, rule=maxflowAc_rule)
-        self.cMaxFlowDc = pyo.Constraint(self.s_branch_dc, rule=maxflowDc_rule)
+        self.model.cMaxFlowAc = pyo.Constraint(self.model.s_branch_ac, rule=maxflowAc_rule)
+        self.model.cMaxFlowDc = pyo.Constraint(self.model.s_branch_dc, rule=maxflowDc_rule)
 
     def _create_constraint_inter_area_ntc(self, grid_data):
         """Constraint: Directional NTC limits between areas.
@@ -737,7 +842,7 @@ class LpProblem(pyo.ConcreteModel):
         if self._inter_area_ntc is None or self._inter_area_ntc.shape[0] == 0:
             return
 
-        self.s_inter_area_ntc = pyo.RangeSet(0, len(self._inter_area_ntc) - 1)
+        self.model.s_inter_area_ntc = pyo.RangeSet(0, len(self._inter_area_ntc) - 1)
         self._inter_area_ntc_rows = {}
 
         for cidx, (_, row) in enumerate(self._inter_area_ntc.iterrows()):
@@ -789,8 +894,8 @@ class LpProblem(pyo.ConcreteModel):
             )
             return net_transfer >= -cap
 
-        self.cInterAreaNtcForward = pyo.Constraint(self.s_inter_area_ntc, rule=ntc_forward_rule)
-        self.cInterAreaNtcBackward = pyo.Constraint(self.s_inter_area_ntc, rule=ntc_backward_rule)
+        self.model.cInterAreaNtcForward = pyo.Constraint(self.model.s_inter_area_ntc, rule=ntc_forward_rule)
+        self.model.cInterAreaNtcBackward = pyo.Constraint(self.model.s_inter_area_ntc, rule=ntc_backward_rule)
 
     def _powerloss_rules1(self, grid_data, penalty_twoway_flow=0):
         """Power loss proportional to flow, proportionality factor given by previous timestep
@@ -798,7 +903,7 @@ class LpProblem(pyo.ConcreteModel):
         P_loss = alpha P
         alpha = P_loss0/P0 (straight line from origo to operating point)
                 r_pu = self._grid.dcbranch.loc[b, "resistance"]
-                p_pu = self.varDcBranchFlow[b] / const.baseMVA
+                p_pu = self.model.varDcBranchFlow[b] / const.baseMVA
                 loss_pu = r_pu * p_pu**2
                 lossMVA = loss_pu * const.baseMVA * dclossmultiplier
 
@@ -821,7 +926,7 @@ class LpProblem(pyo.ConcreteModel):
                 expr = model.varLossAc12[j] == alpha * model.varAcBranchFlow12[j]
                 return expr
 
-            self.cLossAc12 = pyo.Constraint(self.s_branch_ac, rule=rule)
+            self.model.cLossAc12 = pyo.Constraint(self.model.s_branch_ac, rule=rule)
 
         def make_lossAc_rule21(br):
             def rule(model, j):
@@ -830,7 +935,7 @@ class LpProblem(pyo.ConcreteModel):
                 expr = model.varLossAc21[j] == alpha * model.varAcBranchFlow21[j]
                 return expr
 
-            self.cLossAc21 = pyo.Constraint(self.s_branch_ac, rule=rule)
+            self.model.cLossAc21 = pyo.Constraint(self.model.s_branch_ac, rule=rule)
 
         def make_lossDc_rule12(br):
             def rule(model, j):
@@ -839,7 +944,7 @@ class LpProblem(pyo.ConcreteModel):
                 expr = model.varLossDc12[j] == alpha * model.varDcBranchFlow12[j]
                 return expr
 
-            self.cLossDc12 = pyo.Constraint(self.s_branch_dc, rule=rule)
+            self.model.cLossDc12 = pyo.Constraint(self.model.s_branch_dc, rule=rule)
 
         def make_lossDc_rule21(br):
             def rule(model, j):
@@ -848,7 +953,7 @@ class LpProblem(pyo.ConcreteModel):
                 expr = model.varLossDc21[j] == alpha * model.varDcBranchFlow21[j]
                 return expr
 
-            self.cLossDc21 = pyo.Constraint(self.s_branch_dc, rule=rule)
+            self.model.cLossDc21 = pyo.Constraint(self.model.s_branch_dc, rule=rule)
 
         make_lossAc_rule12(grid_data.branch)
         make_lossAc_rule21(grid_data.branch)
@@ -860,8 +965,8 @@ class LpProblem(pyo.ConcreteModel):
         # REF: Issue https://github.com/powergama/powergama/issues/29
         if penalty_twoway_flow > 0:
             print("Adding a cost to penalise simultaneous branch flow in both directions - ")
-            self.OBJ.expr += penalty_twoway_flow * sum(
-                self.varAcBranchFlow12[i] + self.varAcBranchFlow21[i] for i in self.s_branch_ac
+            self.model.OBJ.expr += penalty_twoway_flow * sum(
+                self.model.varAcBranchFlow12[i] + self.model.varAcBranchFlow21[i] for i in self.model.s_branch_ac
             )
 
     def _create_constraint_powerloss(self, grid_data, penalty_twoway_flow=0):
@@ -876,8 +981,8 @@ class LpProblem(pyo.ConcreteModel):
                 expr = model.varDcBranchFlow[j] == model.varDcBranchFlow12[j] - model.varDcBranchFlow21[j]
                 return expr
 
-            self.cFlowAc = pyo.Constraint(self.s_branch_ac, rule=flowAc_rule)
-            self.cFlowDc = pyo.Constraint(self.s_branch_dc, rule=flowDc_rule)
+            self.model.cFlowAc = pyo.Constraint(self.model.s_branch_ac, rule=flowAc_rule)
+            self.model.cFlowDc = pyo.Constraint(self.model.s_branch_dc, rule=flowDc_rule)
 
         # 1b Losses vs flow
         if self._lossmethod == 1:
@@ -900,8 +1005,8 @@ class LpProblem(pyo.ConcreteModel):
         def genMinLimit_rule(model, i):
             return model.varGeneration[i] >= model.p_gen_pmin[i]
 
-        self.cGenMaxLimit = pyo.Constraint(self.s_gen, rule=genMaxLimit_rule)
-        self.cGenMinLimit = pyo.Constraint(self.s_gen, rule=genMinLimit_rule)
+        self.model.cGenMaxLimit = pyo.Constraint(self.model.s_gen, rule=genMaxLimit_rule)
+        self.model.cGenMinLimit = pyo.Constraint(self.model.s_gen, rule=genMinLimit_rule)
 
     def _create_constraint_rt_target_tracking(self):
         """Constraint: RT DA target dispatch deviation accounting."""
@@ -916,7 +1021,7 @@ class LpProblem(pyo.ConcreteModel):
                 model.varGeneration[i] - model.p_rt_target[i] == model.varRtTargetDevPos[i] - model.varRtTargetDevNeg[i]
             )
 
-        self.cRtTargetTracking = pyo.Constraint(self.s_gen, rule=rt_target_rule)
+        self.model.cRtTargetTracking = pyo.Constraint(self.model.s_gen, rule=rt_target_rule)
 
     def _create_constraint_rt_flexload_target_tracking(self):
         """Constraint: RT DA flexible load (consumer) target deviation accounting.
@@ -935,7 +1040,7 @@ class LpProblem(pyo.ConcreteModel):
                 == model.varRtFlexLoadTargetDevPos[j] - model.varRtFlexLoadTargetDevNeg[j]
             )
 
-        self.cRtFlexLoadTargetTracking = pyo.Constraint(self.s_load_flex, rule=rt_flexload_target_rule)
+        self.model.cRtFlexLoadTargetTracking = pyo.Constraint(self.model.s_load_flex, rule=rt_flexload_target_rule)
 
     def _create_constraint_rt_storage_target_tracking(self):
         """Constraint: RT DA storage filling trajectory deviation accounting."""
@@ -955,7 +1060,7 @@ class LpProblem(pyo.ConcreteModel):
                 == model.varRtStorageTargetDevPos[i] - model.varRtStorageTargetDevNeg[i]
             )
 
-        self.cRtStorageTargetTracking = pyo.Constraint(self.s_gen_storage, rule=rt_storage_target_rule)
+        self.model.cRtStorageTargetTracking = pyo.Constraint(self.model.s_gen_storage, rule=rt_storage_target_rule)
 
     def _create_constraint_rt_io_target_tracking(self):
         """Constraint: DA BE border flow target deviation accounting for AC/DC branches."""
@@ -979,8 +1084,8 @@ class LpProblem(pyo.ConcreteModel):
                 == model.varRtIoTargetDevPosDc[b] - model.varRtIoTargetDevNegDc[b]
             )
 
-        self.cRtIoTargetTrackingAc = pyo.Constraint(self.s_branch_ac, rule=_ac_rule)
-        self.cRtIoTargetTrackingDc = pyo.Constraint(self.s_branch_dc, rule=_dc_rule)
+        self.model.cRtIoTargetTrackingAc = pyo.Constraint(self.model.s_branch_ac, rule=_ac_rule)
+        self.model.cRtIoTargetTrackingDc = pyo.Constraint(self.model.s_branch_dc, rule=_dc_rule)
 
     def _create_constraint_generator_pump(self, grid_data):
         """Constraint: Pump output limit (respects both hardware cap and remaining reservoir space)."""
@@ -989,7 +1094,7 @@ class LpProblem(pyo.ConcreteModel):
             expr = model.varPump[g] <= model.p_pump_pmax[g]
             return expr
 
-        self.cPump = pyo.Constraint(self.s_gen_pump, rule=pump_rule)
+        self.model.cPump = pyo.Constraint(self.model.s_gen_pump, rule=pump_rule)
 
     def _create_constraint_load_flex(self, grid_data):
         """Constraint: Flexible load limit"""
@@ -1003,7 +1108,7 @@ class LpProblem(pyo.ConcreteModel):
             expr = model.varFlexLoad[i] <= flexLoadMax
             return expr
 
-        self.cFlexload = pyo.Constraint(self.s_load_flex, rule=flexload_rule)
+        self.model.cFlexload = pyo.Constraint(self.model.s_load_flex, rule=flexload_rule)
 
     def _create_constraint_powerbalance(self, grid_data):
         """ConstraintPower balance (power flow equation)  (Pnode = B theta)"""
@@ -1062,7 +1167,7 @@ class LpProblem(pyo.ConcreteModel):
                 expr = pyo.Constraint.Skip
             return expr
 
-        self.cPowerbalance = pyo.Constraint(self.s_node, rule=powerbalance_rule)
+        self.model.cPowerbalance = pyo.Constraint(self.model.s_node, rule=powerbalance_rule)
 
     def _create_constraint_powerflow_equation(self, grid_data):
         """Constraint: Power balance (power flow vs voltage angle)"""
@@ -1070,8 +1175,8 @@ class LpProblem(pyo.ConcreteModel):
         # map them once here instead of inside the rule: the branch lookup was a linear
         # scan per branch, and the node lookup rebuilt the entire node list for every
         # non-zero of every row.
-        node_list = list(self.s_node)
-        branch_position = {b: i for i, b in enumerate(self.s_branch_ac)}
+        node_list = list(self.model.s_node)
+        branch_position = {b: i for i, b in enumerate(self.model.s_branch_ac)}
 
         # 1.
         def flowangle_rule(model, b):
@@ -1085,7 +1190,7 @@ class LpProblem(pyo.ConcreteModel):
             expr = lhs == rhs
             return expr
 
-        self.cFlowAngle = pyo.Constraint(self.s_branch_ac, rule=flowangle_rule)
+        self.model.cFlowAngle = pyo.Constraint(self.model.s_branch_ac, rule=flowangle_rule)
 
         # 2. Reference voltag angle)
         def referenceNode_rule(model, n):
@@ -1095,7 +1200,7 @@ class LpProblem(pyo.ConcreteModel):
                 expr = pyo.Constraint.Skip
             return expr
 
-        self.cReferenceNode = pyo.Constraint(self.s_node, rule=referenceNode_rule)
+        self.model.cReferenceNode = pyo.Constraint(self.model.s_node, rule=referenceNode_rule)
 
     def _create_objective(self, grid_data):
         """Create pyomo model objective function"""
@@ -1151,7 +1256,7 @@ class LpProblem(pyo.ConcreteModel):
                     )
             return cost
 
-        self.OBJ = pyo.Objective(rule=cost_rule, sense=pyo.minimize)
+        self.model.OBJ = pyo.Objective(rule=cost_rule, sense=pyo.minimize)
 
     def _get_powerbalance_rhs(self):
         """Get rhs expression in powerbalance constraint"""
@@ -1159,14 +1264,14 @@ class LpProblem(pyo.ConcreteModel):
         # Node ids are strings but Bbus needs matrix indices, so materialise the ordered set
         # once: looking a node's position up per node was O(n^2), and rebuilding the whole
         # list again for every non-zero in its row made that O(n^2) per node.
-        node_list = list(self.s_node)
+        node_list = list(self.model.s_node)
         rhs = dict()
         for idx_node, n in enumerate(node_list):
             rhs[n] = 0
             row = self._Bbus[idx_node]
             for i in range(len(row.indices)):
                 n2 = node_list[row.indices[i]]
-                rhs[n] -= row.data[i] * self.varVoltageAngle[n2] * const.baseAngle
+                rhs[n] -= row.data[i] * self.model.varVoltageAngle[n2] * const.baseAngle
         return rhs
 
     def _get_timesteps_to_solve(self, continue_from_last=False, results=None):
@@ -1219,8 +1324,8 @@ class LpProblem(pyo.ConcreteModel):
         H = len(day_timesteps)
         grid = self._grid
         dt = float(self.timeDelta)
-        node_list = list(self.s_node)
-        branch_ac_list = list(self.s_branch_ac)
+        node_list = list(self.model.s_node)
+        branch_ac_list = list(self.model.s_branch_ac)
         # Positions for the Bbus and DA rows, mapped once rather than scanned per rule
         # call -- the rules below run once per (entity, hour), so a linear scan there is
         # quadratic in the entity count and linear again in the horizon.
@@ -1281,9 +1386,9 @@ class LpProblem(pyo.ConcreteModel):
             )
 
         # Non-storage generators: fuelcost is constant within the day.
-        for i in self.s_gen:
+        for i in self.model.s_gen:
             if i not in gen_storage_set:
-                base_cost = float(pyo.value(self.p_gen_cost[i]))
+                base_cost = float(pyo.value(self.model.p_gen_cost[i]))
                 for hi in range(H):
                     gen_cost_h[(hi, i)] = base_cost
 
@@ -1295,7 +1400,7 @@ class LpProblem(pyo.ConcreteModel):
         pmin_h: dict = {}  # (hi, i) → pmin lower bound
 
         for hi, ts in enumerate(day_timesteps):
-            for i in self.s_gen:
+            for i in self.model.s_gen:
                 inflow_fac = float(grid.generator.loc[i, "inflow_fac"])
                 inflow_ref = grid.generator.loc[i, "inflow_ref"]
                 pmax_fac = 1.0
@@ -1317,7 +1422,7 @@ class LpProblem(pyo.ConcreteModel):
         # ── pre-compute demand per (hour, consumer) ───────────────────
         demand_h: dict = {}
         for hi, ts in enumerate(day_timesteps):
-            for j in self.s_load:
+            for j in self.model.s_load:
                 avg = float(grid.consumer.loc[j, "demand_avg"]) * (1 - float(grid.consumer.loc[j, "flex_fraction"]))
                 prof = grid.consumer.loc[j, "demand_ref"]
                 d_now = float(grid.profiles.loc[ts, prof]) * avg
@@ -1364,7 +1469,7 @@ class LpProblem(pyo.ConcreteModel):
         dc_lb: dict = {}
         dc_ub: dict = {}
         for hi, ts in enumerate(day_timesteps):
-            for b in self.s_branch_ac:
+            for b in self.model.s_branch_ac:
                 key = (int(ts), int(b))
                 if (
                     self._border_ac_flow_lb is not None
@@ -1379,7 +1484,7 @@ class LpProblem(pyo.ConcreteModel):
                     lo, hi_ = self._default_ac_flow_bounds.get(int(b), (None, None))
                     ac_lb[(hi, b)] = lo
                     ac_ub[(hi, b)] = hi_
-            for b in self.s_branch_dc:
+            for b in self.model.s_branch_dc:
                 key = (int(ts), int(b))
                 if (
                     self._border_dc_flow_lb is not None
@@ -1399,7 +1504,7 @@ class LpProblem(pyo.ConcreteModel):
         foreign_lock: dict = {}  # (hi, i) → fixed MW or None
         if self._foreign_gen_lock is not None:
             for hi, ts in enumerate(day_timesteps):
-                for i in self.s_gen:
+                for i in self.model.s_gen:
                     key = (int(ts), int(i))
                     if key in self._foreign_gen_lock.index:
                         v = float(self._foreign_gen_lock.loc[key])
@@ -1408,13 +1513,13 @@ class LpProblem(pyo.ConcreteModel):
 
         # ── build Pyomo model ─────────────────────────────────────────
         m = pyo.ConcreteModel()
-        m.s_gen = pyo.Set(ordered=True, initialize=list(self.s_gen))
-        m.s_gen_pump = pyo.Set(ordered=True, initialize=list(self.s_gen_pump))
+        m.s_gen = pyo.Set(ordered=True, initialize=list(self.model.s_gen))
+        m.s_gen_pump = pyo.Set(ordered=True, initialize=list(self.model.s_gen_pump))
         m.s_gen_storage = pyo.Set(ordered=True, initialize=list(self._idx_generatorsWithStorage))
-        m.s_load = pyo.Set(ordered=True, initialize=list(self.s_load))
+        m.s_load = pyo.Set(ordered=True, initialize=list(self.model.s_load))
         m.s_load_flex = pyo.Set(ordered=True, initialize=list(self._idx_consumersWithFlexLoad))
-        m.s_branch_ac = pyo.Set(ordered=True, initialize=list(self.s_branch_ac))
-        m.s_branch_dc = pyo.Set(ordered=True, initialize=list(self.s_branch_dc))
+        m.s_branch_ac = pyo.Set(ordered=True, initialize=list(self.model.s_branch_ac))
+        m.s_branch_dc = pyo.Set(ordered=True, initialize=list(self.model.s_branch_dc))
         m.s_node = pyo.Set(ordered=True, initialize=node_list)
         m.s_h = pyo.RangeSet(0, H - 1)
 
@@ -1779,12 +1884,12 @@ class LpProblem(pyo.ConcreteModel):
         # gen_pump_set = pre_data["gen_pump_set"]
         # flex_set = pre_data["flex_set"]
         node_list = pre_data["node_list"]
-        gen_list = list(self.s_gen)
-        gen_pump_list = list(self.s_gen_pump)
+        gen_list = list(self.model.s_gen)
+        gen_pump_list = list(self.model.s_gen_pump)
         storage_gen_list = list(self._idx_generatorsWithStorage)
         flex_list = list(self._idx_consumersWithFlexLoad)
-        branch_ac_list = list(self.s_branch_ac)
-        branch_dc_list = list(self.s_branch_dc)
+        branch_ac_list = list(self.model.s_branch_ac)
+        branch_dc_list = list(self.model.s_branch_dc)
         # Spill is reported against the full generator list, so storage generators need
         # their position in it. Mapped once instead of scanned inside the hour loop.
         gen_position = {i: gi for gi, i in enumerate(gen_list)}
@@ -1800,8 +1905,12 @@ class LpProblem(pyo.ConcreteModel):
             theta = [float(pyo.value(m.varVoltageAngle[n, hi]) or 0.0) * const.baseAngle for n in node_list]
 
             # Load shedding aggregated to nodes
-            Ploadshed = aggregate_to_nodes(grid, self.s_load, lambda j: float(pyo.value(m.varLoadShed[j, hi]) or 0.0))
-            Pdumpload = aggregate_to_nodes(grid, self.s_load, lambda j: float(pyo.value(m.varDumpLoad[j, hi]) or 0.0))
+            Ploadshed = aggregate_to_nodes(
+                grid, self.model.s_load, lambda j: float(pyo.value(m.varLoadShed[j, hi]) or 0.0)
+            )
+            Pdumpload = aggregate_to_nodes(
+                grid, self.model.s_load, lambda j: float(pyo.value(m.varDumpLoad[j, hi]) or 0.0)
+            )
 
             # Per-hour objective (cost for this timestep only)
             obj_h = (
@@ -1814,8 +1923,8 @@ class LpProblem(pyo.ConcreteModel):
                     Pflexload[fi] * pre_data["flexload_cost_h"].get((hi, flex_list[fi]), 0.0)
                     for fi in range(len(flex_list))
                 )
-                + sum(float(pyo.value(m.varLoadShed[j, hi]) or 0.0) * const.loadshedcost for j in self.s_load)
-                + sum(float(pyo.value(m.varDumpLoad[j, hi]) or 0.0) * const.loadshedcost for j in self.s_load)
+                + sum(float(pyo.value(m.varLoadShed[j, hi]) or 0.0) * const.loadshedcost for j in self.model.s_load)
+                + sum(float(pyo.value(m.varDumpLoad[j, hi]) or 0.0) * const.loadshedcost for j in self.model.s_load)
             )
 
             # Storage levels and spilled energy
@@ -1999,7 +2108,7 @@ class LpProblem(pyo.ConcreteModel):
         P_storage = self._storage / self.timeDelta
         P_max = self._grid.generator["pmax"]
         P_min = self._grid.generator["pmin"]
-        for i in self.s_gen:
+        for i in self.model.s_gen:
             inflow_factor = self._grid.generator.loc[i, "inflow_fac"]
             inflow_profile = self._grid.generator.loc[i, "inflow_ref"]
 
@@ -2024,12 +2133,12 @@ class LpProblem(pyo.ConcreteModel):
                 This won't affect fuel based generators with zero storage,
                 since these should have inflow=p_max in any case
                 """
-                self.p_gen_pmin[i] = max(min(P_inflow, pmin_now), 0)
-                self.p_gen_pmax[i] = P_inflow
+                self.model.p_gen_pmin[i] = max(min(P_inflow, pmin_now), 0)
+                self.model.p_gen_pmax[i] = P_inflow
             else:
                 # generator has storage
-                self.p_gen_pmin[i] = max(min(max(0, P_inflow + P_storage[i]), pmin_now), 0)
-                self.p_gen_pmax[i] = min(max(0, P_inflow + P_storage[i]), capacity_now)
+                self.model.p_gen_pmin[i] = max(min(max(0, P_inflow + P_storage[i]), pmin_now), 0)
+                self.model.p_gen_pmax[i] = min(max(0, P_inflow + P_storage[i]), capacity_now)
 
             # Optional hard lock of foreign generators to DA output (sparse parquet lock table).
             if self._foreign_gen_lock is not None:
@@ -2039,52 +2148,54 @@ class LpProblem(pyo.ConcreteModel):
                     if not np.isfinite(da_output):
                         da_output = 0.0
                     da_output = max(0.0, da_output)
-                    self.p_gen_pmin[i] = da_output
-                    self.p_gen_pmax[i] = da_output
+                    self.model.p_gen_pmin[i] = da_output
+                    self.model.p_gen_pmax[i] = da_output
 
             if self._rt_target_ref is not None:
                 rt_ref = self._rt_target_ref.iloc[i]
                 if isinstance(rt_ref, str) and rt_ref in self._grid.profiles.columns:
-                    self.p_rt_target_active[i] = 1
-                    self.p_rt_target[i] = max(0.0, float(P_max[i]) * float(self._grid.profiles.loc[timestep, rt_ref]))
+                    self.model.p_rt_target_active[i] = 1
+                    self.model.p_rt_target[i] = max(
+                        0.0, float(P_max[i]) * float(self._grid.profiles.loc[timestep, rt_ref])
+                    )
                 else:
-                    self.p_rt_target_active[i] = 0
-                    self.p_rt_target[i] = 0.0
+                    self.model.p_rt_target_active[i] = 0
+                    self.model.p_rt_target[i] = 0.0
             else:
-                self.p_rt_target_active[i] = 0
-                self.p_rt_target[i] = 0.0
+                self.model.p_rt_target_active[i] = 0
+                self.model.p_rt_target[i] = 0.0
 
         # 1b. Apply ramp-rate limits (PU of installed capacity) around previous dispatch.
         # Update consumer (flexible load) DA targets for DA-target deviation penalties
         if self._rt_consumer_target_ref is not None and self._rt_consumer_target_indices:
-            for j in self.s_load_flex:
+            for j in self.model.s_load_flex:
                 rt_cons_ref = self._rt_consumer_target_ref.iloc[int(j)]
                 if isinstance(rt_cons_ref, str) and rt_cons_ref in self._grid.profiles.columns:
-                    self.p_rt_flexload_target_active[j] = 1
+                    self.model.p_rt_flexload_target_active[j] = 1
                     demand_avg = float(self._grid.consumer.loc[j, "demand_avg"])
-                    self.p_rt_flexload_target[j] = max(
+                    self.model.p_rt_flexload_target[j] = max(
                         0.0, demand_avg * float(self._grid.profiles.loc[timestep, rt_cons_ref])
                     )
                 else:
-                    self.p_rt_flexload_target_active[j] = 0
-                    self.p_rt_flexload_target[j] = 0.0
+                    self.model.p_rt_flexload_target_active[j] = 0
+                    self.model.p_rt_flexload_target[j] = 0.0
 
         # Update storage DA filling targets and one-step storage balance RHS.
         if self._rt_storage_target_ref is not None and self._rt_storage_target_indices:
-            for i in self.s_gen_storage:
+            for i in self.model.s_gen_storage:
                 inflow_factor = self._grid.generator.loc[i, "inflow_fac"]
                 inflow_profile = self._grid.generator.loc[i, "inflow_ref"]
                 capacity = self._grid.generator.loc[i, "pmax"]
                 gen_inflow = capacity * inflow_factor * self._grid.profiles[inflow_profile][timestep]
-                self.p_rt_storage_balance_rhs[i] = max(0.0, float(self._storage[i] + gen_inflow * self.timeDelta))
+                self.model.p_rt_storage_balance_rhs[i] = max(0.0, float(self._storage[i] + gen_inflow * self.timeDelta))
 
                 rt_storage_ref = self._rt_storage_target_ref.iloc[int(i)]
                 if isinstance(rt_storage_ref, str) and rt_storage_ref in self._grid.profiles.columns:
                     storage_cap = float(self._grid.generator.loc[i, "storage_cap"])
                     target_frac = float(self._grid.profiles.loc[timestep, rt_storage_ref])
-                    self.p_rt_storage_target[i] = max(0.0, storage_cap * max(0.0, min(1.0, target_frac)))
+                    self.model.p_rt_storage_target[i] = max(0.0, storage_cap * max(0.0, min(1.0, target_frac)))
                 else:
-                    self.p_rt_storage_target[i] = 0.0
+                    self.model.p_rt_storage_target[i] = 0.0
 
         # 1b. Apply ramp-rate limits around previous-timestep dispatch,
         #     with delta caps scaled by installed capacity (ramp_pu * pmax_installed).
@@ -2092,13 +2203,13 @@ class LpProblem(pyo.ConcreteModel):
         # Daily-reset generators have their _gen_prev cleared at the start of each 24-hour window,
         # so they are free to choose a new level at midnight while staying fixed intra-day.
         if self._ramp_daily_reset is not None and timestep % 24 == 0:
-            for i in self.s_gen:
+            for i in self.model.s_gen:
                 if self._disable_nuclear_ramp_profile_conflict[int(i)]:
                     continue
                 if self._ramp_daily_reset[i]:
                     self._gen_prev[i] = np.nan
         if self._ramp_up_pu is not None or self._ramp_down_pu is not None:
-            for i in self.s_gen:
+            for i in self.model.s_gen:
                 if self._disable_nuclear_ramp_profile_conflict[int(i)]:
                     continue
                 prev = self._gen_prev[i]
@@ -2106,8 +2217,8 @@ class LpProblem(pyo.ConcreteModel):
                     continue  # first timestep: no ramp constraint
                 ramp_up = self._ramp_up_pu[i] if self._ramp_up_pu is not None else np.nan
                 ramp_dn = self._ramp_down_pu[i] if self._ramp_down_pu is not None else np.nan
-                pmax_now = pyo.value(self.p_gen_pmax[i])
-                pmin_now = pyo.value(self.p_gen_pmin[i])
+                pmax_now = pyo.value(self.model.p_gen_pmax[i])
+                pmin_now = pyo.value(self.model.p_gen_pmin[i])
                 # In RT, skip ramp constraints for fully pinned generators (pmin ≈ pmax),
                 # e.g. nuclear and DA-locked gas. The profile lock already uniquely defines
                 # the feasible output; applying the ramp on top clips pmax below pmin and
@@ -2121,14 +2232,14 @@ class LpProblem(pyo.ConcreteModel):
                     pmin_now = max(pmin_now, prev - float(ramp_dn) * float(self._ramp_cap_mw[i]))
                 # Guard: pmin must not exceed pmax after ramp clipping
                 pmin_now = min(pmin_now, pmax_now)
-                self.p_gen_pmax[i] = max(pmax_now, 0)
-                self.p_gen_pmin[i] = max(pmin_now, 0)
+                self.model.p_gen_pmax[i] = max(pmax_now, 0)
+                self.model.p_gen_pmin[i] = max(pmin_now, 0)
 
         # TODO: re-create constraint - if persistent solver
 
         # 2. Update demand
         #    -> power balance constraint
-        for i in self.s_load:
+        for i in self.model.s_load:
             average = self._grid.consumer.loc[i, "demand_avg"] * (1 - self._grid.consumer.loc[i, "flex_fraction"])
             profile_ref = self._grid.consumer.loc[i, "demand_ref"]
             demand_now = self._grid.profiles.loc[timestep, profile_ref] * average
@@ -2139,7 +2250,7 @@ class LpProblem(pyo.ConcreteModel):
                     locked_demand = float(self._foreign_cons_lock.loc[key])
                     if np.isfinite(locked_demand):
                         demand_now = locked_demand
-            self.p_demand[i] = demand_now
+            self.model.p_demand[i] = demand_now
 
         # 3. Cost parameters
         #    -> update objective function
@@ -2154,7 +2265,7 @@ class LpProblem(pyo.ConcreteModel):
         for i in self._idx_generatorsWithPumping:
             remaining_mwh = max(0.0, storage_cap[i] - self._storage[i])
             max_pump_by_room = remaining_mwh / (pump_eff[i] * self.timeDelta) if pump_eff[i] > 0 else 0.0
-            self.p_pump_pmax[i] = min(pump_cap_raw[i], max_pump_by_room)
+            self.model.p_pump_pmax[i] = min(pump_cap_raw[i], max_pump_by_room)
 
         # 3a. generators with storage (storage value)
         for i in self._idx_generatorsWithStorage:
@@ -2168,14 +2279,14 @@ class LpProblem(pyo.ConcreteModel):
                 * self._grid.storagevalue_filling.loc[filling_col, this_type_filling]
                 * self._grid.storagevalue_time.loc[timestep, this_type_time]
             )
-            self.p_gen_cost[i] = storagevalue
+            self.model.p_gen_cost[i] = storagevalue
             if i in self._idx_generatorsWithPumping:
                 deadband = self._grid.generator.pump_deadband[i]
-                self.p_genpump_cost[i] = storagevalue - deadband
+                self.model.p_genpump_cost[i] = storagevalue - deadband
 
         # 3b. flexible load (storage value)
         for i in self._idx_consumersWithFlexLoad:
-            self.p_loadflex_cost[i] = self._flexload_storage_value(i, self._storage_flexload[i], timestep)
+            self.model.p_loadflex_cost[i] = self._flexload_storage_value(i, self._storage_flexload[i], timestep)
 
         # In deviation objective mode, all generation technologies use the same
         # RT-local deviation pricing scheme (no DA-price coupling):
@@ -2202,9 +2313,9 @@ class LpProblem(pyo.ConcreteModel):
                 return float(p_pos) + add, float(p_neg)
             return float(p_pos), float(p_neg) + add
 
-        for i in self.s_gen:
+        for i in self.model.s_gen:
             if int(i) in self._rt_target_gen_indices:
-                _gen_cost = float(pyo.value(self.p_gen_cost[i]))
+                _gen_cost = float(pyo.value(self.model.p_gen_cost[i]))
                 _is_res = (
                     int(i) in self._idx_rt_wind or int(i) in self._idx_rt_solar or int(i) in self._idx_rt_hydro_ror
                 )
@@ -2220,62 +2331,62 @@ class LpProblem(pyo.ConcreteModel):
                     _dev_price_pos = _fee + _gen_cost
                     _dev_price_neg = _fee - _gen_cost
                 _dev_price_pos, _dev_price_neg = _enforce_split_sum_guard(_dev_price_pos, _dev_price_neg)
-                self.p_rt_deviation_price_gen_pos[i] = _dev_price_pos
-                self.p_rt_deviation_price_gen_neg[i] = _dev_price_neg
-                self.p_rt_deviation_price_gen[i] = max(_dev_price_pos, _dev_price_neg)
+                self.model.p_rt_deviation_price_gen_pos[i] = _dev_price_pos
+                self.model.p_rt_deviation_price_gen_neg[i] = _dev_price_neg
+                self.model.p_rt_deviation_price_gen[i] = max(_dev_price_pos, _dev_price_neg)
             else:
-                self.p_rt_deviation_price_gen[i] = 0.0
-                self.p_rt_deviation_price_gen_pos[i] = 0.0
-                self.p_rt_deviation_price_gen_neg[i] = 0.0
-        for i in self.s_load_flex:
+                self.model.p_rt_deviation_price_gen[i] = 0.0
+                self.model.p_rt_deviation_price_gen_pos[i] = 0.0
+                self.model.p_rt_deviation_price_gen_neg[i] = 0.0
+        for i in self.model.s_load_flex:
             if int(i) in self._rt_consumer_target_indices:
                 # Flex load / load-shedding: c+ = c0 + c_flex, c- = c0 - c_flex
-                _flex_cost = float(pyo.value(self.p_loadflex_cost[i]))
+                _flex_cost = float(pyo.value(self.model.p_loadflex_cost[i]))
                 _c_flex_pos = _fee + _flex_cost
                 _c_flex_neg = _fee - _flex_cost
                 _c_flex_pos, _c_flex_neg = _enforce_split_sum_guard(_c_flex_pos, _c_flex_neg)
-                self.p_rt_deviation_price_flex_pos[i] = _c_flex_pos
-                self.p_rt_deviation_price_flex_neg[i] = _c_flex_neg
-                self.p_rt_deviation_price_flex[i] = 0.5 * (_c_flex_pos + _c_flex_neg)
+                self.model.p_rt_deviation_price_flex_pos[i] = _c_flex_pos
+                self.model.p_rt_deviation_price_flex_neg[i] = _c_flex_neg
+                self.model.p_rt_deviation_price_flex[i] = 0.5 * (_c_flex_pos + _c_flex_neg)
             else:
-                self.p_rt_deviation_price_flex[i] = 0.0
-                self.p_rt_deviation_price_flex_pos[i] = 0.0
-                self.p_rt_deviation_price_flex_neg[i] = 0.0
-        for i in self.s_gen_storage:
+                self.model.p_rt_deviation_price_flex[i] = 0.0
+                self.model.p_rt_deviation_price_flex_pos[i] = 0.0
+                self.model.p_rt_deviation_price_flex_neg[i] = 0.0
+        for i in self.model.s_gen_storage:
             if int(i) in self._rt_storage_target_indices:
                 # Storage DA-marginal pricing: c+ = c0 + c_DA, c- = c0 - c_DA
                 # c_DA is the DA marginal storage value (from da_storage_marginalprice parquet),
                 # falling back to current storagevalue (p_gen_cost[i]) if not available.
                 _c_da_storage = self._da_storage_marginalprice.get((int(timestep), int(i)), None)
                 if _c_da_storage is None:
-                    _c_da_storage = float(pyo.value(self.p_gen_cost[i]))
+                    _c_da_storage = float(pyo.value(self.model.p_gen_cost[i]))
                 else:
                     _c_da_storage = float(_c_da_storage)
                 c_pos = _fee + _c_da_storage
                 c_neg = _fee - _c_da_storage
                 c_pos, c_neg = _enforce_split_sum_guard(c_pos, c_neg)
-                self.p_rt_deviation_price_storage_pos[i] = c_pos
-                self.p_rt_deviation_price_storage_neg[i] = c_neg
-                self.p_rt_deviation_price_storage[i] = 0.5 * (c_pos + c_neg)
+                self.model.p_rt_deviation_price_storage_pos[i] = c_pos
+                self.model.p_rt_deviation_price_storage_neg[i] = c_neg
+                self.model.p_rt_deviation_price_storage[i] = 0.5 * (c_pos + c_neg)
             else:
-                self.p_rt_deviation_price_storage[i] = 0.0
-                self.p_rt_deviation_price_storage_pos[i] = 0.0
-                self.p_rt_deviation_price_storage_neg[i] = 0.0
+                self.model.p_rt_deviation_price_storage[i] = 0.0
+                self.model.p_rt_deviation_price_storage_pos[i] = 0.0
+                self.model.p_rt_deviation_price_storage_neg[i] = 0.0
 
         # 4. Optional hard lock of BE cross-border branch flows to DA values
-        for b in self.s_branch_ac:
+        for b in self.model.s_branch_ac:
             key = (int(timestep), int(b))
             if self._border_ac_flow_lock is not None and key in self._border_ac_flow_lock.index:
                 da_flow = float(self._border_ac_flow_lock.loc[key])
                 if np.isfinite(da_flow):
-                    self.p_rt_io_target_ac[b] = da_flow
-                    self.p_rt_io_target_active_ac[b] = 1
+                    self.model.p_rt_io_target_ac[b] = da_flow
+                    self.model.p_rt_io_target_active_ac[b] = 1
                 else:
-                    self.p_rt_io_target_ac[b] = 0.0
-                    self.p_rt_io_target_active_ac[b] = 0
+                    self.model.p_rt_io_target_ac[b] = 0.0
+                    self.model.p_rt_io_target_active_ac[b] = 0
             else:
-                self.p_rt_io_target_ac[b] = 0.0
-                self.p_rt_io_target_active_ac[b] = 0
+                self.model.p_rt_io_target_ac[b] = 0.0
+                self.model.p_rt_io_target_active_ac[b] = 0
             if (
                 self._border_ac_flow_lb is not None
                 and self._border_ac_flow_ub is not None
@@ -2288,26 +2399,26 @@ class LpProblem(pyo.ConcreteModel):
                     lb = None
                 if not np.isfinite(ub):
                     ub = None
-                self.varAcBranchFlow[b].setlb(lb)
-                self.varAcBranchFlow[b].setub(ub)
+                self.model.varAcBranchFlow[b].setlb(lb)
+                self.model.varAcBranchFlow[b].setub(ub)
             else:
                 lb, ub = self._default_ac_flow_bounds.get(int(b), (None, None))
-                self.varAcBranchFlow[b].setlb(lb)
-                self.varAcBranchFlow[b].setub(ub)
+                self.model.varAcBranchFlow[b].setlb(lb)
+                self.model.varAcBranchFlow[b].setub(ub)
 
-        for b in self.s_branch_dc:
+        for b in self.model.s_branch_dc:
             key = (int(timestep), int(b))
             if self._border_dc_flow_lock is not None and key in self._border_dc_flow_lock.index:
                 da_flow = float(self._border_dc_flow_lock.loc[key])
                 if np.isfinite(da_flow):
-                    self.p_rt_io_target_dc[b] = da_flow
-                    self.p_rt_io_target_active_dc[b] = 1
+                    self.model.p_rt_io_target_dc[b] = da_flow
+                    self.model.p_rt_io_target_active_dc[b] = 1
                 else:
-                    self.p_rt_io_target_dc[b] = 0.0
-                    self.p_rt_io_target_active_dc[b] = 0
+                    self.model.p_rt_io_target_dc[b] = 0.0
+                    self.model.p_rt_io_target_active_dc[b] = 0
             else:
-                self.p_rt_io_target_dc[b] = 0.0
-                self.p_rt_io_target_active_dc[b] = 0
+                self.model.p_rt_io_target_dc[b] = 0.0
+                self.model.p_rt_io_target_active_dc[b] = 0
             if (
                 self._border_dc_flow_lb is not None
                 and self._border_dc_flow_ub is not None
@@ -2320,12 +2431,12 @@ class LpProblem(pyo.ConcreteModel):
                     lb = None
                 if not np.isfinite(ub):
                     ub = None
-                self.varDcBranchFlow[b].setlb(lb)
-                self.varDcBranchFlow[b].setub(ub)
+                self.model.varDcBranchFlow[b].setlb(lb)
+                self.model.varDcBranchFlow[b].setub(ub)
             else:
                 lb, ub = self._default_dc_flow_bounds.get(int(b), (None, None))
-                self.varDcBranchFlow[b].setlb(lb)
-                self.varDcBranchFlow[b].setub(ub)
+                self.model.varDcBranchFlow[b].setlb(lb)
+                self.model.varDcBranchFlow[b].setub(ub)
 
         return
 
@@ -2338,7 +2449,7 @@ class LpProblem(pyo.ConcreteModel):
         # to use pwersistent solvers, probably have to set instance at the
         # start, and then modify it in each iteration rather than giving
         # it as an argument to opt.solve:
-        #    opt.set_instance(self.concretemodel)
+        #    opt.set_instance(self.model)
         # and then use opt.solve()
         # To modify e.g. a constraint between solves, remove and add, e.g.:
         #    opt.remove_constraint(m.c)
@@ -2358,37 +2469,37 @@ class LpProblem(pyo.ConcreteModel):
         # 3. p_gen_cost, p_genpump_cost, p_loadflex_cost => OBJ
 
         # 1.
-        for c in self.cGenMaxLimit.values():
+        for c in self.model.cGenMaxLimit.values():
             opt.remove_constraint(c)
-        for c in self.cGenMinLimit.values():
+        for c in self.model.cGenMinLimit.values():
             opt.remove_constraint(c)
-        # del self.cGenMaxLimit
-        # del self.cGenMinLimit
+        # del self.model.cGenMaxLimit
+        # del self.model.cGenMinLimit
         # self._create_constraint_generator_output()
-        for c in self.cGenMaxLimit.values():
+        for c in self.model.cGenMaxLimit.values():
             opt.add_constraint(c)
-        for c in self.cGenMinLimit.values():
+        for c in self.model.cGenMinLimit.values():
             opt.add_constraint(c)
 
         # 2.
-        for c in self.cPowerbalance.values():
+        for c in self.model.cPowerbalance.values():
             opt.remove_constraint(c)
-        # del self.cPowerbalance
+        # del self.model.cPowerbalance
         # self._create_constraint_powerbalance(self._grid)
-        for c in self.cPowerbalance.values():
+        for c in self.model.cPowerbalance.values():
             opt.add_constraint(c)
 
         # 3.
         # no remove_object?
-        # del self.OBJ
+        # del self.model.OBJ
         # self._create_objective(self._grid)
-        opt.set_objective(self.OBJ)
+        opt.set_objective(self.model.OBJ)
 
     # def _compute_transmission_loss(self, branch_flows, aclossmultiplier=1):
     #    """Compute power losses based on power flow"""
-    #    for b in self.s_branch_ac:
+    #    for b in self.model.s_branch_ac:
     #        r = self._grid.branch.loc[b, "resistance"]
-    #        branch_flows = self.p_branch_ac_powerflow[b]
+    #        branch_flows = self.model.p_branch_ac_powerflow[b]
     #        lossMVA = r * branch_flows[b] ** 2 / const.baseMVA
     #        # A multiplication factor to account for reactive current losses
     #        lossMVA = lossMVA * aclossmultiplier
@@ -2397,37 +2508,37 @@ class LpProblem(pyo.ConcreteModel):
         """Compute/update parameters used for transmission loss calculations"""
         if self._lossmethod == 1:
             # store power flows for next timestep (used for loss calculation)
-            for b in self.s_branch_ac:
+            for b in self.model.s_branch_ac:
                 # Github issue https://github.com/powergama/powergama/issues/29
                 # write it in terms of varAcBranchFlow and not varBranchFlow12 because
                 # under certain circumstances, varAcBranchFlow12 and varAcBranchFlow21
                 # may both be large (if high loss is beneficial) since there is no constraint
                 # forbidding simultaneous flow in both direction (only an indirect cost
                 # via generation costs)
-                if self.varAcBranchFlow[b].value > 0:
-                    self.p_branch_ac_powerflow12[b] = self.varAcBranchFlow[b].value
-                    self.p_branch_ac_powerflow21[b] = 0
+                if self.model.varAcBranchFlow[b].value > 0:
+                    self.model.p_branch_ac_powerflow12[b] = self.model.varAcBranchFlow[b].value
+                    self.model.p_branch_ac_powerflow21[b] = 0
                 else:
-                    self.p_branch_ac_powerflow12[b] = 0
-                    self.p_branch_ac_powerflow21[b] = -self.varAcBranchFlow[b].value
-            for b in self.s_branch_dc:
+                    self.model.p_branch_ac_powerflow12[b] = 0
+                    self.model.p_branch_ac_powerflow21[b] = -self.model.varAcBranchFlow[b].value
+            for b in self.model.s_branch_dc:
                 # not the same issue for dc lines because there are not power flow equations
-                self.p_branch_dc_powerflow12[b] = self.varDcBranchFlow12[b].value
-                self.p_branch_dc_powerflow21[b] = self.varDcBranchFlow21[b].value
+                self.model.p_branch_dc_powerflow12[b] = self.model.varDcBranchFlow12[b].value
+                self.model.p_branch_dc_powerflow21[b] = self.model.varDcBranchFlow21[b].value
         elif self._lossmethod == 2:
             # compute power losses and store for next timestep
-            for b in self.s_branch_ac:
+            for b in self.model.s_branch_ac:
                 r = self._grid.branch.loc[b, "resistance"]
-                lossMVA = r * self.varAcBranchFlow[b] ** 2 / const.baseMVA
+                lossMVA = r * self.model.varAcBranchFlow[b] ** 2 / const.baseMVA
                 # A multiplication factor to account for reactive current losses
                 lossMVA = lossMVA * aclossmultiplier
-                self.p_branch_ac_power_loss[b] = lossMVA
-            for b in self.s_branch_dc:
+                self.model.p_branch_ac_power_loss[b] = lossMVA
+            for b in self.model.s_branch_dc:
                 r_pu = self._grid.dcbranch.loc[b, "resistance"]
-                p_pu = self.varDcBranchFlow[b] / const.baseMVA
+                p_pu = self.model.varDcBranchFlow[b] / const.baseMVA
                 loss_pu = r_pu * p_pu**2
                 lossMVA = loss_pu * const.baseMVA * dclossmultiplier
-                self.p_branch_dc_power_loss[b] = lossMVA
+                self.model.p_branch_dc_power_loss[b] = lossMVA
 
     def _flexload_storage_value(self, i, storage_level, timestep):
         """Marginal value of energy in consumer *i*'s flexible-load reservoir, in EUR/MWh.
@@ -2474,13 +2585,13 @@ class LpProblem(pyo.ConcreteModel):
         pumpedIn = np.zeros(len(capacity))
         energyIn = np.zeros(len(capacity))
         energyOut = np.zeros(len(capacity))
-        for i in self.s_gen:
+        for i in self.model.s_gen:
             genInflow = capacity[i] * inflow_factor[i] * self._grid.profiles[inflow_profile_refs[i]][timestep]
             energyIn[i] = genInflow * self.timeDelta
-            energyOut[i] = self.varGeneration[i].value * self.timeDelta
+            energyOut[i] = self.model.varGeneration[i].value * self.timeDelta
 
         for i in self._idx_generatorsWithPumping:
-            Ppump = self.varPump[i].value
+            Ppump = self.model.varPump[i].value
             pumpedIn[i] = Ppump * self._grid.generator["pump_efficiency"][i] * self.timeDelta
         energyStorable = self._storage + energyIn + pumpedIn - energyOut
         storagecapacity = self._grid.generator["storage_cap"]
@@ -2490,47 +2601,47 @@ class LpProblem(pyo.ConcreteModel):
 
         # 2. Update flexible load storage
         for i in self._idx_consumersWithFlexLoad:
-            energyIn_flexload = self.varFlexLoad[i].value * self.timeDelta
+            energyIn_flexload = self.model.varFlexLoad[i].value * self.timeDelta
             energyOut_flexload = (
                 self._grid.consumer["flex_fraction"][i] * self._grid.consumer["demand_avg"][i] * self.timeDelta
             )
             self._storage_flexload[i] += energyIn_flexload - energyOut_flexload
 
         # 1c. Record this timestep's dispatch for ramp constraints in next timestep.
-        for i in self.s_gen:
-            v = self.varGeneration[i].value
+        for i in self.model.s_gen:
+            v = self.model.varGeneration[i].value
             self._gen_prev[i] = v if v is not None else 0.0
 
         # 3. Collect variable values from optimisation result
-        F = self.OBJ()
-        Pgen = [self.varGeneration[i].value for i in self.s_gen]
-        Ppump = [self.varPump[i].value for i in self.s_gen_pump]
-        Pflexload = [self.varFlexLoad[i].value for i in self.s_load_flex]
-        Pb = [self.varAcBranchFlow[i].value for i in self.s_branch_ac]
-        Pdc = [self.varDcBranchFlow[i].value for i in self.s_branch_dc]
-        theta = [self.varVoltageAngle[i].value * const.baseAngle for i in self.s_node]
+        F = self.model.OBJ()
+        Pgen = [self.model.varGeneration[i].value for i in self.model.s_gen]
+        Ppump = [self.model.varPump[i].value for i in self.model.s_gen_pump]
+        Pflexload = [self.model.varFlexLoad[i].value for i in self.model.s_load_flex]
+        Pb = [self.model.varAcBranchFlow[i].value for i in self.model.s_branch_ac]
+        Pdc = [self.model.varDcBranchFlow[i].value for i in self.model.s_branch_dc]
+        theta = [self.model.varVoltageAngle[i].value * const.baseAngle for i in self.model.s_node]
         # load shedding is aggregated to nodes (due to old code)
-        Ploadshed = aggregate_to_nodes(self._grid, self.s_load, lambda j: self.varLoadShed[j].value)
-        Pdumpload = aggregate_to_nodes(self._grid, self.s_load, lambda j: self.varDumpLoad[j].value)
+        Ploadshed = aggregate_to_nodes(self._grid, self.model.s_load, lambda j: self.model.varLoadShed[j].value)
+        Pdumpload = aggregate_to_nodes(self._grid, self.model.s_load, lambda j: self.model.varDumpLoad[j].value)
 
         # 4 Collect dual values
         # 4a. branch capacity sensitivity (whether pos or neg flow)
         senseB = []
         for j in self._idx_branchesWithConstraints:
             # for j in self.concretemodel.BRANCH_AC:
-            c = self.cMaxFlowAc[j]
+            c = self.model.cMaxFlowAc[j]
             senseB.append(-abs(self.dual[c] / const.baseMVA))
         senseDcB = []
-        for j in self.s_branch_dc:
-            c = self.cMaxFlowDc[j]
+        for j in self.model.s_branch_dc:
+            c = self.model.cMaxFlowDc[j]
             senseDcB.append(-abs(self.dual[c] / const.baseMVA))
 
         # 4b. node demand sensitivity (energy balance)
         # TODO: Without abs(...) the value jumps between pos and neg. Why?
         senseN = []
-        for j in self.s_node:
+        for j in self.model.s_node:
             try:
-                c = self.cPowerbalance[j]
+                c = self.model.cPowerbalance[j]
                 senseN.append(abs(self.dual[c] / const.baseMVA))
             except KeyError:
                 # Constraint was skipped (trivially 0==0, e.g. isolated hub/virtual node
@@ -2543,23 +2654,27 @@ class LpProblem(pyo.ConcreteModel):
         # energyspilled[indx] = energyStorable[indx]-self._storage[indx]
         energyspilled = self._energyspilled
         storagelevel = self._storage[self._idx_generatorsWithStorage]
-        storageprice = [self.p_gen_cost[i].value for i in self._idx_generatorsWithStorage]
+        storageprice = [self.model.p_gen_cost[i].value for i in self._idx_generatorsWithStorage]
         flexload_storagelevel = self._storage_flexload[self._idx_consumersWithFlexLoad]
-        flexload_marginalprice = [self.p_loadflex_cost[i].value for i in self._idx_consumersWithFlexLoad]
+        flexload_marginalprice = [self.model.p_loadflex_cost[i].value for i in self._idx_consumersWithFlexLoad]
 
         # TODO: Only keep track of inflow spilled for generators with
         # nonzero inflow
 
         # Extract power losses
         if self._lossmethod == 0:
-            acPowerLoss = [0] * len(self.s_branch_ac)
-            dcPowerLoss = [0] * len(self.s_branch_dc)
+            acPowerLoss = [0] * len(self.model.s_branch_ac)
+            dcPowerLoss = [0] * len(self.model.s_branch_dc)
         elif self._lossmethod == 1:
-            acPowerLoss = [self.varLossAc12[b].value + self.varLossAc21[b].value for b in self.s_branch_ac]
-            dcPowerLoss = [self.varLossDc12[b].value + self.varLossDc21[b].value for b in self.s_branch_dc]
+            acPowerLoss = [
+                self.model.varLossAc12[b].value + self.model.varLossAc21[b].value for b in self.model.s_branch_ac
+            ]
+            dcPowerLoss = [
+                self.model.varLossDc12[b].value + self.model.varLossDc21[b].value for b in self.model.s_branch_dc
+            ]
         elif self._lossmethod == 2:
-            acPowerLoss = list(self.p_branch_ac_power_loss.extract_values().values())
-            dcPowerLoss = list(self.p_branch_dc_power_loss.extract_values().values())
+            acPowerLoss = list(self.model.p_branch_ac_power_loss.extract_values().values())
+            dcPowerLoss = list(self.model.p_branch_dc_power_loss.extract_values().values())
         else:
             raise Exception("Lossmethod must be 0,1 or 2")
 
@@ -2661,7 +2776,7 @@ class LpProblem(pyo.ConcreteModel):
             if "symbolic_solver_labels" in solve_args:
                 symbolic_solver_labels = solve_args["symbolic_solver_labels"]
                 solve_args.pop("symbolic_solver_labels")
-            opt.set_instance(self, symbolic_solver_labels=symbolic_solver_labels)
+            opt.set_instance(self.model, symbolic_solver_labels=symbolic_solver_labels)
         elif solver == "appsi_highs":
             # opt = pyo.SolverFactory(solver)
             opt = appsi.solvers.Highs()
@@ -2724,9 +2839,19 @@ class LpProblem(pyo.ConcreteModel):
                 print(":( Could not find solver {}. Returning.".format(solver))
                 raise Exception("Could not find LP solver {}".format(solver))
 
-        # Enable access to dual values
-        if not isinstance(opt, appsi.solvers.highs.Highs):
-            self.dual = pyo.Suffix(direction=pyo.Suffix.IMPORT)
+        # Enable access to dual values. Either way self.dual ends up a mapping from
+        # constraint data to float, which is all result extraction needs -- but the two
+        # paths produce it very differently:
+        #  - APPSI returns a plain dict from get_duals(), replaced after every solve.
+        #  - Every other solver imports duals through a pyo.Suffix, which has to be a
+        #    component of the model the solver is handed. Attaching it to the LpProblem
+        #    instead would not raise: the solver would simply never see it, and every
+        #    nodal price would come back zero.
+        if isinstance(opt, appsi.solvers.highs.Highs):
+            self.dual = {}
+        else:
+            self.model.dual = pyo.Suffix(direction=pyo.Suffix.IMPORT)
+            self.dual = self.model.dual
 
         timesteps_to_solve = self._get_timesteps_to_solve(continue_from_last=continue_from_last, results=results)
         self._build_day_hour_index(timesteps_to_solve)
@@ -2758,7 +2883,7 @@ class LpProblem(pyo.ConcreteModel):
             )
             if self._ramp_up_pu is not None or self._ramp_down_pu is not None:
                 prev_gen = results.db.getResultGeneratorPowerAll(timestep=timesteps_to_solve[0] - 1)
-                for i in self.s_gen:
+                for i in self.model.s_gen:
                     self._gen_prev[i] = prev_gen.get(i, 0.0)
 
         if self._objective_mode == "multi_period":
@@ -2779,7 +2904,7 @@ class LpProblem(pyo.ConcreteModel):
             for win in windows:
                 # For daily_reset generators, clear _gen_prev at commit boundary (same rule intent as hourly)
                 if self._ramp_daily_reset is not None:
-                    for i in self.s_gen:
+                    for i in self.model.s_gen:
                         if self._disable_nuclear_ramp_profile_conflict[int(i)]:
                             continue
                         if self._ramp_daily_reset[i]:
@@ -2792,7 +2917,7 @@ class LpProblem(pyo.ConcreteModel):
         if self._lossmethod in [1, 2]:
             print("Computing losses in first timestep")
             self._updateLpProblem(timestep=timesteps_to_solve[0])
-            res = opt.solve(self)
+            res = opt.solve(self.model)
             if isinstance(res, appsi.solvers.highs.HighsResults):
                 if res.termination_condition != appsi.base.TerminationCondition.optimal:
                     raise RuntimeError(
@@ -2817,7 +2942,7 @@ class LpProblem(pyo.ConcreteModel):
             # solve the LP problem
             if savefiles:
                 # self.concretemodel.pprint('concretemodel_{}.txt'.format(timestep))
-                self.write(
+                self.model.write(
                     "LPproblem_{}.mps".format(timestep),
                     io_options={"symbolic_solver_labels": True},
                 )
@@ -2834,7 +2959,7 @@ class LpProblem(pyo.ConcreteModel):
                     raise Exception("Solver ({}) is not capable of warm start".format(opt.name))
 
             try:
-                res = opt.solve(self, **solve_args)
+                res = opt.solve(self.model, **solve_args)
             except Exception as ex:
                 # do something ()
                 print(f"SOLVE ERROR at timestep={timestep}. Tries to solve again")
@@ -2843,7 +2968,7 @@ class LpProblem(pyo.ConcreteModel):
                     # errors on immediate retry; preserve original failure signal.
                     raise
                 try:
-                    res = opt.solve(self, **solve_args)
+                    res = opt.solve(self.model, **solve_args)
                 except Exception:
                     # re-raise exception:
                     raise ex
@@ -2884,7 +3009,7 @@ class LpProblem(pyo.ConcreteModel):
 
             if int(timestep) in self._timestep_day_hour:
                 day_idx, hour_in_day = self._timestep_day_hour[int(timestep)]
-                obj_value = float(self.OBJ())
+                obj_value = float(self.model.OBJ())
                 self._daily_objective_trace[day_idx] = self._daily_objective_trace.get(day_idx, 0.0) + obj_value
                 self._hourly_objective_trace.append((int(timestep), int(day_idx), int(hour_in_day), obj_value))
 

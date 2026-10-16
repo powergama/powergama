@@ -1,6 +1,7 @@
 """
 This file has a bunch of useful scripts for loading data as well as running fault cases.
 """
+
 import pathlib
 import sqlite3 as db
 
@@ -14,24 +15,18 @@ from .LpFaultProblem import FaultResults, LpFaultProblem
 
 def set_problem_startpoint(lpproblem, storage_init, storage_flexload_init):
     """Update storage of lpproblem
-    Based on  _storeResultsAndUpdateStorage here
-    https://github.com/sighellan/powergama/blob/main/src/powergama/LpProblemPyomo.py#L591
+
+    Thin wrapper kept for existing callers; LpProblem.set_storage_state does the
+    clipping and the indexing.
     """
-
-    # 1. Update generator storage:
-    storagecapacity = lpproblem._grid.generator["storage_cap"]
-    lpproblem._storage = np.maximum(0, np.minimum(storagecapacity, storage_init))
-
-    # 2. Update flexible load storage
-    # TODO: Assert that values are allowed.
-    lpproblem._storage_flexload = storage_flexload_init
+    lpproblem.set_storage_state(storage=storage_init, storage_flexload=storage_flexload_init)
 
 
 class ProblemState:
     def __init__(self, lpproblem=None, storage=None, flex_load=None):
         if lpproblem is not None:
-            self.storage = lpproblem._storage
-            self.storage_flexload = lpproblem._storage_flexload
+            self.storage = lpproblem.storage
+            self.storage_flexload = lpproblem.storage_flexload
         elif (storage is None) and (flex_load is None):
             self.storage = storage
             self.storage_flexload = flex_load

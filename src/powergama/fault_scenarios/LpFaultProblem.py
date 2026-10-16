@@ -70,9 +70,7 @@ class LpFaultProblem(powergama.LpProblem):
             storage_init = extract_init(storage_base, len(self._grid.generator), timestep)
             flexload_init = extract_init(flexload_base, len(self._grid.consumer), timestep)
 
-            storagecapacity = self._grid.generator["storage_cap"]
-            self._storage = np.maximum(0, np.minimum(storagecapacity, storage_init))
-            self._storage_flexload = flexload_init
+            self.set_storage_state(storage=storage_init, storage_flexload=flexload_init)
 
     def _updateLpProblem(self, timestep):
         end_ts = self._grid.timerange[-1]
@@ -102,15 +100,15 @@ class LpFaultProblem(powergama.LpProblem):
         old_pmin = copy.deepcopy(self._grid.generator["pmin"])
         N_gen = len(self._grid.generator)
         self._grid.generator["pmin"] = np.zeros(N_gen)
-        old_p_gen_pmin = copy.deepcopy(self.p_gen_pmin)
+        old_p_gen_pmin = copy.deepcopy(self.model.p_gen_pmin)
         for i in range(N_gen):
-            self.p_gen_pmin[i] = 0
+            self.model.p_gen_pmin[i] = 0
 
         warmstart_now = warmstart and (count > 0)
         if warmstart_now:
-            res = opt.solve(self, warmstart=warmstart_now, **solve_args)
+            res = opt.solve(self.model, warmstart=warmstart_now, **solve_args)
         else:
-            res = opt.solve(self, **solve_args)
+            res = opt.solve(self.model, **solve_args)
         self.solver_res = res
 
         if (res.solver.status != pyomo.opt.SolverStatus.ok) or (
@@ -121,7 +119,7 @@ class LpFaultProblem(powergama.LpProblem):
         # Reset settings
         self._grid.generator["pmin"] = old_pmin
         for i in range(N_gen):
-            self.p_gen_pmin[i] = old_p_gen_pmin[i]
+            self.model.p_gen_pmin[i] = old_p_gen_pmin[i]
 
 
 class FaultDatabase(powergama.database.DatabaseBaseClass):
