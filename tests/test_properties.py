@@ -235,3 +235,54 @@ def test_flexible_load_reservoir_obeys_continuity_multi_period(tmp_path, testcas
         step = rows["storage"].diff().iloc[1:]
         expected = (rows["demand"] - drain).iloc[1:]
         assert (step - expected).abs().max() < 1e-6, f"consumer {indx}: reservoir continuity broken"
+
+
+def _branches_at_capacity(res, data):
+    """Rows where an AC branch sits at its rating, joined to its stored sensitivity.
+
+    Res_Branches is indexed by branch, Res_BranchesSens by position within
+    getIdxBranchesWithFlowConstraints(). They coincide only when every branch has a
+    finite capacity, so build the mapping rather than merging on indx.
+    """
+    tables = _tables(res)
+    constrained = data.getIdxBranchesWithFlowConstraints()
+    sens = tables["Res_BranchesSens"].copy()
+    sens["branch"] = sens["indx"].map(dict(enumerate(constrained)))
+
+    flows = tables["Res_Branches"].rename(columns={"indx": "branch"})
+    df = flows.merge(sens.drop(columns="indx"), on=["timestep", "branch"])
+    df["capacity"] = df["branch"].map(data.branch["capacity"])
+    return df[(df["flow"].abs() >= df["capacity"] - 1e-4) & df["capacity"].notna()]
+
+
+def test_branch_capacity_sensitivity_is_reported_multi_period(tmp_path, testcase_9bus_data):
+    """Reference case: multi_period does price a congested branch."""
+    data = testcase_9bus_data
+    res = _solve(data, tmp_path / "sens_multi.sqlite", mode="multi_period")
+    binding = _branches_at_capacity(res, data)
+
+    assert not binding.empty, "no branch reached its rating; the case cannot test congestion pricing"
+    assert binding["cap_sensitivity"].abs().max() > TOL, "every congested branch reported a zero shadow price"
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "Branch capacity sensitivities are identically zero in hourly mode. Across the "
+        "9-bus and two-area cases, under both glpk and appsi_highs and all three loss "
+        "methods, Res_BranchesSens contains nothing but zeros -- while the same 9-bus "
+        "case in multi_period mode does produce non-zero values. Branches sit at their "
+        "rating for whole runs with nodal price differences of up to 990 EUR/MWh across "
+        "them, so the constraint is plainly binding. Rewriting cMaxFlowAc from one "
+        "two-sided ranged row into two one-sided rows does not recover the dual, so the "
+        "constraint form is not the cause."
+    ),
+)
+def test_branch_capacity_sensitivity_is_reported_hourly(tmp_path, testcase_9bus_data):
+    """A branch held at its rating by congestion must carry a non-zero shadow price."""
+    data = testcase_9bus_data
+    res = _solve(data, tmp_path / "sens_hourly.sqlite", mode="hourly")
+    binding = _branches_at_capacity(res, data)
+
+    assert not binding.empty, "no branch reached its rating; the case cannot test congestion pricing"
+    assert binding["cap_sensitivity"].abs().max() > TOL, "every congested branch reported a zero shadow price"
