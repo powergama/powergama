@@ -140,7 +140,9 @@ Three kinds of test, and the distinction matters when changing the model:
 
 - **Property tests** (`test_properties.py`) assert invariants, not values — storage continuity,
   capacity limits, table shapes, run-to-run determinism. These survive changes to storage valuation
-  and are the primary regression net.
+  and are the primary regression net. `test_model_invariants.py` is the source-level counterpart:
+  an AST check that constraint rules read Pyomo components off their `model` argument and
+  everything else off `self`. Run it after touching any rule; it takes no measurable time.
 - **Numeric regression tests** with hard-coded flows/prices. If a modelling change moves these, the
   change needs justifying, not the expectations silently updating. For `multi_period` these record
   *current* behaviour, which is not the same as correct — see the storage double-count below.
@@ -160,6 +162,13 @@ Write outputs to pytest's `tmp_path`, not the repo root. Skip the heavy cases wi
 - **`continue_from_last` is not exactly resumable with `lossmethod` 1 or 2** — the loss linearisation
   operating point lives in `Var.value` rather than being persisted, so a resumed run reseeds it from
   a pre-solve instead of the real preceding solution.
+- **Branch capacity sensitivities are identically zero in hourly mode** — `Res_BranchesSens` holds
+  nothing but zeros for every hourly run measured (9-bus and two-area, glpk and `appsi_highs`, all
+  three loss methods), while the same case in `multi_period` produces non-zero values. Branches sit
+  at their rating with nodal price differences of up to 990 EUR/MWh across them, so the limit is
+  genuinely binding. Not the constraint form: splitting the two-sided `cMaxFlowAc` into two
+  one-sided rows does not recover the dual. Pinned by `test_properties.py`, with the working
+  multi-period path as the reference case next to it.
 
 ## Docs
 
