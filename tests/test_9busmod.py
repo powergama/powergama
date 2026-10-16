@@ -1,25 +1,17 @@
 """
 Integration test: IEEE 9 bus system
 """
+
 from pathlib import Path
 
 import pytest
 
 import powergama
 
-datapath = Path(__file__).parent / "test_data/data_9bus"
 
+def test_powerflow_matrices(testcase_9bus_data):
+    data = testcase_9bus_data
 
-def test_powerflow_matrices():
-
-    data = powergama.GridData()
-    data.readGridData(
-        nodes=datapath / "9busmod_nodes.csv",
-        ac_branches=datapath / "9busmod_branches.csv",
-        dc_branches=None,
-        generators=datapath / "9busmod_generators.csv",
-        consumers=datapath / "9busmod_consumers.csv",
-    )
     Bbus, DA = data.compute_power_flow_matrices(base_Z=1)
 
     expected_DA = {
@@ -76,17 +68,12 @@ def test_powerflow_matrices():
     assert dict(Bbus.todok()) == pytest.approx(expected_Bbus)
 
 
-def test_integration_9bus():
+def test_integration_9bus(testcase_9bus_data):
     timerange = range(24 * 100, 24 * 101)
-    data = powergama.GridData()
+    data = testcase_9bus_data
 
-    data.readGridData(
-        nodes=datapath / "9busmod_nodes.csv",
-        ac_branches=datapath / "9busmod_branches.csv",
-        dc_branches=None,
-        generators=datapath / "9busmod_generators.csv",
-        consumers=datapath / "9busmod_consumers.csv",
-    )
+    # Read profile data explicitly from file because default data only includes range(0,48)
+    datapath = Path(__file__).parent / "test_data/data_9bus"
     data.readProfileData(
         filename=datapath / "9busmod_profiles.csv",
         storagevalue_filling=datapath / "9busmod_profiles_storval_filling.csv",

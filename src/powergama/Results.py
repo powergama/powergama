@@ -67,6 +67,8 @@ class ResultsBaseClass(object):
         data_dict = res_db.get_grid_data()
         grid_data = powergama.GridData()
         grid_data.from_dict(data_dict, timedelta=timedelta)
+        # TODO: replace this with grid_data.validate() or something similar
+        grid_data._fillEmptyCells(keys=grid_data.keys_powergama)
         res = cls(grid_data, databasefile, replace=False)
         return res
 
@@ -89,6 +91,7 @@ class ResultsBaseClass(object):
         flexload_power,
         flexload_storage,
         flexload_storagevalue,
+        dumpload_power=None,
         branch_ac_losses=None,
         branch_dc_losses=None,
         fault_start=None,
@@ -121,6 +124,8 @@ class ResultsBaseClass(object):
             spileld power (list of same length and order as generators)
         loadshed_power : list
             same length and order as nodes
+        dumpload_power : list
+            same length and order as nodes
         marginalprice : list
             position according to grid.getIdxGeneratorsWithStorage()
         flexload_power : list
@@ -142,6 +147,8 @@ class ResultsBaseClass(object):
             branch_ac_losses = [0] * len(branch_power)
         if branch_dc_losses is None:
             branch_dc_losses = [0] * len(dcbranch_power)
+        if dumpload_power is None:
+            dumpload_power = [0.0] * len(loadshed_power)
         # Store results in sqlite database on disk (to avoid memory problems)
         self.db.appendResults(
             timestep=timestep,
@@ -157,6 +164,7 @@ class ResultsBaseClass(object):
             storage=storage,
             inflow_spilled=inflow_spilled,
             loadshed_power=loadshed_power,
+            dumpload_power=dumpload_power,
             marginalprice=marginalprice,
             flexload_power=flexload_power,
             flexload_storage=flexload_storage,
@@ -346,6 +354,20 @@ class Results(ResultsBaseClass):
 
         loadshed_per_node = self.db.getResultLoadheddingSum(timeMaxMin, average=average)
         return loadshed_per_node
+
+    def getDumpLoadInArea(self, area, timeMaxMin=None):
+        """Get aggregated dump-load timeseries for one area."""
+        if timeMaxMin is None:
+            timeMaxMin = [self.timerange[0], self.timerange[-1] + 1]
+        dumpload = self.db.getResultDumpLoadInArea(area, timeMaxMin)
+        dumpload = np.asarray(dumpload, dtype=float)
+        return dumpload
+
+    def getDumpLoadPerNode(self, timeMaxMin=None, average=False):
+        """Get dump-load sum per node."""
+        timeMaxMin = [self.timerange[0], self.timerange[-1] + 1]
+        dumpload_per_node = self.db.getResultDumpLoadSum(timeMaxMin, average=average)
+        return dumpload_per_node
 
     def getLoadheddingSums(self, timeMaxMin=None, average=False):
         """get loadshedding sum per area"""
@@ -586,10 +608,10 @@ class Results(ResultsBaseClass):
         """
 
         print("Looking for generators of type " + str(generatorType) + ", in " + str(area))
-        print("Number of generator to run through: " + str(self.grid.generator.numGenerators()))
+        print("Number of generator to run through: " + str(self.grid.numGenerators()))
         totalProduction = 0
 
-        for genNumber in range(0, self.grid.generator.numGenerators()):
+        for genNumber in range(0, self.grid.numGenerators()):
             genNode = self.grid.generator.node[genNumber]
             genType = self.grid.generator.type[genNumber]
             genArea = self._node2area(genNode)
@@ -599,20 +621,6 @@ class Results(ResultsBaseClass):
                 genProd = sum(self.db.getResultGeneratorPower(genNumber, timeMaxMin))
                 totalProduction += genProd
                 # print "\tGenerator production = " + str(genProd)
-        return totalProduction
-
-    def getAllGeneratorProductionOBSOLETE(self, timeMaxMin=None):
-        """Returns all production [MWh] for all generators"""
-        if timeMaxMin is None:
-            timeMaxMin = [self.timerange[0], self.timerange[-1] + 1]
-
-        totGenNumbers = self.grid.generator.numGenerators()
-        totalProduction = 0
-        for genNumber in range(0, totGenNumbers):
-            genProd = sum(self.db.getResultGeneratorPower(genNumber, timeMaxMin))
-            print(str(genProd))
-            totalProduction += genProd
-            print("Progression: " + str(genNumber + 1) + " of " + str(totGenNumbers))
         return totalProduction
 
     def _productionOverview(self, areas, types, timeMaxMin, TimeUnitCorrectionFactor):
@@ -1856,9 +1864,8 @@ class Results(ResultsBaseClass):
             if value == "nodalprice":
                 p[a] = self.getAreaPrices(area=a)
             elif value == "demand":
-                # TODO: This is not generally correct. Should use
-                # weighted average for all loads in area
-                p[a] = self.grid.profiles["load_" + a]
+                demand = self.getDemandPerArea(a, timeMaxMin=None)["sum"]
+                p[a] = demand
             elif value[:3] == "gen":
                 # value is now on form "gen_MA_hydro"
                 strval = value.split("%")
@@ -2266,8 +2273,8 @@ class Results(ResultsBaseClass):
                 )
 
         plt.ylabel("Correlation coefficient of inflow to load")
-        plt.xlim(xmin=-0.5, xmax=mainCount + 0.5)
-        plt.xticks(range(mainCount + 1), tickLabel)
+        plt.xlim(xmin=-0.5, xmax=mainCount - 0.5)
+        plt.xticks(range(mainCount), tickLabel)
 
 
 def _myround(x, base=1, method="round"):

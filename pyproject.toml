@@ -1,6 +1,6 @@
 [project]
 name = "powergama"
-version = "1.5.2"
+version = "1.6.0dev"
 description = "PowerGAMA - Power Grid And Market Analysis tool"
 authors = [
     {name = "Harald G Svendsen", email = "harald.svendsen@sintef.no"}
@@ -32,6 +32,7 @@ dependencies = [
     "geopandas>=1.1",
     "highspy>=1.12",
     "tqdm>=4.67",
+    "pyarrow (>=25.0.1,<26.0.0)",
 ]
 
 [project.urls]

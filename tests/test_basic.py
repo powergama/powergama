@@ -1,6 +1,46 @@
-import matplotlib.pyplot as plt
+import powergama
 
-import powergama.plots
+
+def test_grid_data_getters(testcase_9bus_data: powergama.GridData):
+    """
+    Test functions for retrieving grid data info
+
+    Parameters
+    ----------
+    data : powergama.GridData object
+        object holding grid model
+
+    """
+    data = testcase_9bus_data
+
+    # check if methods execute without error
+    data.compute_power_flow_matrices()
+    data.getAllAreas()
+    data.getAllGeneratorTypes()
+    data.getBranchAreas()
+    data.getConsumerAreas()
+    data.getConsumersPerArea()
+    data.getDcBranchAreas()
+    data.getDcBranchesAtNode(0, "from")
+    data.getDcBranches()
+    data.getFlexibleLoadStorageCapacity(0)
+    data.getGeneratorAreas()
+    data.getGeneratorAvailablePower(0, timestep=1)
+    data.getGeneratorsAtNode(0)
+    data.getGeneratorsPerAreaAndType()
+    data.getGeneratorsWithPumpAtNode(0)
+    data.getGeneratorsPerType()
+    data.getGeneratorsWithPumpByArea()
+    data.getIdxBranchesWithFlowConstraints()
+    data.getIdxConsumersWithFlexibleLoad()
+    data.getIdxDcBranchesWithFlowConstraints()
+    data.getIdxGeneratorsWithNonzeroInflow()
+    data.getIdxGeneratorsWithPumping()
+    data.getIdxGeneratorsWithStorage()
+    data.getIdxNodesWithLoad()
+    data.getInterAreaBranches(area_from="AREA")
+    data.getLoadsAtNode(0)
+    data.getLoadsFlexibleAtNode(0)
 
 
 def test_result_getters(testcase_9bus_data, testcase_9bus_res):
@@ -44,50 +84,5 @@ def test_result_getters(testcase_9bus_data, testcase_9bus_res):
     res.getNodalPrices(0)
     res.getStorageFillingInAreas([area], gentype)
     res.getSystemCost()
-
-
-def test_plots(testcase_9bus_data, testcase_9bus_res):
-    """
-    Test PowerGAMA plotting functions
-
-    Parameters
-    ----------
-    data : powergama.GridData object
-        object holding grid model
-    res : powergama.Results object
-        object holding simulation results
-    """
-    data = testcase_9bus_data
-    res = testcase_9bus_res
-
-    plt.switch_backend("Agg")
-
-    area = data.getAllAreas()[0]
-
-    # Try plots. Success if no errors are raised
-    powergama.plots.plotMap(data, res, nodetype="nodalprice", branchtype="utilisation")
-
-    res.plotNodalPrice(0)
-    res.plotAreaPrice([area])
-    indices = data.getIdxGeneratorsWithStorage()
-    if indices:
-        res.plotStorageFilling(indices[0])
-        res.plotStorageValues(indices[0])
-    res.plotGeneratorOutput(0)
-    res.plotDemandAtLoad(0)
-    res.plotStoragePerArea(area)
-    res.plotGenerationPerArea(area)
-    res.plotDemandPerArea([area])
-    indices = data.getIdxConsumersWithFlexibleLoad()
-    if indices:
-        res.plotFlexibleLoadStorageValues(indices[0])
-    res.plotEnergyMix([area])
-    res.plotTimeseriesColour(areas=[area], value="nodalprice")
-
-    # skip these - outdated
-    # res.plotGenerationScatter(area)
-
-    # res.plotMapGrid(nodetype='nodalprice',branchtype='sensitivity',
-    #                dotsize=40,show_node_labels=False,filter_branch=[0,1])
-    # res.plotRelativeLoadDistribution()
-    # res.plotRelativeGenerationCapacity(tech=data.getAllGeneratorTypes()[0])
+    res.getDumpLoadInArea(area)
+    res.getDumpLoadPerNode()

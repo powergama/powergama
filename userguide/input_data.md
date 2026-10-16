@@ -41,9 +41,9 @@ the base power being the global one (powergama.constants.baseS).
   ---------------|------------------|--------|-------
   "node_from\"   | Node identifier  |  string  | 
   "node_to\"     | Node identifier  |  string  | 
+  "capacity\"    | Capacity         |  float   | MW
   "reactance\"   | Reactance        |  float   | p.u
   "resistance\"  | Resistance (OPT) |  float   | p.u.
-  "capacity\"    | Capacity         |  float   | MW
 
 ### DC Branches
 
@@ -55,6 +55,21 @@ identifier in the list of nodes.
   "node_from\"  | Node identifier |  string|   
   "node_to\"    | Node identifier |  string|   
   "capacity\"   | Capacity        |  float |   MW
+  "resistacnce\"| Resistance (OPT)| float  | Ohm
+
+### Inter-area capacities
+Limits on power exchange between areas can be specified as net transfer capacities (NTCs).
+These can be different in the two directions. "Forward" is from->to, and "backward" is to->from.
+
+If NTCS are specified, these are added as flow constraints in addition to the capacity limits of individual lines.
+
+  column key      | description     | type  | units
+  ----------------|-----------------|-------|-------
+  "area_from\"    | Area identifier | str   |
+  "area_to\"      | Area identifier | str   |
+  "ntc_forward\"  | NTC value       | float | MW
+  "ntc_backward\" | NTC value       | float | MW
+
 
 ### Consumers
 
@@ -74,9 +89,10 @@ normalised and have an annual average of 1.
   "flex_fraction\"        |  Fraction of demand which is flexible (OPT)           | float   | 
   "flex_on_off\"          |  Flexibility on/off ratio (OPT)                       | float   | 
   "flex_storage\"         |  Maximum flexibility (OPT)                            | float   | hours
+  "flex_basevalue\"       |  Base storage value (OPT)                             | float   | €/MWh
   "flex_storval_filling\" |  Profile ref, storage value filling dependence (OPT)  | string  | 
   "flex_storval_time\"    |  Profile ref, storage value time dependence (OPT)     | string  | 
-  "flex_basevalue\"       |  Base storage value (OPT)                             | float   | €/MWh
+  "flex_storagelevel_init\"| Initial flexibility buffer state (OPT)               | float   | 1
 
 ### Generators
 
@@ -102,6 +118,14 @@ out if the pumping capacity is non-zero.
   "pump_cap"              | Pumping capacity (OPT)                              |  float |   MW
   "pump_efficiency"       | Pumping efficiency (OPT)                            |  float |   
   "pump_deadband"         | Pumping price dead-band (OPT)                       |  float |   €/MWh
+  "gen_lat"               | Latitude (OPT)                                      |  float | degrees
+  "gen_lon"               | Longitude (OPT)                                     |  float | degrees
+  "spill_cap_frac"        | Fraction of capacity allowed to curtail (OPT) [MP]  |  float |   1
+  "ramp_up_pu"            | Ramp up limit (OPT) [MP]                            |  float | pu/timestep
+  "ramp_down_pu"          | Ramp down limit (OPT) [MP]                          |  float | pu/timestep
+  "ramp_daily_reset"      | Whether to reset at midtnight (OPT) [MP]            |  bool  | 
+
+MP = Used only in multi-period optimisation mode
 
 `node` is the string identifier of the node where the generator is
 connected. There may be any number of generators per node. `pmax` is the
