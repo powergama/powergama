@@ -35,7 +35,7 @@ There are three distinct ways to run PowerGAMA
     ```python
     lp = powergama.LpProblem(data)
     res = powergama.Results(data, "results.sqlite")
-    lp.solve(res, solver="appsi_highs",solver_args={})
+    lp.solve(res, solver="appsi_highs", solve_args={})
     ```
 
 3. Analyse results
@@ -53,9 +53,9 @@ There are three distinct ways to run PowerGAMA
 ```python
 lp = powergama.LpProblem(
     data,
-    objective_mode="daily_24h",
-    objective_day_horizon_hours=24,
-    objective_day_commit_hours=24,
+    objective_mode="multi_period",
+    horizon_hours=24,
+    commit_hours=24,
 )
 ```
 

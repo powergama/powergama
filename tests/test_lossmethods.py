@@ -59,7 +59,7 @@ def test_lossmethods(tmp_path, testcase_9bus_data):
     assert gen_mean == pytest.approx(514.90379, abs=1e-5)
 
 
-def test_lossmethod1_flows():
+def test_lossmethod1_flows(tmp_path):
     """Minimal test case showing issues with lossmethod 1 and unphysical two-way flow
 
 
@@ -113,7 +113,7 @@ def test_lossmethod1_flows():
 
     # Create and solve the case:
     lp3 = powergama.LpProblem(pgdata3, lossmethod=1)
-    pgres3 = powergama.Results(pgdata3, "tmp_testcase.sqlite", replace=True)
+    pgres3 = powergama.Results(pgdata3, tmp_path / "tmp_testcase.sqlite", replace=True)
     lp3.solve(pgres3, solver="appsi_highs", solve_args={})
 
     # Extract results:

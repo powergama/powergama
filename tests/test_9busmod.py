@@ -68,7 +68,7 @@ def test_powerflow_matrices(testcase_9bus_data):
     assert dict(Bbus.todok()) == pytest.approx(expected_Bbus)
 
 
-def test_integration_9bus(testcase_9bus_data):
+def test_integration_9bus(tmp_path, testcase_9bus_data):
     timerange = range(24 * 100, 24 * 101)
     data = testcase_9bus_data
 
@@ -83,7 +83,7 @@ def test_integration_9bus(testcase_9bus_data):
     )
 
     lp = powergama.LpProblem(data)
-    res = powergama.Results(data, "example_9busmod.sqlite")
+    res = powergama.Results(data, tmp_path / "example_9busmod.sqlite")
     lp.solve(res, solver="glpk")
 
     # Check if results are as expected

@@ -37,6 +37,15 @@ class LpFaultProblem(powergama.LpProblem):
         if lossmethod not in [0, 1]:
             raise ValueError("Not implemented for lossmethod 2 yet")
         super().__init__(grid, lossmethod)
+        # Fault simulation relies on the sequential (hourly) solve loop: the multi-period
+        # path never calls _update_progress and reports fault_start=None, so fault
+        # attribution would be silently wrong. The super() call above is positional and
+        # therefore always selects "hourly"; this guard keeps that true if it ever changes.
+        if self._objective_mode != "hourly":
+            raise NotImplementedError(
+                f"Fault scenario simulation requires objective_mode='hourly', got "
+                f"'{self._objective_mode}'. The multi-period model does not track fault start."
+            )
 
     def _starting_timesteps_to_solve(self):
         if self._timesteps is None:

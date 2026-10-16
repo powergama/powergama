@@ -18,11 +18,9 @@ def test_generator_ramp_limit(tmp_path, testcase_9bus_data):
 
     print(data.generator)
 
-    lp = powergama.LpProblem(
-        data, objective_mode="daily_24h", objective_day_commit_hours=1, objective_day_horizon_hours=1
-    )
+    lp = powergama.LpProblem(data, objective_mode="multi_period", commit_hours=1, horizon_hours=1)
     res = powergama.Results(data, tmp_path / "ramp.sqlite")
-    lp.solve(res, solver="appsi_highs", solver_path={})
+    lp.solve(res, solver="appsi_highs", solve_args={})
 
     n_hours = data.profiles.shape[0]
     p_now = res.db.getResultGeneratorPowerAll(0)
@@ -48,11 +46,13 @@ def test_daily_reset_releases_ramp_constraint(tmp_path, testcase_9bus_data):
 
     print(data.generator)
 
-    lp = powergama.LpProblem(
-        data, objective_mode="daily_24h", objective_day_commit_hours=1, objective_day_horizon_hours=1
-    )
+    # commit_hours must be 24 here: the multi-period path releases the ramp constraint at
+    # each commit-window boundary, so only whole-day windows make "daily reset" mean
+    # midnight. With commit_hours=1 the reset fired every hour, which left cRampUp/cRampDn
+    # empty for the whole run and made this test vacuous.
+    lp = powergama.LpProblem(data, objective_mode="multi_period", commit_hours=24, horizon_hours=24)
     res = powergama.Results(data, tmp_path / "ramp.sqlite")
-    lp.solve(res, solver="appsi_highs", solver_path={})
+    lp.solve(res, solver="appsi_highs", solve_args={})
 
     max_up = (data.generator["ramp_up_pu"] * data.generator["pmax"]).to_dict()
     max_down = (data.generator["ramp_down_pu"] * data.generator["pmax"]).to_dict()
@@ -80,9 +80,11 @@ def test_daily_reset_releases_ramp_constraint(tmp_path, testcase_9bus_data):
         print(df)
 
         if tstep % 24 == 0:
-            # violation _IS_ allowed
-            # assert max(ramp_jump_up.values()) > 0
-            assert min(ramp_jump_down.values()) < TOL  # expecting value -37.7 for coal down-ramp
+            # Violation _IS_ allowed, and must actually occur: a genuine breach of the
+            # down-ramp limit at the reset boundary is what proves the reset released the
+            # constraint. A merely-negative value would also hold for any ramp-feasible
+            # dispatch, which is why this previously passed with no ramp constraints built.
+            assert min(ramp_jump_down.values()) < -TOL, "expected the daily reset to permit a ramp breach"
         else:
             # no violation allowed
             assert max(ramp_jump_up.values()) <= TOL, "ramp up exceeding max value"

@@ -1,6 +1,16 @@
 # Changes
 
 ## unpublished
+2026-10-16
+- rename multi-period API: `objective_mode="daily_24h"` is now `"multi_period"`, and
+  `objective_day_horizon_hours`/`objective_day_commit_hours` are now
+  `horizon_hours`/`commit_hours` (these names were never released)
+- fix wrong branch capacity sensitivities in multi-period mode (transposed constraint index)
+- unsupported mode combinations now raise instead of silently computing the wrong thing:
+  `is_rt` with `multi_period`, `lossmethod != 0` with `multi_period`, `ramp_daily_reset`
+  with `commit_hours != 24`, and fault simulation outside `hourly` mode
+- `continue_from_last=True` on an empty results database now raises a clear error
+
 2026-10-01
 - add multi-period and balancing simulation modes
 

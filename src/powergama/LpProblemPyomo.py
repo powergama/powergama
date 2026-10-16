@@ -45,6 +45,39 @@ class LpProblem(pyo.ConcreteModel):
         loss method; 0=no losses, 1=linearised losses, 2=added as load
     penalty_twoway_flow : float
         penalty factor to discourage flow in both directions on a branch with losses
+    objective_mode : str
+        "hourly" (default) solves one LP per timestep in sequence, carrying storage
+        state forward between solves. "multi_period" solves a joint LP over a window
+        of `horizon_hours` with storage continuity inside the optimisation.
+        These are not equivalent at horizon_hours=1 -- see
+        tests/test_sim_hourly_rolling_equiv.py.
+    horizon_hours : int
+        Length of the optimisation window, in hours. "multi_period" mode only.
+    commit_hours : int
+        How many hours at the start of each window are committed and stored before the
+        window advances. Equal to `horizon_hours` for non-overlapping windows; smaller
+        for a rolling horizon with lookahead (e.g. 48h horizon committing 24h).
+        Capped at `horizon_hours`. "multi_period" mode only.
+    storage_initial_fill_scale : float
+        Scales the initial storage filling level of hydro-with-pumping and battery
+        generators, relative to `storage_ini` in the grid data.
+    is_rt : bool
+        Solve the balancing ("real-time") problem: minimise deviation from a day-ahead
+        schedule rather than generation cost. Requires objective_mode="hourly".
+    rt_balancing_fee_eur_per_mwh : float
+        Flat fee per MWh of real-time redispatch, to discourage marginal deviations.
+    rt_p_res_curtailment_factor : float
+        Penalty multiplier on real-time curtailment of variable renewable generation.
+    rt_xborder_flow_penalty_eur_per_mwh : float
+        Penalty per MWh of deviation from day-ahead cross-border flows.
+    rt_dispatch_objective_mode : str
+        Ignored when is_rt=True, which forces "deviation".
+
+    Notes
+    =====
+    Unsupported mode combinations raise NotImplementedError at construction:
+    is_rt with "multi_period", lossmethod != 0 with "multi_period", and
+    ramp_daily_reset with commit_hours != 24.
     """
 
     def __init__(
@@ -53,8 +86,8 @@ class LpProblem(pyo.ConcreteModel):
         lossmethod=0,
         penalty_twoway_flow=0,
         objective_mode="hourly",
-        objective_day_horizon_hours=24,
-        objective_day_commit_hours=24,
+        horizon_hours=24,
+        commit_hours=24,
         storage_initial_fill_scale=1.0,
         rt_dispatch_objective_mode="deviation",
         rt_balancing_fee_eur_per_mwh=1.0,
@@ -76,11 +109,28 @@ class LpProblem(pyo.ConcreteModel):
         self._grid = grid
         self.timeDelta = grid.timeDelta
         self._objective_mode = str(objective_mode).strip().lower()
-        if self._objective_mode not in {"hourly", "daily_24h"}:
-            raise ValueError("objective_mode must be one of: hourly, daily_24h")
-        self._objective_day_horizon_hours = int(max(1, int(objective_day_horizon_hours)))
-        self._objective_day_commit_hours = int(max(1, int(objective_day_commit_hours)))
+        if self._objective_mode not in {"hourly", "multi_period"}:
+            raise ValueError("objective_mode must be one of: hourly, multi_period")
+        self._horizon_hours = int(max(1, int(horizon_hours)))
+        self._commit_hours = int(max(1, int(commit_hours)))
         self._is_rt = bool(is_rt)
+        if self._is_rt and self._objective_mode == "multi_period":
+            # The day-joint model has no RT layer: no p_rt_* parameters, no deviation
+            # variables and no deviation objective. Combining these silently solved a
+            # cost-minimising LP instead of a deviation-minimising one.
+            raise NotImplementedError(
+                "is_rt=True is not supported with objective_mode='multi_period': the multi-period "
+                "model does not implement real-time target tracking or the deviation objective. "
+                "Use objective_mode='hourly' for balancing simulations."
+            )
+        if self._objective_mode == "multi_period" and self._lossmethod != 0:
+            # Previously only a warning; the day-joint power balance has no loss terms at
+            # all and losses were reported as hard-coded zeros.
+            raise NotImplementedError(
+                f"lossmethod={self._lossmethod} is not supported with objective_mode='multi_period': "
+                "power losses are not modelled in the multi-period LP. Use lossmethod=0, or "
+                "objective_mode='hourly' if losses are required."
+            )
         self._rt_dispatch_objective_mode = (
             "deviation" if self._is_rt else str(rt_dispatch_objective_mode).strip().lower()
         )
@@ -177,6 +227,22 @@ class LpProblem(pyo.ConcreteModel):
             self._ramp_daily_reset = grid.generator["ramp_daily_reset"].fillna(False).astype(bool).values
         else:
             self._ramp_daily_reset = None
+        # The two solve paths release the ramp constraint on different clocks: the hourly
+        # path at absolute midnight (timestep % 24 == 0), the multi-period path at every
+        # commit-window boundary. These only coincide when a window is a whole day, so
+        # any other commit length would silently change the meaning of ramp_daily_reset.
+        if (
+            self._ramp_daily_reset is not None
+            and bool(self._ramp_daily_reset.any())
+            and self._objective_mode == "multi_period"
+            and self._commit_hours != 24
+        ):
+            raise NotImplementedError(
+                "ramp_daily_reset=True requires commit_hours=24 in "
+                f"objective_mode='multi_period' (got {self._commit_hours}). The "
+                "multi-period path releases the ramp constraint at each commit-window "
+                "boundary, which only coincides with midnight for whole-day windows."
+            )
         # Optional bypass for nuclear ramp/daily-reset when nuclear operational
         # profile limits are active (pmax_ref/pmin_ref runtime binding).
         # This avoids infeasible day-joint intersections where a constant
@@ -1096,6 +1162,15 @@ class LpProblem(pyo.ConcreteModel):
         time_steps = range(numTimesteps)
         if continue_from_last:
             timestep_last = results.get_last_timestep_in_results()
+            if timestep_last is None:
+                # Empty results database: there is nothing to continue from. Results()
+                # with replace=False only prints a notice in this case, so without an
+                # explicit check this fails later as a TypeError on None + 1.
+                raise ValueError(
+                    "continue_from_last=True requires a results database with at least one "
+                    "stored timestep, but the database is empty. Run a simulation first, or "
+                    "use continue_from_last=False to start from the beginning."
+                )
             # first step is last plus one
             time_steps = range(timestep_last + 1, numTimesteps)
             print(f"Continue from timestep {timestep_last}.")
@@ -1105,8 +1180,8 @@ class LpProblem(pyo.ConcreteModel):
         """Build mapping timestep -> (day_index, hour_in_day) for diagnostics and horizon grouping."""
         self._timestep_day_hour = {}
         for offset, ts in enumerate(timesteps_to_solve):
-            day = int(offset) // int(self._objective_day_horizon_hours)
-            hour = int(offset) % int(self._objective_day_horizon_hours)
+            day = int(offset) // int(self._horizon_hours)
+            hour = int(offset) % int(self._horizon_hours)
             self._timestep_day_hour[int(ts)] = (day, hour)
 
     # ------------------------------------------------------------------
@@ -1687,31 +1762,30 @@ class LpProblem(pyo.ConcreteModel):
                 gi = gen_list.index(i)
                 energy_spilled[gi] = spill_val * dt
 
-            # Branch capacity sensitivity (dual of capacity constraint)
+            # Branch capacity sensitivity (dual of capacity constraint).
+            # NOTE: cAcFlowUb/cAcFlowLb/cDcFlowUb are declared as
+            # Constraint(s_branch_ac, s_h), so the index order is (branch, hour).
+            # Membership is tested explicitly rather than caught as KeyError: a
+            # transposed (hour, branch) lookup is often a *valid* key for another
+            # branch, so an exception-based guard cannot detect that mistake.
             senseB = []
             for j in self._idx_branchesWithConstraints:
                 d = 0.0
                 if duals:
-                    try:
-                        c = m.cAcFlowUb[hi, j]
-                        d = float(duals.get(c, 0.0) or 0.0)
-                    except (KeyError, AttributeError):
-                        try:
-                            c = m.cAcFlowLb[hi, j]
-                            d = float(duals.get(c, 0.0) or 0.0)
-                        except (KeyError, AttributeError):
-                            d = 0.0
+                    if (j, hi) in m.cAcFlowUb:
+                        d = float(duals.get(m.cAcFlowUb[j, hi], 0.0) or 0.0)
+                    elif (j, hi) in m.cAcFlowLb:
+                        d = float(duals.get(m.cAcFlowLb[j, hi], 0.0) or 0.0)
                 senseB.append(-abs(d / const.baseMVA))
 
             senseDcB = []
             for j in branch_dc_list:
                 d = 0.0
                 if duals:
-                    try:
-                        c = m.cDcFlowUb[hi, j]
-                        d = float(duals.get(c, 0.0) or 0.0)
-                    except (KeyError, AttributeError):
-                        d = 0.0
+                    if (j, hi) in m.cDcFlowUb:
+                        d = float(duals.get(m.cDcFlowUb[j, hi], 0.0) or 0.0)
+                    elif (j, hi) in m.cDcFlowLb:
+                        d = float(duals.get(m.cDcFlowLb[j, hi], 0.0) or 0.0)
                 senseDcB.append(-abs(d / const.baseMVA))
 
             # Nodal prices (dual of power balance)
@@ -1774,7 +1848,7 @@ class LpProblem(pyo.ConcreteModel):
         if commit_hours is None:
             commit_hours = len(day_timesteps)
         commit_hours = int(max(1, min(int(commit_hours), len(day_timesteps))))
-        target_horizon = int(max(1, int(self._objective_day_horizon_hours)))
+        target_horizon = int(max(1, int(self._horizon_hours)))
         solve_h = int(len(day_timesteps))
         tail_note = ""
         if solve_h < target_horizon:
@@ -1791,7 +1865,7 @@ class LpProblem(pyo.ConcreteModel):
         # Create solver (only APPSI HiGHS supported for dual extraction)
         if solver_name != "appsi_highs":
             warnings.warn(
-                f"daily_24h mode with solver='{solver_name}': only 'appsi_highs' supports "
+                f"multi_period mode with solver='{solver_name}': only 'appsi_highs' supports "
                 "dual extraction for nodal prices. Proceeding but prices may be zero.",
                 UserWarning,
             )
@@ -1843,7 +1917,7 @@ class LpProblem(pyo.ConcreteModel):
                 columns=["timestep", "day_index", "hour_in_day", "objective_value"],
             )
             trace_df["objective_mode"] = str(self._objective_mode)
-            trace_df["objective_day_horizon_hours"] = int(self._objective_day_horizon_hours)
+            trace_df["horizon_hours"] = int(self._horizon_hours)
             trace_df.to_csv(out_path, index=False)
             print(f"Wrote objective trace CSV: {out_path}")
         except Exception as ex:
@@ -2278,7 +2352,7 @@ class LpProblem(pyo.ConcreteModel):
         )
 
     def _append_rt_solver_debug_day_joint(self, m, hi, timestep):
-        """Append per-timestep RT debug rows for daily_24h joint solves."""
+        """Append per-timestep RT debug rows for multi_period joint solves."""
         if not self._is_rt or self._rt_solver_debug_path is None:
             return
 
@@ -2375,7 +2449,7 @@ class LpProblem(pyo.ConcreteModel):
 
         payload = {
             "event": "rt_timestep_debug",
-            "debug_path_mode": "daily_24h",
+            "debug_path_mode": "multi_period",
             "timestep": int(timestep),
             "hour_in_window": int(hi),
             "da_injection_check": {
@@ -2387,7 +2461,7 @@ class LpProblem(pyo.ConcreteModel):
                 "actual_gas_rt_dev_cost": None,
                 "actual_storage_rt_dev_cost": None,
                 "actual_total_rt_dev_cost": None,
-                "note": "daily_24h debug mode does not compute DA-reference storage mismatch diagnostics",
+                "note": "multi_period debug mode does not compute DA-reference storage mismatch diagnostics",
             },
             "redispatch_cost_attribution_eur": {},
             "redispatch_mw_attribution": {},
@@ -2397,7 +2471,7 @@ class LpProblem(pyo.ConcreteModel):
 
         self._append_rt_solver_debug_payload(
             payload,
-            warning_context=f"Failed writing daily_24h RT solver debug at timestep={timestep}",
+            warning_context=f"Failed writing multi_period RT solver debug at timestep={timestep}",
         )
 
     def _relax_and_retry(self, opt, warmstart, count, solve_args):
@@ -3171,18 +3245,14 @@ class LpProblem(pyo.ConcreteModel):
                 for i in self.s_gen:
                     self._gen_prev[i] = prev_gen.get(i, 0.0)
 
-        if self._objective_mode == "daily_24h":
+        if self._objective_mode == "multi_period":
             # ── true 24h joint LP path ────────────────────────────────
-            if self._lossmethod != 0:
-                warnings.warn(
-                    "daily_24h mode currently ignores lossmethod != 0 (losses not modelled in 24h LP).",
-                    UserWarning,
-                )
+            # (lossmethod != 0 is rejected in __init__; losses are not modelled here)
 
             # Rolling-horizon solve: optimise over objective horizon, commit only first 24h.
             # This enables next-day lookahead (e.g. 48h solve / 24h commit).
-            solve_h = int(max(1, int(self._objective_day_horizon_hours)))
-            commit_h = int(max(1, min(int(self._objective_day_commit_hours), solve_h)))
+            solve_h = int(max(1, int(self._horizon_hours)))
+            commit_h = int(max(1, min(int(self._commit_hours), solve_h)))
             windows = []
             for start in range(0, len(timesteps_to_solve), commit_h):
                 win = list(timesteps_to_solve[start : start + solve_h])
@@ -3202,19 +3272,6 @@ class LpProblem(pyo.ConcreteModel):
 
             self._write_objective_trace_if_requested()
             return results
-            # Update internal variable for storage filling level (self._storage and self._storage_flexload)
-            # this must be done before updateLpProblem below
-            self._storage.loc[self._idx_generatorsWithStorage] = results.db.getResultStorageFillingAll(
-                timestep=timesteps_to_solve[0] - 1
-            )
-            self._storage_flexload.loc[self._idx_consumersWithFlexLoad] = results.db.getResultFlexloadStorageFillingAll(
-                timestep=timesteps_to_solve[0] - 1
-            )
-            # Restore previous-timestep generation for ramp constraints
-            if self._ramp_up_pu is not None or self._ramp_down_pu is not None:
-                prev_gen = results.db.getResultGeneratorPowerAll(timestep=timesteps_to_solve[0] - 1)
-                for i in self.s_gen:
-                    self._gen_prev[i] = prev_gen.get(i, 0.0)
 
         if self._lossmethod in [1, 2]:
             print("Computing losses in first timestep")
@@ -3321,7 +3378,7 @@ class LpProblem(pyo.ConcreteModel):
             # store results and update storage levels
             self._storeResultsAndUpdateStorage(timestep, results)
 
-        if self._objective_mode == "daily_24h" and self._daily_objective_trace:
+        if self._objective_mode == "multi_period" and self._daily_objective_trace:
             print("Daily objective trace (hourly-path accumulation):")
             for d in sorted(self._daily_objective_trace):
                 print(f"  day={d}: objective_sum={self._daily_objective_trace[d]:.6f}")

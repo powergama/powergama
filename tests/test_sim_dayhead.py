@@ -11,18 +11,18 @@ import powergama
 datapath = Path(__file__).parent / "test_data/data_9bus"
 
 
-def test_daily_24h_regression(tmp_path, testcase_9bus_data):
+def test_multi_period_regression(tmp_path, testcase_9bus_data):
     data = testcase_9bus_data
 
     lp = powergama.LpProblem(
         data,
-        objective_mode="daily_24h",
-        objective_day_horizon_hours=24,
-        objective_day_commit_hours=24,
+        objective_mode="multi_period",
+        horizon_hours=24,
+        commit_hours=24,
     )
     print(data.profiles.shape)
 
-    res = powergama.Results(data, tmp_path / "daily_24h.sqlite")
+    res = powergama.Results(data, tmp_path / "multi_period.sqlite")
     lp.solve(res, solver="appsi_highs")
 
     EXPECTED_FLOWS_AVG_12 = [

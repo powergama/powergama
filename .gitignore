@@ -1,14 +1,29 @@
-powergama/powergama/__pycache__/
-powergama/powergama.egg-info/
-powergama/userguide/UserGuide.synctex.gz
-powergama/build/
-powergama/dist/
-powergama/doc/doc_sphinx/
-powergama/examples/.ipynb_checkpoints/
-powergama/examples/powergim_doggerbank/.ipynb_checkpoints/
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+
+# Coverage
+.coverage
+coverage.xml
+htmlcov/
+
+# Docs build
+doc/doc_sphinx/
+userguide/UserGuide.synctex.gz
+
+# Simulation / test output written into the working tree
 *.sqlite
 *.sqlite3
-*.pyc
 lpsolver_log.txt
+temp_res*.csv
+tempdir/
 tests/tmp_files/*
-.coverage
