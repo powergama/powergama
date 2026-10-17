@@ -34,6 +34,7 @@ from .. import rt_diagnostics
 from ..timestep_result import TimestepResult, aggregate_to_nodes
 from . import project_locks
 from . import solver as solver_mod
+from .config import CONFIG_ATTRS, LpConfig
 
 
 class LpProblem:
@@ -118,41 +119,24 @@ class LpProblem:
 
         print("Initialising LP problem...")
 
-        # Helpers
-        self._lossmethod = lossmethod
+        # Caller-supplied settings, validated once. Readers still say
+        # self._lossmethod / self._is_rt and so on; __getattr__ resolves those
+        # against the config.
+        self._cfg = LpConfig.from_args(
+            lossmethod=lossmethod,
+            penalty_twoway_flow=penalty_twoway_flow,
+            objective_mode=objective_mode,
+            horizon_hours=horizon_hours,
+            commit_hours=commit_hours,
+            storage_initial_fill_scale=storage_initial_fill_scale,
+            rt_dispatch_objective_mode=rt_dispatch_objective_mode,
+            rt_balancing_fee_eur_per_mwh=rt_balancing_fee_eur_per_mwh,
+            rt_p_res_curtailment_factor=rt_p_res_curtailment_factor,
+            rt_xborder_flow_penalty_eur_per_mwh=rt_xborder_flow_penalty_eur_per_mwh,
+            is_rt=is_rt,
+        )
         self._grid = grid
         self.timeDelta = grid.timeDelta
-        self._objective_mode = str(objective_mode).strip().lower()
-        if self._objective_mode not in {"single_period", "multi_period"}:
-            raise ValueError("objective_mode must be one of: single_period, multi_period")
-        self._horizon_hours = int(max(1, int(horizon_hours)))
-        self._commit_hours = int(max(1, int(commit_hours)))
-        self._is_rt = bool(is_rt)
-        if self._is_rt and self._objective_mode == "multi_period":
-            # The day-joint model has no RT layer: no p_rt_* parameters, no deviation
-            # variables and no deviation objective. Combining these silently solved a
-            # cost-minimising LP instead of a deviation-minimising one.
-            raise NotImplementedError(
-                "is_rt=True is not supported with objective_mode='multi_period': the multi-period "
-                "model does not implement real-time target tracking or the deviation objective. "
-                "Use objective_mode='single_period' for balancing simulations."
-            )
-        if self._objective_mode == "multi_period" and self._lossmethod != 0:
-            # Previously only a warning; the day-joint power balance has no loss terms at
-            # all and losses were reported as hard-coded zeros.
-            raise NotImplementedError(
-                f"lossmethod={self._lossmethod} is not supported with objective_mode='multi_period': "
-                "power losses are not modelled in the multi-period LP. Use lossmethod=0, or "
-                "objective_mode='single_period' if losses are required."
-            )
-        self._rt_dispatch_objective_mode = (
-            "deviation" if self._is_rt else str(rt_dispatch_objective_mode).strip().lower()
-        )
-        self._rt_deviation_objective_active = bool(self._is_rt)
-        self._rt_p_res_curtailment_factor = float(rt_p_res_curtailment_factor)
-        self._rt_xborder_flow_penalty_eur_per_mwh = max(0.0, float(rt_xborder_flow_penalty_eur_per_mwh))
-        # Fixed balancing fee to discourage frivolous RT redispatch (€/MWh).
-        self._rt_balancing_fee_eur_per_mwh: float = float(rt_balancing_fee_eur_per_mwh)
         self._rt_solver_debug_path: Path | None = None
         self._rt_debug_session_id: str = ""
         self._rt_target_tracking_active = bool(self._rt_deviation_objective_active)
@@ -241,22 +225,7 @@ class LpProblem:
             self._ramp_daily_reset = grid.generator["ramp_daily_reset"].fillna(False).astype(bool).values
         else:
             self._ramp_daily_reset = None
-        # The two solve paths release the ramp constraint on different clocks: the single-period
-        # path at absolute midnight (timestep % 24 == 0), the multi-period path at every
-        # commit-window boundary. These only coincide when a window is a whole day, so
-        # any other commit length would silently change the meaning of ramp_daily_reset.
-        if (
-            self._ramp_daily_reset is not None
-            and bool(self._ramp_daily_reset.any())
-            and self._objective_mode == "multi_period"
-            and self._commit_hours != 24
-        ):
-            raise NotImplementedError(
-                "ramp_daily_reset=True requires commit_hours=24 in "
-                f"objective_mode='multi_period' (got {self._commit_hours}). The "
-                "multi-period path releases the ramp constraint at each commit-window "
-                "boundary, which only coincides with midnight for whole-day windows."
-            )
+        self._cfg.check_ramp_daily_reset(self._ramp_daily_reset)
         # Optional bypass for nuclear ramp/daily-reset when nuclear operational
         # profile limits are active (pmax_ref/pmin_ref runtime binding).
         # This avoids infeasible day-joint intersections where a constant
@@ -373,7 +342,7 @@ class LpProblem:
 
         # Initial values of marginal costs, storage and storage values
         # Apply optional start-fill scaling only to pumped hydro and batteries.
-        _ini_fill_scale = float(max(0.0, min(1.0, storage_initial_fill_scale)))
+        _ini_fill_scale = self._cfg.storage_initial_fill_scale
         _gen_type = (
             grid.generator["type"].astype(str).str.lower()
             if "type" in grid.generator.columns
@@ -427,7 +396,14 @@ class LpProblem:
         self._create_constraint_powerflow_equation(grid)
 
     def __getattr__(self, name):
-        """Fall through to the Pyomo model for anything LpProblem does not define.
+        """Fall through to the config, then the Pyomo model.
+
+        Settled configuration lives on `self._cfg`, but the rest of the code --
+        including rt_diagnostics, which reads some 77 attributes off the problem --
+        spells it `self._lossmethod`, `self._is_rt` and so on. Resolving those names
+        here keeps every reader working while the values live in one frozen object.
+        Only names in CONFIG_ATTRS are redirected, and every one of them is immutable,
+        so there is no counterpart to the write hazard described below.
 
         Keeps `lp.varAcBranchFlow12.extract_values()` and the like working for callers
         written when LpProblem *was* the model. Python only calls this when normal
@@ -441,10 +417,15 @@ class LpProblem:
         """
         # __getattr__ runs before __init__ assigns self.model during unpickling and on
         # any failed lookup inside __init__ itself; guard against recursing forever.
-        if name == "model":
+        if name in ("model", "_cfg"):
             raise AttributeError(name)
+        state = self.__dict__
+        if name.startswith("_") and name[1:] in CONFIG_ATTRS:
+            cfg = state.get("_cfg")
+            if cfg is not None:
+                return getattr(cfg, name[1:])
         try:
-            return getattr(self.__dict__["model"], name)
+            return getattr(state["model"], name)
         except KeyError:
             raise AttributeError(name) from None
 
