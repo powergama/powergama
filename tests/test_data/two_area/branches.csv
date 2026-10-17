@@ -1,0 +1,4 @@
+node_from,node_to,reactance,capacity,resistance
+a1,a2,0.05,400,0.005
+a2,b1,0.10,300,0.010
+b1,b2,0.05,400,0.005

@@ -87,7 +87,10 @@ Or in the Willow workflow, it's automatic if the file exists in the dataset dire
 - Set ntc_forward or ntc_backward to a non-positive value to disable that direction.
 - Area identifiers are case-sensitive and must match the `area` column in `node.csv`.
 - Multiple area pairs can be specified; one pair per row.
-- The constraint is implemented as a Pyomo constraint created in `LpProblemPyomo._create_constraint_inter_area_ntc()`.
+- The constraint is built by `powergama.lp.single_period.build.create_constraint_inter_area_ntc()`
+  for the single-period formulation, and inline by `powergama.lp.multi_period.build` for the
+  multi-period one. Both read the same area-pair-to-branch resolution, computed once in
+  `powergama.lp.context.GridContext`.
 
 ## Data Sources
 

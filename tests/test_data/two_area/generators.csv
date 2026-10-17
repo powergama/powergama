@@ -1,0 +1,5 @@
+desc,type,node,pmax,pmin,fuelcost,inflow_fac,inflow_ref,storage_cap,storage_price,storage_ini,storval_filling_ref,storval_time_ref,pump_cap,pump_efficiency,pump_deadband,ramp_up_pu,ramp_down_pu
+gas_a,gas,a1,400,0,15,1,const,0,0,0,,,0,0,0,0.25,0.25
+wind_a,wind,a2,250,0,0,0.45,wind,0,0,0,,,0,0,0,,
+hydro_pump,hydro,b1,200,0,0,0.25,hydro,2000,12,0.5,hydro,const,120,0.8,1.0,,
+coal_b,coal,b2,300,0,40,1,const,0,0,0,,,0,0,0,0.25,0.25

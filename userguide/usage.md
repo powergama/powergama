@@ -35,7 +35,7 @@ There are three distinct ways to run PowerGAMA
     ```python
     lp = powergama.LpProblem(data)
     res = powergama.Results(data, "results.sqlite")
-    lp.solve(res, solver="appsi_highs",solver_args={})
+    lp.solve(res, solver="appsi_highs", solve_args={})
     ```
 
 3. Analyse results
@@ -53,11 +53,23 @@ There are three distinct ways to run PowerGAMA
 ```python
 lp = powergama.LpProblem(
     data,
-    objective_mode="daily_24h",
-    objective_day_horizon_hours=24,
-    objective_day_commit_hours=24,
+    objective_mode="multi_period",
+    horizon_hours=24,
+    commit_hours=24,
 )
 ```
+
+`horizon_hours` is the length of the window that is optimised; `commit_hours` is how
+much of each window is kept before the next window starts. Setting `commit_hours`
+below `horizon_hours` gives a rolling horizon with lookahead (e.g. 48/24).
+
+Storage values — both for generators and for flexible load — are evaluated once per
+window from the filling level at the start of it, since the whole window is a single
+LP and the value has to enter as a constant coefficient. The single-period mode instead
+re-prices from the current filling level before every time step. For flexible load
+this also means the reservoir level is a bounded variable within the window rather
+than a level clipped after each solve, so it cannot leave `[0, capacity]` the way it
+can in single-period mode. See [model_description.md](model_description.md).
 
 ## 3. Balancing market (deviations from day-ahead)
 

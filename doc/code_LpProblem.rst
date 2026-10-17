@@ -6,7 +6,7 @@
 
 LpProblem Module
 ==================
-.. automodule:: powergama.LpProblemPyomo
+.. automodule:: powergama.lp
    :members:
    :undoc-members:
    

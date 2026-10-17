@@ -19,6 +19,7 @@ def test_fault_scenario_creation():
 
 
 @pytest.mark.skipif(not pyo.SolverFactory("glpk").available(), reason="Skipping test because GLPK is not available.")
+@pytest.mark.slow
 def test_faultsimulation(testcase_9bus_data, testcase_9bus_res, tmp_path):
     """9 bus test to check that fault scenario simulation works, and gives expected result"""
 

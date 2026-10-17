@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-'''
+"""
 PowerGAMA
 =========
 
@@ -12,7 +12,7 @@ Classes and modules
 -------------------
 GridData (class)
     power grid model (nodes, branches, consumers, generators) and power inflow
-    and storage value 
+    and storage value
 LpProblem (class)
     LP problem, with PuLP interface to external solver (COIN-CBC)
 Results (class)
@@ -27,7 +27,7 @@ Example
 
 >>> import powergama
 
-Specify time range, i.e. which rows in the time series files to use, and 
+Specify time range, i.e. which rows in the time series files to use, and
 number of hours per timestep
 
 >>> timerange = range(0,8760)
@@ -46,7 +46,7 @@ Import grid model and time series data from files
 >>>                      storagevalue_filling="profile_storval_filling.csv",
 >>>                      storagevalue_time="profile_storval_time.csv",
 >>>                      timerange=timerange,
->>>                      timedelta=timedelta)                      
+>>>                      timedelta=timedelta)
 
 Initiate results and LP problem objects, including name of database file
 (OBS: Will replace any existing file with the same name)
@@ -54,7 +54,7 @@ Initiate results and LP problem objects, including name of database file
 >>> lp = powergama.LpProblem(data)
 >>> res = powergama.Results(data,"results.sqlite3")
 
-Solve the problem, timestep by timestep, and save results in the results 
+Solve the problem, timestep by timestep, and save results in the results
 object
 
 >>> lp.solve(res)
@@ -63,8 +63,10 @@ Plot results
 
 >>> res.plotMapGrid(nodetype="nodalprice")
 
-'''
+"""
 
 from .GridData import GridData
-from .LpProblemPyomo import LpProblem
+from .lp import LpProblem
 from .Results import Results, ResultsBaseClass
+
+__all__ = ["GridData", "LpProblem", "Results", "ResultsBaseClass"]
