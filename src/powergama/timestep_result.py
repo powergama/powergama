@@ -1,7 +1,7 @@
 """The contract between a solved LP and the results database.
 
 :class:`TimestepResult` names, once, the values the results database expects for a
-single timestep. Both solve paths in :mod:`powergama.LpProblemPyomo` -- the sequential
+single timestep. Both solve paths in :mod:`powergama.lp` -- the sequential
 single-period loop and the multi-period rolling horizon -- build one of these and call
 :meth:`TimestepResult.store`, so there is a single site that knows the shape of
 ``Results.addResultsFromTimestep``.

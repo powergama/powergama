@@ -6,8 +6,12 @@
   need not be an hour. The old spelling raises; there is no alias (this name was never released)
 - reorganise the optimisation code into the `powergama.lp` package, split by formulation:
   `lp/single_period/`, `lp/multi_period/` and `lp/rt/` for the balancing side-path, each with
-  its own model building, input data and result extraction. `powergama.LpProblem` is unchanged
-  and `powergama.LpProblemPyomo` still imports, so existing code needs no edit
+  its own model building, input data and result extraction. `powergama.LpProblem` is unchanged,
+  so code using the documented import needs no edit
+- **removed** the `powergama.LpProblemPyomo` module. It was only ever a path to `LpProblem`,
+  which has always been exported as `powergama.LpProblem`; import that, or `powergama.lp`.
+  Unlike the renames above this name did ship, so `from powergama.LpProblemPyomo import ...`
+  will now raise `ModuleNotFoundError`
 - the two formulations no longer share any model state, so either can be built without the other
 - add [model_formulations.md](userguide/model_formulations.md), mapping the single-period and
   multi-period models onto each other and recording where they disagree

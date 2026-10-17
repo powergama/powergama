@@ -40,8 +40,8 @@ A simulation is a pipeline of four objects:
 
 - **[lp/](src/powergama/lp/)** is the optimisation package (`powergama.LpProblem`). It is organised
   **by formulation**, so the two ways of posing the problem sit side by side and can be read
-  against each other — merging them is the intended direction of travel. `LpProblemPyomo.py` is a
-  back-compat shim re-exporting `LpProblem`.
+  against each other — merging them is the intended direction of travel. The old
+  `LpProblemPyomo` module is gone; import `LpProblem` from `powergama` or `powergama.lp`.
 
   | module | holds |
   |---|---|
