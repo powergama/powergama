@@ -34,6 +34,7 @@ from . import project_locks
 from . import solver as solver_mod
 from .config import CONFIG_ATTRS, LpConfig
 from .context import CONTEXT_ATTRS, GridContext
+from .rt import build as rt_build
 from .rt import diagnostics as rt_diagnostics
 
 
@@ -156,16 +157,10 @@ class LpProblem:
         self._daily_objective_trace: dict[int, float] = {}
         self._hourly_objective_trace: list[tuple[int, int, int, float]] = []
         self._solver_persistent = False
-        # Everything the grid implies, derived once. Readers still say
-        # self._idx_generatorsWithStorage and so on; __getattr__ resolves those
-        # against the context.
-        self._ctx = GridContext.from_grid(grid, self._Bbus, self._DA, self.refnodes)
-        self._cfg.check_ramp_daily_reset(self._ctx.ramp_daily_reset)
-        # Previous-timestep generation dispatch; NaN signals first timestep (no ramp constraint).
-        self._gen_prev = np.full(len(grid.generator), np.nan)
         # Optional sparse DA locks (parquet long format) injected by prepare-rt.
-        # Unpacked onto self rather than held as a single object: these names are
-        # read directly by rt_diagnostics and by both model builders.
+        # Loaded before the context, which needs the border branch sets they
+        # identify. The rest are unpacked onto self rather than held as one
+        # object, because rt_diagnostics and both model builders read these names.
         _locks = project_locks.load_da_locks(grid)
         self._foreign_gen_lock = _locks.foreign_gen_lock
         self._foreign_cons_lock = _locks.foreign_cons_lock
@@ -176,10 +171,14 @@ class LpProblem:
         self._border_dc_flow_lb = _locks.border_dc_flow_lb
         self._border_dc_flow_ub = _locks.border_dc_flow_ub
         self._da_storage_marginalprice = _locks.da_storage_marginalprice
-        self._idx_border_ac = _locks.idx_border_ac
-        self._idx_border_dc = _locks.idx_border_dc
-        self._border_ac_sign = _locks.border_ac_sign
-        self._border_dc_sign = _locks.border_dc_sign
+
+        # Everything the grid implies, derived once. Readers still say
+        # self._idx_generatorsWithStorage and so on; __getattr__ resolves those
+        # against the context.
+        self._ctx = GridContext.from_grid(grid, self._Bbus, self._DA, self.refnodes, _locks)
+        self._cfg.check_ramp_daily_reset(self._ctx.ramp_daily_reset)
+        # Previous-timestep generation dispatch; NaN signals first timestep (no ramp constraint).
+        self._gen_prev = np.full(len(grid.generator), np.nan)
         # self._fancy_progressbar = False
 
         # Initial values of marginal costs, storage and storage values
@@ -359,53 +358,7 @@ class LpProblem:
             mutable=True,
             initialize={g: grid_data.generator.loc[g, "pump_cap"] for g in self.model.s_gen_pump},
         )
-        self.model.p_rt_target = pyo.Param(self.model.s_gen, within=pyo.Reals, default=0, mutable=True)
-        self.model.p_rt_target_active = pyo.Param(self.model.s_gen, within=pyo.Binary, default=0, mutable=True)
-        self.model.p_rt_deviation_price_gen = pyo.Param(
-            self.model.s_gen, within=pyo.NonNegativeReals, default=0, mutable=True
-        )
-        self.model.p_rt_deviation_price_gen_pos = pyo.Param(self.model.s_gen, within=pyo.Reals, default=0, mutable=True)
-        self.model.p_rt_deviation_price_gen_neg = pyo.Param(self.model.s_gen, within=pyo.Reals, default=0, mutable=True)
-        self.model.p_demand = pyo.Param(self.model.s_load, within=pyo.Reals, default=0, mutable=True)
-        # Consumer (flexible load) RT DA target for DA-target deviation penalties
-        self.model.p_rt_flexload_target = pyo.Param(
-            self.model.s_load_flex, within=pyo.NonNegativeReals, default=0, mutable=True
-        )
-        self.model.p_rt_flexload_target_active = pyo.Param(
-            self.model.s_load_flex, within=pyo.Binary, default=0, mutable=True
-        )
-        self.model.p_rt_deviation_price_flex = pyo.Param(
-            self.model.s_load_flex, within=pyo.NonNegativeReals, default=0, mutable=True
-        )
-        self.model.p_rt_deviation_price_flex_pos = pyo.Param(
-            self.model.s_load_flex, within=pyo.Reals, default=0, mutable=True
-        )
-        self.model.p_rt_deviation_price_flex_neg = pyo.Param(
-            self.model.s_load_flex, within=pyo.Reals, default=0, mutable=True
-        )
-        self.model.p_rt_storage_target = pyo.Param(
-            self.model.s_gen_storage, within=pyo.NonNegativeReals, default=0, mutable=True
-        )
-        self.model.p_rt_storage_balance_rhs = pyo.Param(
-            self.model.s_gen_storage, within=pyo.NonNegativeReals, default=0, mutable=True
-        )
-        self.model.p_rt_deviation_price_storage = pyo.Param(
-            self.model.s_gen_storage, within=pyo.NonNegativeReals, default=0, mutable=True
-        )
-        self.model.p_rt_deviation_price_storage_pos = pyo.Param(
-            self.model.s_gen_storage, within=pyo.Reals, default=0, mutable=True
-        )
-        self.model.p_rt_deviation_price_storage_neg = pyo.Param(
-            self.model.s_gen_storage, within=pyo.Reals, default=0, mutable=True
-        )
-        self.model.p_rt_io_target_ac = pyo.Param(self.model.s_branch_ac, within=pyo.Reals, default=0, mutable=True)
-        self.model.p_rt_io_target_dc = pyo.Param(self.model.s_branch_dc, within=pyo.Reals, default=0, mutable=True)
-        self.model.p_rt_io_target_active_ac = pyo.Param(
-            self.model.s_branch_ac, within=pyo.Binary, default=0, mutable=True
-        )
-        self.model.p_rt_io_target_active_dc = pyo.Param(
-            self.model.s_branch_dc, within=pyo.Binary, default=0, mutable=True
-        )
+        rt_build.add_params(self.model)
         # Written each timestep by _updateLpProblem from _flexload_storage_value. Only
         # the single-period path uses it; the multi-period path prices flexible load per
         # window in _build_day_joint_model instead.
@@ -464,20 +417,11 @@ class LpProblem:
             self.model.varLossDc21 = pyo.Var(self.model.s_branch_dc, within=pyo.NonNegativeReals)
         self.model.varGeneration = pyo.Var(self.model.s_gen, within=pyo.NonNegativeReals)
         self.model.varPump = pyo.Var(self.model.s_gen_pump, within=pyo.NonNegativeReals)
-        self.model.varRtTargetDevPos = pyo.Var(self.model.s_gen, within=pyo.NonNegativeReals)
-        self.model.varRtTargetDevNeg = pyo.Var(self.model.s_gen, within=pyo.NonNegativeReals)
+        rt_build.add_generation_deviation_vars(self.model)
         self.model.varFlexLoad = pyo.Var(self.model.s_load_flex, within=pyo.NonNegativeReals)
         self.model.varLoadShed = pyo.Var(self.model.s_load, within=pyo.NonNegativeReals)
         self.model.varDumpLoad = pyo.Var(self.model.s_load, within=pyo.NonNegativeReals)
-        # Flexible load DA target tracking deviations (soft penalty)
-        self.model.varRtFlexLoadTargetDevPos = pyo.Var(self.model.s_load_flex, within=pyo.NonNegativeReals)
-        self.model.varRtFlexLoadTargetDevNeg = pyo.Var(self.model.s_load_flex, within=pyo.NonNegativeReals)
-        self.model.varRtStorageTargetDevPos = pyo.Var(self.model.s_gen_storage, within=pyo.NonNegativeReals)
-        self.model.varRtStorageTargetDevNeg = pyo.Var(self.model.s_gen_storage, within=pyo.NonNegativeReals)
-        self.model.varRtIoTargetDevPosAc = pyo.Var(self.model.s_branch_ac, within=pyo.NonNegativeReals)
-        self.model.varRtIoTargetDevNegAc = pyo.Var(self.model.s_branch_ac, within=pyo.NonNegativeReals)
-        self.model.varRtIoTargetDevPosDc = pyo.Var(self.model.s_branch_dc, within=pyo.NonNegativeReals)
-        self.model.varRtIoTargetDevNegDc = pyo.Var(self.model.s_branch_dc, within=pyo.NonNegativeReals)
+        rt_build.add_remaining_deviation_vars(self.model)
         self.model.varVoltageAngle = pyo.Var(self.model.s_node, within=pyo.Reals, initialize=0.0)
 
     def _create_constraint_powerflow_limit(self, grid_data):
@@ -660,83 +604,16 @@ class LpProblem:
         self.model.cGenMinLimit = pyo.Constraint(self.model.s_gen, rule=genMinLimit_rule)
 
     def _create_constraint_rt_target_tracking(self):
-        """Constraint: RT DA target dispatch deviation accounting."""
-
-        if not self._rt_target_tracking_active:
-            return
-
-        def rt_target_rule(model, i):
-            if int(i) not in self._rt_target_gen_indices:
-                return pyo.Constraint.Skip
-            return (
-                model.varGeneration[i] - model.p_rt_target[i] == model.varRtTargetDevPos[i] - model.varRtTargetDevNeg[i]
-            )
-
-        self.model.cRtTargetTracking = pyo.Constraint(self.model.s_gen, rule=rt_target_rule)
+        rt_build.add_target_tracking(self.model, self._grid, self._ctx, self._cfg)
 
     def _create_constraint_rt_flexload_target_tracking(self):
-        """Constraint: RT DA flexible load (consumer) target deviation accounting.
-
-        Flexible load can deviate from DA when other balancing channels are exhausted,
-        but tracked deviations incur soft penalties to keep DA as the default solution.
-        """
-        if not self._rt_target_tracking_active:
-            return
-
-        def rt_flexload_target_rule(model, j):
-            if int(j) not in self._rt_consumer_target_indices:
-                return pyo.Constraint.Skip
-            return (
-                model.varFlexLoad[j] - model.p_rt_flexload_target[j]
-                == model.varRtFlexLoadTargetDevPos[j] - model.varRtFlexLoadTargetDevNeg[j]
-            )
-
-        self.model.cRtFlexLoadTargetTracking = pyo.Constraint(self.model.s_load_flex, rule=rt_flexload_target_rule)
+        rt_build.add_flexload_target_tracking(self.model, self._grid, self._ctx, self._cfg)
 
     def _create_constraint_rt_storage_target_tracking(self):
-        """Constraint: RT DA storage filling trajectory deviation accounting."""
-
-        if not self._rt_target_tracking_active:
-            return
-
-        def rt_storage_target_rule(model, i):
-            if int(i) not in self._rt_storage_target_indices:
-                return pyo.Constraint.Skip
-            lhs = model.p_rt_storage_balance_rhs[i] - (self.timeDelta * model.varGeneration[i])
-            if int(i) in model.s_gen_pump:
-                pump_eff = float(self._grid.generator.loc[i, "pump_efficiency"])
-                lhs += self.timeDelta * pump_eff * model.varPump[i]
-            return (
-                lhs - model.p_rt_storage_target[i]
-                == model.varRtStorageTargetDevPos[i] - model.varRtStorageTargetDevNeg[i]
-            )
-
-        self.model.cRtStorageTargetTracking = pyo.Constraint(self.model.s_gen_storage, rule=rt_storage_target_rule)
+        rt_build.add_storage_target_tracking(self.model, self._grid, self._ctx, self._cfg)
 
     def _create_constraint_rt_io_target_tracking(self):
-        """Constraint: DA BE border flow target deviation accounting for AC/DC branches."""
-
-        if not self._rt_target_tracking_active:
-            return
-
-        def _ac_rule(model, b):
-            if int(b) not in self._idx_border_ac:
-                return pyo.Constraint.Skip
-            return (
-                model.p_rt_io_target_active_ac[b] * (model.varAcBranchFlow[b] - model.p_rt_io_target_ac[b])
-                == model.varRtIoTargetDevPosAc[b] - model.varRtIoTargetDevNegAc[b]
-            )
-
-        def _dc_rule(model, b):
-            if int(b) not in self._idx_border_dc:
-                return pyo.Constraint.Skip
-            return (
-                model.p_rt_io_target_active_dc[b] * (model.varDcBranchFlow[b] - model.p_rt_io_target_dc[b])
-                == model.varRtIoTargetDevPosDc[b] - model.varRtIoTargetDevNegDc[b]
-            )
-
-        self.model.cRtIoTargetTrackingAc = pyo.Constraint(self.model.s_branch_ac, rule=_ac_rule)
-        self.model.cRtIoTargetTrackingDc = pyo.Constraint(self.model.s_branch_dc, rule=_dc_rule)
+        rt_build.add_border_flow_target_tracking(self.model, self._grid, self._ctx, self._cfg)
 
     def _create_constraint_generator_pump(self, grid_data):
         """Constraint: Pump output limit (respects both hardware cap and remaining reservoir space)."""
@@ -874,37 +751,7 @@ class LpProblem:
                 cost += sum(model.varDumpLoad[i] * const.loadshedcost for i in model.s_load)
 
             if self._rt_deviation_objective_active:
-                cost += sum(
-                    model.p_rt_deviation_price_gen_pos[i] * model.varRtTargetDevPos[i]
-                    + model.p_rt_deviation_price_gen_neg[i] * model.varRtTargetDevNeg[i]
-                    for i in model.s_gen
-                    if int(i) in self._rt_target_gen_indices
-                )
-                cost += sum(
-                    model.p_rt_deviation_price_flex_pos[j] * model.varRtFlexLoadTargetDevPos[j]
-                    + model.p_rt_deviation_price_flex_neg[j] * model.varRtFlexLoadTargetDevNeg[j]
-                    for j in model.s_load_flex
-                    if int(j) in self._rt_consumer_target_indices
-                )
-                cost += sum(
-                    model.p_rt_deviation_price_storage_pos[i] * model.varRtStorageTargetDevPos[i]
-                    + model.p_rt_deviation_price_storage_neg[i] * model.varRtStorageTargetDevNeg[i]
-                    for i in model.s_gen_storage
-                    if int(i) in self._rt_storage_target_indices
-                )
-                if self._rt_xborder_flow_penalty_eur_per_mwh > 0.0:
-                    cost += self._rt_xborder_flow_penalty_eur_per_mwh * (
-                        sum(
-                            model.varRtIoTargetDevPosAc[b] + model.varRtIoTargetDevNegAc[b]
-                            for b in model.s_branch_ac
-                            if int(b) in self._idx_border_ac
-                        )
-                        + sum(
-                            model.varRtIoTargetDevPosDc[b] + model.varRtIoTargetDevNegDc[b]
-                            for b in model.s_branch_dc
-                            if int(b) in self._idx_border_dc
-                        )
-                    )
+                cost += rt_build.deviation_cost(model, self._ctx, self._cfg)
             return cost
 
         self.model.OBJ = pyo.Objective(rule=cost_rule, sense=pyo.minimize)

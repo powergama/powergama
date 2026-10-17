@@ -96,14 +96,32 @@ class GridContext:
     inter_area_ntc: object = None
     inter_area_ntc_rows: dict = field(default_factory=dict)
 
+    # --- border branches, identified by the project-specific DA lock tables ---
+    # Grid-shaped lookups even though their source is an injected artifact, so
+    # the constraint rules that read them can take ctx like everything else.
+    idx_border_ac: set = field(default_factory=set)
+    idx_border_dc: set = field(default_factory=set)
+    border_ac_sign: dict = field(default_factory=dict)
+    border_dc_sign: dict = field(default_factory=dict)
+
     @classmethod
-    def from_grid(cls, grid, Bbus, DA, refnodes):
+    def from_grid(cls, grid, Bbus, DA, refnodes, locks):
         """Derive everything the builders need from *grid*.
 
         Bbus/DA/refnodes are passed in rather than computed here: the matrices are
-        expensive and the caller already prints progress around them.
+        expensive and the caller already prints progress around them. *locks* is a
+        :class:`~powergama.lp.project_locks.DaLocks`, needed only for the border
+        branch sets it identifies.
         """
-        ctx = cls(Bbus=Bbus, DA=DA, refnodes=refnodes)
+        ctx = cls(
+            Bbus=Bbus,
+            DA=DA,
+            refnodes=refnodes,
+            idx_border_ac=locks.idx_border_ac,
+            idx_border_dc=locks.idx_border_dc,
+            border_ac_sign=locks.border_ac_sign,
+            border_dc_sign=locks.border_dc_sign,
+        )
         ctx._build_node_maps(grid)
         ctx._build_index_sets(grid)
         ctx._build_profile_refs(grid)
