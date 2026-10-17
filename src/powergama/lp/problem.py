@@ -29,12 +29,12 @@ from pyomo.contrib import appsi
 from tqdm import tqdm
 
 from .. import constants as const
-from .. import rt_diagnostics
 from ..timestep_result import TimestepResult, aggregate_to_nodes
 from . import project_locks
 from . import solver as solver_mod
 from .config import CONFIG_ATTRS, LpConfig
 from .context import CONTEXT_ATTRS, GridContext
+from .rt import diagnostics as rt_diagnostics
 
 
 class LpProblem:

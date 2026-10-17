@@ -34,7 +34,7 @@ import numpy as np
 import pandas as pd
 import pyomo.environ as pyo
 
-from . import constants as const
+from ... import constants as const
 
 
 def write_objective_trace(lp):
