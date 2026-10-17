@@ -1,6 +1,17 @@
 # Changes
 
 ## unpublished
+2026-10-17
+- rename simulation mode: `objective_mode="hourly"` is now `"single_period"`, since a timestep
+  need not be an hour. The old spelling raises; there is no alias (this name was never released)
+- reorganise the optimisation code into the `powergama.lp` package, split by formulation:
+  `lp/single_period/`, `lp/multi_period/` and `lp/rt/` for the balancing side-path, each with
+  its own model building, input data and result extraction. `powergama.LpProblem` is unchanged
+  and `powergama.LpProblemPyomo` still imports, so existing code needs no edit
+- the two formulations no longer share any model state, so either can be built without the other
+- add [model_formulations.md](userguide/model_formulations.md), mapping the single-period and
+  multi-period models onto each other and recording where they disagree
+
 2026-10-16
 - rename multi-period API: `objective_mode="daily_24h"` is now `"multi_period"`, and
   `objective_day_horizon_hours`/`objective_day_commit_hours` are now
@@ -8,7 +19,7 @@
 - fix wrong branch capacity sensitivities in multi-period mode (transposed constraint index)
 - unsupported mode combinations now raise instead of silently computing the wrong thing:
   `is_rt` with `multi_period`, `lossmethod != 0` with `multi_period`, `ramp_daily_reset`
-  with `commit_hours != 24`, and fault simulation outside `hourly` mode
+  with `commit_hours != 24`, and fault simulation outside `single_period` mode
 - `continue_from_last=True` on an empty results database now raises a clear error
 
 2026-10-01
