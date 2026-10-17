@@ -32,6 +32,7 @@ from tqdm import tqdm
 from .. import constants as const
 from .. import rt_diagnostics
 from ..timestep_result import TimestepResult, aggregate_to_nodes
+from . import project_locks
 from . import solver as solver_mod
 
 
@@ -299,17 +300,6 @@ class LpProblem:
         # Previous-timestep generation dispatch; NaN signals first timestep (no ramp constraint).
         self._gen_prev = np.full(len(grid.generator), np.nan)
         self._idx_branchesWithConstraints = grid.getIdxBranchesWithFlowConstraints()
-        # Optional sparse foreign DA locks (parquet long format) injected by prepare-rt.
-        self._foreign_gen_lock = None
-        self._foreign_cons_lock = None
-        self._border_ac_flow_lock = None
-        self._border_dc_flow_lock = None
-        self._border_ac_flow_lb = None
-        self._border_ac_flow_ub = None
-        self._border_dc_flow_lb = None
-        self._border_dc_flow_ub = None
-        # DA storage marginalprice: dict {(timestep, storage_indx): value} for storage deviation pricing.
-        self._da_storage_marginalprice: dict[tuple[int, int], float] = {}
         # Classify BE generators by type/tag for differentiated deviation pricing.
         _gtype = (
             grid.generator["type"].astype(str).str.lower()
@@ -346,13 +336,6 @@ class LpProblem:
             and float(pd.to_numeric(grid.generator.loc[i, "pump_cap"], errors="coerce") or 0.0) <= 0.0
             and float(pd.to_numeric(grid.generator.loc[i, "storage_cap"], errors="coerce") or 0.0) <= 0.0
         }
-        # Border branches: branches that cross between different areas (used for border-flow locking).
-        # Identified by the presence of border flow lock data on the grid object (set externally).
-        # The sign convention: +1 if branch carries flow away from area_from, -1 otherwise.
-        self._idx_border_ac: set[int] = set()
-        self._idx_border_dc: set[int] = set()
-        self._border_ac_sign: dict[int, float] = {}
-        self._border_dc_sign: dict[int, float] = {}
         self._default_ac_flow_bounds = {}
         self._default_dc_flow_bounds = {}
         for b in grid.branch.index:
@@ -369,7 +352,23 @@ class LpProblem:
                 self._default_dc_flow_bounds[int(b)] = (None, None)
         # Optional inter-area NTC constraints
         self._inter_area_ntc = grid.inter_area_ntc
-        self._load_optional_foreign_da_locks(grid)
+        # Optional sparse DA locks (parquet long format) injected by prepare-rt.
+        # Unpacked onto self rather than held as a single object: these names are
+        # read directly by rt_diagnostics and by both model builders.
+        _locks = project_locks.load_da_locks(grid)
+        self._foreign_gen_lock = _locks.foreign_gen_lock
+        self._foreign_cons_lock = _locks.foreign_cons_lock
+        self._border_ac_flow_lock = _locks.border_ac_flow_lock
+        self._border_dc_flow_lock = _locks.border_dc_flow_lock
+        self._border_ac_flow_lb = _locks.border_ac_flow_lb
+        self._border_ac_flow_ub = _locks.border_ac_flow_ub
+        self._border_dc_flow_lb = _locks.border_dc_flow_lb
+        self._border_dc_flow_ub = _locks.border_dc_flow_ub
+        self._da_storage_marginalprice = _locks.da_storage_marginalprice
+        self._idx_border_ac = _locks.idx_border_ac
+        self._idx_border_dc = _locks.idx_border_dc
+        self._border_ac_sign = _locks.border_ac_sign
+        self._border_dc_sign = _locks.border_dc_sign
         # self._fancy_progressbar = False
 
         # Initial values of marginal costs, storage and storage values
@@ -480,154 +479,6 @@ class LpProblem:
             self._storage = values.clip(lower=0.0, upper=self._grid.generator["storage_cap"])
         if storage_flexload is not None:
             self._storage_flexload = pd.Series(storage_flexload, index=self._grid.consumer.index, dtype=float)
-
-    def _load_optional_foreign_da_locks(self, grid):
-        """Load optional foreign DA lock tables from parquet artifacts.
-
-        Expected long format:
-        - generators: timestep, indx, output
-        - consumers: timestep, indx, demand
-        """
-        gen_path = getattr(grid, "foreign_gen_lock_parquet", "")
-        con_path = getattr(grid, "foreign_consumer_lock_parquet", "")
-        ac_border_path = getattr(grid, "border_ac_flow_lock_parquet", "")
-        dc_border_path = getattr(grid, "border_dc_flow_lock_parquet", "")
-        ac_border_bounds_path = getattr(grid, "border_ac_flow_bounds_parquet", "")
-        dc_border_bounds_path = getattr(grid, "border_dc_flow_bounds_parquet", "")
-
-        if gen_path:
-            p = Path(str(gen_path))
-            if p.exists():
-                try:
-                    gdf = pd.read_parquet(p)
-                    gdf["timestep"] = pd.to_numeric(gdf["timestep"], errors="coerce").fillna(-1).astype(int)
-                    gdf["indx"] = pd.to_numeric(gdf["indx"], errors="coerce").fillna(-1).astype(int)
-                    gdf["output"] = pd.to_numeric(gdf["output"], errors="coerce").fillna(0.0)
-                    self._foreign_gen_lock = gdf.set_index(["timestep", "indx"])["output"]
-                except Exception as exc:
-                    warnings.warn(f"Failed reading foreign generator DA lock parquet '{p}': {exc}", UserWarning)
-
-        if con_path:
-            p = Path(str(con_path))
-            if p.exists():
-                try:
-                    cdf = pd.read_parquet(p)
-                    cdf["timestep"] = pd.to_numeric(cdf["timestep"], errors="coerce").fillna(-1).astype(int)
-                    cdf["indx"] = pd.to_numeric(cdf["indx"], errors="coerce").fillna(-1).astype(int)
-                    cdf["demand"] = pd.to_numeric(cdf["demand"], errors="coerce").fillna(0.0)
-                    self._foreign_cons_lock = cdf.set_index(["timestep", "indx"])["demand"]
-                except Exception as exc:
-                    warnings.warn(f"Failed reading foreign consumer DA lock parquet '{p}': {exc}", UserWarning)
-
-        if ac_border_path:
-            p = Path(str(ac_border_path))
-            if p.exists():
-                try:
-                    adf = pd.read_parquet(p)
-                    adf["timestep"] = pd.to_numeric(adf["timestep"], errors="coerce").fillna(-1).astype(int)
-                    adf["indx"] = pd.to_numeric(adf["indx"], errors="coerce").fillna(-1).astype(int)
-                    adf["flow"] = pd.to_numeric(adf["flow"], errors="coerce").fillna(0.0)
-                    self._border_ac_flow_lock = adf.set_index(["timestep", "indx"])["flow"]
-                except Exception as exc:
-                    warnings.warn(f"Failed reading BE-border AC flow lock parquet '{p}': {exc}", UserWarning)
-
-        if dc_border_path:
-            p = Path(str(dc_border_path))
-            if p.exists():
-                try:
-                    ddf = pd.read_parquet(p)
-                    ddf["timestep"] = pd.to_numeric(ddf["timestep"], errors="coerce").fillna(-1).astype(int)
-                    ddf["indx"] = pd.to_numeric(ddf["indx"], errors="coerce").fillna(-1).astype(int)
-                    ddf["flow"] = pd.to_numeric(ddf["flow"], errors="coerce").fillna(0.0)
-                    self._border_dc_flow_lock = ddf.set_index(["timestep", "indx"])["flow"]
-                except Exception as exc:
-                    warnings.warn(f"Failed reading BE-border DC flow lock parquet '{p}': {exc}", UserWarning)
-
-        if ac_border_bounds_path:
-            p = Path(str(ac_border_bounds_path))
-            if p.exists():
-                try:
-                    adf = pd.read_parquet(p)
-                    adf["timestep"] = pd.to_numeric(adf["timestep"], errors="coerce").fillna(-1).astype(int)
-                    adf["indx"] = pd.to_numeric(adf["indx"], errors="coerce").fillna(-1).astype(int)
-                    adf["flow_lb"] = pd.to_numeric(adf["flow_lb"], errors="coerce")
-                    adf["flow_ub"] = pd.to_numeric(adf["flow_ub"], errors="coerce")
-                    adf_idx = adf.set_index(["timestep", "indx"])
-                    self._border_ac_flow_lb = adf_idx["flow_lb"]
-                    self._border_ac_flow_ub = adf_idx["flow_ub"]
-                except Exception as exc:
-                    warnings.warn(f"Failed reading BE-border AC flow bounds parquet '{p}': {exc}", UserWarning)
-
-        if dc_border_bounds_path:
-            p = Path(str(dc_border_bounds_path))
-            if p.exists():
-                try:
-                    ddf = pd.read_parquet(p)
-                    ddf["timestep"] = pd.to_numeric(ddf["timestep"], errors="coerce").fillna(-1).astype(int)
-                    ddf["indx"] = pd.to_numeric(ddf["indx"], errors="coerce").fillna(-1).astype(int)
-                    ddf["flow_lb"] = pd.to_numeric(ddf["flow_lb"], errors="coerce")
-                    ddf["flow_ub"] = pd.to_numeric(ddf["flow_ub"], errors="coerce")
-                    ddf_idx = ddf.set_index(["timestep", "indx"])
-                    self._border_dc_flow_lb = ddf_idx["flow_lb"]
-                    self._border_dc_flow_ub = ddf_idx["flow_ub"]
-                except Exception as exc:
-                    warnings.warn(f"Failed reading BE-border DC flow bounds parquet '{p}': {exc}", UserWarning)
-
-        da_storage_marginalprice_path = getattr(grid, "da_storage_marginalprice_parquet", "")
-        if da_storage_marginalprice_path:
-            p = Path(str(da_storage_marginalprice_path))
-            if p.exists():
-                try:
-                    sdf = pd.read_parquet(p)
-                    sdf["timestep"] = pd.to_numeric(sdf["timestep"], errors="coerce").fillna(-1).astype(int)
-                    sdf["indx"] = pd.to_numeric(sdf["indx"], errors="coerce").fillna(-1).astype(int)
-                    sdf["marginalprice"] = pd.to_numeric(sdf["marginalprice"], errors="coerce").fillna(0.0)
-                    self._da_storage_marginalprice = {
-                        (int(row["timestep"]), int(row["indx"])): float(row["marginalprice"])
-                        for _, row in sdf.iterrows()
-                    }
-                except Exception as exc:
-                    warnings.warn(f"Failed reading DA storage marginalprice parquet '{p}': {exc}", UserWarning)
-
-        def _extract_loaded_branch_indices(series_obj):
-            if series_obj is None:
-                return set()
-            idx_obj = getattr(series_obj, "index", None)
-            if idx_obj is None:
-                return set()
-            if hasattr(idx_obj, "names") and "indx" in list(idx_obj.names):
-                try:
-                    return {int(v) for v in idx_obj.get_level_values("indx").unique().tolist()}
-                except Exception:
-                    return set()
-            return set()
-
-        def _be_oriented_sign(branch_df, branch_idx: int) -> float:
-            try:
-                row = branch_df.loc[int(branch_idx)]
-            except Exception:
-                return 0.0
-            node_from = str(row.get("node_from", ""))
-            node_to = str(row.get("node_to", ""))
-            if node_from.startswith("BE") and (not node_to.startswith("BE")):
-                return 1.0
-            if node_to.startswith("BE") and (not node_from.startswith("BE")):
-                return -1.0
-            return 0.0
-
-        loaded_ac_idx = set()
-        loaded_ac_idx |= _extract_loaded_branch_indices(self._border_ac_flow_lock)
-        loaded_ac_idx |= _extract_loaded_branch_indices(self._border_ac_flow_lb)
-        loaded_ac_idx |= _extract_loaded_branch_indices(self._border_ac_flow_ub)
-        self._idx_border_ac = {int(i) for i in loaded_ac_idx if int(i) in set(self._grid.branch.index.tolist())}
-        self._border_ac_sign = {int(i): _be_oriented_sign(self._grid.branch, int(i)) for i in self._idx_border_ac}
-
-        loaded_dc_idx = set()
-        loaded_dc_idx |= _extract_loaded_branch_indices(self._border_dc_flow_lock)
-        loaded_dc_idx |= _extract_loaded_branch_indices(self._border_dc_flow_lb)
-        loaded_dc_idx |= _extract_loaded_branch_indices(self._border_dc_flow_ub)
-        self._idx_border_dc = {int(i) for i in loaded_dc_idx if int(i) in set(self._grid.dcbranch.index.tolist())}
-        self._border_dc_sign = {int(i): _be_oriented_sign(self._grid.dcbranch, int(i)) for i in self._idx_border_dc}
 
     # ------------------------------------------------------------------
     # Model construction.
