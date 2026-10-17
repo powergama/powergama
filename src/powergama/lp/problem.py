@@ -32,6 +32,7 @@ from tqdm import tqdm
 from .. import constants as const
 from .. import rt_diagnostics
 from ..timestep_result import TimestepResult, aggregate_to_nodes
+from . import solver as solver_mod
 
 
 class LpProblem:
@@ -2046,31 +2047,7 @@ class LpProblem:
             f"{len(list(m.s_node)) * len(day_timesteps)} node×h power-balance constraints"
         )
 
-        # Create solver (only APPSI HiGHS supported for dual extraction)
-        if solver_name != "appsi_highs":
-            warnings.warn(
-                f"multi_period mode with solver='{solver_name}': only 'appsi_highs' supports "
-                "dual extraction for nodal prices. Proceeding but prices may be zero.",
-                UserWarning,
-            )
-
-        def getenv_int(name: str) -> int | None:
-            """Helper to get integer environment value, or None if it does not exist"""
-            value = os.environ.get(name)
-            if value is None:
-                return None
-            try:
-                return int(value.strip())
-            except ValueError:
-                return None
-
-        day_opt = appsi.solvers.highs.Highs()
-
-        if (seed := getenv_int("POWERGAMA_HIGHS_RANDOM_SEED")) is not None:
-            day_opt.highs_options["random_seed"] = seed
-
-        if (threads := getenv_int("POWERGAMA_HIGHS_THREADS")) is not None and threads >= 1:
-            day_opt.highs_options["threads"] = threads
+        day_opt = solver_mod.create_window_solver(solver_name)
 
         res = day_opt.solve(m)
         if res.termination_condition != appsi.base.TerminationCondition.optimal:
@@ -2762,96 +2739,10 @@ class LpProblem:
             self._solver_persistent = True
 
         # Initalise solver, and check it is available
-        if solver == "gurobi":
-            opt = pyo.SolverFactory("gurobi", solver_io="python")
-            print(":) Using direct python interface to solver")
-        elif solver == "gurobi_direct":  # think this is the same as gurobi above
-            opt = pyo.SolverFactory(solver)
-            print(":) Using gurobi_direct")
-        elif solver == "gurobi_persistent":
-            opt = pyo.SolverFactory("gurobi_persistent")
-            print(":) Using persistent (in-memory) python interface to solver")
-            print("-- Experimental --")
-            symbolic_solver_labels = True
-            if "symbolic_solver_labels" in solve_args:
-                symbolic_solver_labels = solve_args["symbolic_solver_labels"]
-                solve_args.pop("symbolic_solver_labels")
-            opt.set_instance(self.model, symbolic_solver_labels=symbolic_solver_labels)
-        elif solver == "appsi_highs":
-            # opt = pyo.SolverFactory(solver)
-            opt = appsi.solvers.Highs()
-            # Keep solve() from raising on infeasible/unbounded runs; load values explicitly on optimal.
-            opt.config.load_solution = False
+        opt = solver_mod.create_solver(solver, self.model, solver_path=solver_path, solve_args=solve_args)
 
-            # Optional reproducibility controls for APPsi/HiGHS.
-            # These keep workflow APIs unchanged while enabling seed/thread control per run.
-            seed_raw = str(os.environ.get("POWERGAMA_HIGHS_RANDOM_SEED", "")).strip()
-            if seed_raw:
-                try:
-                    opt.highs_options["random_seed"] = int(seed_raw)
-                except Exception:
-                    warnings.warn(
-                        f"Ignoring invalid POWERGAMA_HIGHS_RANDOM_SEED='{seed_raw}' (expected integer).",
-                        UserWarning,
-                    )
-
-            threads_raw = str(os.environ.get("POWERGAMA_HIGHS_THREADS", "")).strip()
-            if threads_raw:
-                try:
-                    threads = int(threads_raw)
-                    if threads >= 1:
-                        opt.highs_options["threads"] = threads
-                except Exception:
-                    warnings.warn(
-                        f"Ignoring invalid POWERGAMA_HIGHS_THREADS='{threads_raw}' (expected integer >= 1).",
-                        UserWarning,
-                    )
-
-            parallel_raw = str(os.environ.get("POWERGAMA_HIGHS_PARALLEL", "")).strip().lower()
-            if parallel_raw in {"off", "on", "choose"}:
-                opt.highs_options["parallel"] = parallel_raw
-
-            if opt.available():
-                print(":) Found solver")
-            else:
-                print(":( Could not find solver {}. Returning.".format(solver))
-                raise Exception("Could not find LP solver {}".format(solver))
-        else:
-            solver_io = None
-            # Some solver plugins (e.g. pyomo.contrib.highs) do not accept
-            # the executable kwarg in their ConfigDict.
-            if solver_path:
-                opt = pyo.SolverFactory(solver, executable=solver_path, solver_io=solver_io)
-            else:
-                opt = pyo.SolverFactory(solver, solver_io=solver_io)
-            if opt.available():
-                opt_exec = None
-                if hasattr(opt, "executable"):
-                    try:
-                        opt_exec = opt.executable()
-                    except Exception:
-                        opt_exec = None
-                if opt_exec:
-                    print(":) Found solver here: {}".format(opt_exec))
-                else:
-                    print(":) Found solver")
-            else:
-                print(":( Could not find solver {}. Returning.".format(solver))
-                raise Exception("Could not find LP solver {}".format(solver))
-
-        # Enable access to dual values. Either way self.dual ends up a mapping from
-        # constraint data to float, which is all result extraction needs -- but the two
-        # paths produce it very differently:
-        #  - APPSI returns a plain dict from get_duals(), replaced after every solve.
-        #  - Every other solver imports duals through a pyo.Suffix, which has to be a
-        #    component of the model the solver is handed. Attaching it to the LpProblem
-        #    instead would not raise: the solver would simply never see it, and every
-        #    nodal price would come back zero.
-        if isinstance(opt, appsi.solvers.highs.Highs):
-            self.dual = {}
-        else:
-            self.model.dual = pyo.Suffix(direction=pyo.Suffix.IMPORT)
-            self.dual = self.model.dual
+        # Enable access to dual values.
+        self.dual = solver_mod.create_dual_handle(opt, self.model)
 
         timesteps_to_solve = self._get_timesteps_to_solve(continue_from_last=continue_from_last, results=results)
         self._build_day_hour_index(timesteps_to_solve)
