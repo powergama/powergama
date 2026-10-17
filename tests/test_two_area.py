@@ -185,7 +185,7 @@ def test_multi_period_pumping_and_storage_are_active(two_area_multi_period_res):
 
 
 def test_multi_period_flexible_load_is_active(two_area_multi_period_res):
-    """Same assertion as the hourly case, now that this mode prices flexible load."""
+    """Same assertion as the single-period case, now that this mode prices flexible load."""
     _data, res = two_area_multi_period_res
     flex = _tables(res)["Res_FlexibleLoad"]
 

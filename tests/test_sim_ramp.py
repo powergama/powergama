@@ -33,10 +33,10 @@ def test_generator_ramp_limit(tmp_path, testcase_9bus_data):
             assert p_now[i] - p_prev[i] + gen["ramp_down_pu"] * gen["pmax"] >= -TOL
 
 
-def test_generator_ramp_limit_hourly(tmp_path, testcase_9bus_data):
-    """Check that ramp rates are observed in hourly optimisation mode.
+def test_generator_ramp_limit_single_period(tmp_path, testcase_9bus_data):
+    """Check that ramp rates are observed in single-period optimisation mode.
 
-    The hourly path implements ramp limits by tightening the generator bounds in
+    The single-period path implements ramp limits by tightening the generator bounds in
     _updateLpProblem against the previous timestep's dispatch, which is a completely
     separate implementation from the multi-period cRampUp/cRampDn constraints that
     test_generator_ramp_limit exercises. Nothing compared the two before.
@@ -45,7 +45,7 @@ def test_generator_ramp_limit_hourly(tmp_path, testcase_9bus_data):
     generator the availability bound can fall below the ramp-down floor (a CSP plant at
     sunset cannot keep generating), and the `pmin_now = min(pmin_now, pmax_now)` guard in
     _updateLpProblem then drops the ramp floor rather than making the LP infeasible. That
-    is deliberate, so "ramp limits are always respected" is not an invariant in hourly
+    is deliberate, so "ramp limits are always respected" is not an invariant in single-period
     mode -- note the multi-period path has no such escape hatch.
     """
     data = testcase_9bus_data
@@ -53,8 +53,8 @@ def test_generator_ramp_limit_hourly(tmp_path, testcase_9bus_data):
     data.generator["ramp_up_pu"] = 0.1
     data.generator["ramp_down_pu"] = 0.1
 
-    lp = powergama.LpProblem(data, objective_mode="hourly")
-    res = powergama.Results(data, tmp_path / "ramp_hourly.sqlite")
+    lp = powergama.LpProblem(data, objective_mode="single_period")
+    res = powergama.Results(data, tmp_path / "ramp_single_period.sqlite")
     lp.solve(res, solver="appsi_highs", solve_args={})
 
     # Generators whose availability bound cannot bind: no storage, and a flat inflow

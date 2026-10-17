@@ -27,9 +27,22 @@ def test_lossmethod_with_multi_period_raises(testcase_9bus_data, lossmethod):
         powergama.LpProblem(testcase_9bus_data, objective_mode="multi_period", lossmethod=lossmethod)
 
 
-def test_lossmethod_with_hourly_mode_is_allowed(testcase_9bus_data):
+def test_old_hourly_mode_spelling_is_rejected(testcase_9bus_data):
+    """The mode was renamed "hourly" -> "single_period" with no alias.
+
+    A timestep need not be an hour, so "hourly" was never the right name. The
+    rename is a clean break rather than a deprecation because objective_mode has
+    never appeared in a release -- the latest tag is v1.5.2 and this parameter
+    arrived after it. Pinned so the break stays deliberate: a silently-accepted
+    "hourly" would be worse than the error.
+    """
+    with pytest.raises(ValueError, match="single_period"):
+        powergama.LpProblem(testcase_9bus_data, objective_mode="hourly")
+
+
+def test_lossmethod_with_single_period_mode_is_allowed(testcase_9bus_data):
     """Guard must not catch the supported combination."""
-    lp = powergama.LpProblem(testcase_9bus_data, objective_mode="hourly", lossmethod=1)
+    lp = powergama.LpProblem(testcase_9bus_data, objective_mode="single_period", lossmethod=1)
     assert lp is not None
 
 

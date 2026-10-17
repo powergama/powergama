@@ -65,11 +65,11 @@ below `horizon_hours` gives a rolling horizon with lookahead (e.g. 48/24).
 
 Storage values — both for generators and for flexible load — are evaluated once per
 window from the filling level at the start of it, since the whole window is a single
-LP and the value has to enter as a constant coefficient. The hourly mode instead
+LP and the value has to enter as a constant coefficient. The single-period mode instead
 re-prices from the current filling level before every time step. For flexible load
 this also means the reservoir level is a bounded variable within the window rather
 than a level clipped after each solve, so it cannot leave `[0, capacity]` the way it
-can in hourly mode. See [model_description.md](model_description.md).
+can in single-period mode. See [model_description.md](model_description.md).
 
 ## 3. Balancing market (deviations from day-ahead)
 

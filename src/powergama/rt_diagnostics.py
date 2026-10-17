@@ -38,7 +38,7 @@ from . import constants as const
 
 
 def write_objective_trace(lp):
-    """Write optional hourly objective trace CSV for mode parity diagnostics."""
+    """Write optional per-hour objective trace CSV for mode parity diagnostics."""
     trace_path = str(os.environ.get("POWERGAMA_OBJECTIVE_TRACE_CSV", "")).strip()
     if not trace_path or not lp._hourly_objective_trace:
         return

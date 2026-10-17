@@ -259,7 +259,7 @@ increases the flexibility status.
 <p id="fig_flexvalue_curve"><img src="flexvalues.png"/>
 <b>Figure 5:</b> Storage value curve for flexible load. The red dots represent nodal prices in two different operating points.</p>
 
-The description above is of the hourly mode, where the flexibility value is
+The description above is of the single-period mode, where the flexibility value is
 re-evaluated from the filling level before every time step. In multi-period mode
 the whole window is one LP, so the value has to be a constant coefficient: it is
 evaluated once per window from the filling level the window starts at, and only
@@ -270,7 +270,7 @@ Because that price no longer responds to the filling level within the window,
 $E_\text{flex}$ is a bounded decision variable there rather than a quantity
 computed after the fact: it is constrained to
 $0 \le E_\text{flex} \le E_\text{flex}^\text{max}$ over every hour of the window,
-with the continuity relation above as an equality constraint. The hourly mode
+with the continuity relation above as an equality constraint. The single-period mode
 imposes no such bounds — it lets the level leave the range and penalises that
 through the flexibility value at the *next* time step. The lower bound is dropped
 for a consumer whose on/off ratio $x_\text{flex}$ exceeds 1, since its maximum

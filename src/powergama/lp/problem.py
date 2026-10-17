@@ -57,11 +57,11 @@ class LpProblem:
     penalty_twoway_flow : float
         penalty factor to discourage flow in both directions on a branch with losses
     objective_mode : str
-        "hourly" (default) solves one LP per timestep in sequence, carrying storage
+        "single_period" (default) solves one LP per timestep in sequence, carrying storage
         state forward between solves. "multi_period" solves a joint LP over a window
         of `horizon_hours` with storage continuity inside the optimisation.
         These are not equivalent at horizon_hours=1 -- see
-        tests/test_sim_hourly_rolling_equiv.py.
+        tests/test_sim_single_period_rolling_equiv.py.
     horizon_hours : int
         Length of the optimisation window, in hours. "multi_period" mode only.
     commit_hours : int
@@ -74,7 +74,7 @@ class LpProblem:
         generators, relative to `storage_ini` in the grid data.
     is_rt : bool
         Solve the balancing ("real-time") problem: minimise deviation from a day-ahead
-        schedule rather than generation cost. Requires objective_mode="hourly".
+        schedule rather than generation cost. Requires objective_mode="single_period".
     rt_balancing_fee_eur_per_mwh : float
         Flat fee per MWh of real-time redispatch, to discourage marginal deviations.
     rt_p_res_curtailment_factor : float
@@ -96,7 +96,7 @@ class LpProblem:
         grid,
         lossmethod=0,
         penalty_twoway_flow=0,
-        objective_mode="hourly",
+        objective_mode="single_period",
         horizon_hours=24,
         commit_hours=24,
         storage_initial_fill_scale=1.0,
@@ -123,8 +123,8 @@ class LpProblem:
         self._grid = grid
         self.timeDelta = grid.timeDelta
         self._objective_mode = str(objective_mode).strip().lower()
-        if self._objective_mode not in {"hourly", "multi_period"}:
-            raise ValueError("objective_mode must be one of: hourly, multi_period")
+        if self._objective_mode not in {"single_period", "multi_period"}:
+            raise ValueError("objective_mode must be one of: single_period, multi_period")
         self._horizon_hours = int(max(1, int(horizon_hours)))
         self._commit_hours = int(max(1, int(commit_hours)))
         self._is_rt = bool(is_rt)
@@ -135,7 +135,7 @@ class LpProblem:
             raise NotImplementedError(
                 "is_rt=True is not supported with objective_mode='multi_period': the multi-period "
                 "model does not implement real-time target tracking or the deviation objective. "
-                "Use objective_mode='hourly' for balancing simulations."
+                "Use objective_mode='single_period' for balancing simulations."
             )
         if self._objective_mode == "multi_period" and self._lossmethod != 0:
             # Previously only a warning; the day-joint power balance has no loss terms at
@@ -143,7 +143,7 @@ class LpProblem:
             raise NotImplementedError(
                 f"lossmethod={self._lossmethod} is not supported with objective_mode='multi_period': "
                 "power losses are not modelled in the multi-period LP. Use lossmethod=0, or "
-                "objective_mode='hourly' if losses are required."
+                "objective_mode='single_period' if losses are required."
             )
         self._rt_dispatch_objective_mode = (
             "deviation" if self._is_rt else str(rt_dispatch_objective_mode).strip().lower()
@@ -241,7 +241,7 @@ class LpProblem:
             self._ramp_daily_reset = grid.generator["ramp_daily_reset"].fillna(False).astype(bool).values
         else:
             self._ramp_daily_reset = None
-        # The two solve paths release the ramp constraint on different clocks: the hourly
+        # The two solve paths release the ramp constraint on different clocks: the single-period
         # path at absolute midnight (timestep % 24 == 0), the multi-period path at every
         # commit-window boundary. These only coincide when a window is a whole day, so
         # any other commit length would silently change the meaning of ramp_daily_reset.
@@ -459,7 +459,7 @@ class LpProblem:
         return self._storage_flexload
 
     def set_storage_state(self, storage=None, storage_flexload=None):
-        """Seed the simulation state that makes the hourly problem sequential.
+        """Seed the simulation state that makes the single-period problem sequential.
 
         Both are held as pandas Series indexed like the grid data they describe, and
         this is the only place that guarantees it. It matters because
@@ -471,7 +471,7 @@ class LpProblem:
         A Series argument is aligned on its index; an array is taken positionally.
 
         Generator storage is clipped into `[0, storage_cap]`. Flexible-load levels are
-        taken as given, because the hourly path lets them leave their range on purpose
+        taken as given, because the single-period path lets them leave their range on purpose
         and prices that through `constants.flexload_outside_cost`.
         """
         if storage is not None:
@@ -588,7 +588,7 @@ class LpProblem:
             self.model.s_branch_dc, within=pyo.Binary, default=0, mutable=True
         )
         # Written each timestep by _updateLpProblem from _flexload_storage_value. Only
-        # the hourly path uses it; the multi-period path prices flexible load per
+        # the single-period path uses it; the multi-period path prices flexible load per
         # window in _build_day_joint_model instead.
         self.model.p_loadflex_cost = pyo.Param(self.model.s_load_flex, within=pyo.Reals, default=0, mutable=True)
         if self._lossmethod == 2:
@@ -1168,7 +1168,7 @@ class LpProblem:
         day's inflow/demand profile and can pre-charge/pre-dispatch storage.
 
         Everything else (power balance, DC flow-angle, branch limits, ramp
-        rates, BE border locks) is the same physics as the hourly model,
+        rates, BE border locks) is the same physics as the single-period model,
         now indexed by (entity, hour) instead of (entity) alone.
 
         Returns (model, pre_data_dict).
@@ -1289,7 +1289,7 @@ class LpProblem:
         # ── flexible load: reservoir parameters and per-hour value ────
         # Valued like generator storage in this path: the filling level is frozen at
         # window start and only the time-of-year factor varies within the window, so
-        # the price stays a constant coefficient in the LP. The hourly path re-prices
+        # the price stays a constant coefficient in the LP. The single-period path re-prices
         # from the current level every timestep instead.
         flexload_cost_h: dict = {}
         flex_storage_cap: dict = {}  # j → reservoir size, MWh
@@ -1386,7 +1386,7 @@ class LpProblem:
         # Reservoir level, in MWh. Reals, not NonNegativeReals: the floor is a
         # constraint rather than a domain because it has to be skipped for a consumer
         # whose per-hour charge limit cannot keep up with its drain -- see
-        # cFlexStorFloor. The hourly path has no floor at all; it lets the level go
+        # cFlexStorFloor. The single-period path has no floor at all; it lets the level go
         # negative and prices that at flexload_outside_cost.
         m.varFlexStorage = pyo.Var(m.s_load_flex, m.s_h, within=pyo.Reals)
         m.varAcBranchFlow = pyo.Var(m.s_branch_ac, m.s_h, within=pyo.Reals)
@@ -1513,7 +1513,7 @@ class LpProblem:
                 if np.isnan(ramp_pu):
                     return pyo.Constraint.Skip
                 # In RT, skip ramp for fully pinned generators (capacity ≈ pmin, e.g.
-                # DA-locked gas and nuclear). Same reasoning as the hourly path.
+                # DA-locked gas and nuclear). Same reasoning as the single-period path.
                 if self._is_rt and abs(capacity_h.get((h, i), 0.0) - pmin_h.get((h, i), 0.0)) < 1e-6:
                     return pyo.Constraint.Skip
                 if h == 0:
@@ -1565,7 +1565,7 @@ class LpProblem:
             # The window price is a constant coefficient, so the solver would otherwise
             # run the level to one extreme for the whole window: up to the per-hour
             # charge limit while the price is positive, or down with no charging at all
-            # while generation costs more than the price is worth. The hourly path needs
+            # while generation costs more than the price is worth. The single-period path needs
             # no bounds because it re-prices from the level every timestep, and the
             # curve turns at 0 and at capacity long before the level gets there.
             def _flex_stor_cap_rule(m, j, h):
@@ -1720,7 +1720,7 @@ class LpProblem:
         """Extract results from a solved 24h joint model and store to results DB.
 
         Emits one TimestepResult per committed hour in the optimisation window --
-        the same contract the hourly path uses -- then updates self._storage to
+        the same contract the single-period path uses -- then updates self._storage to
         end-of-commit levels.
         """
         H = pre_data["H"]
@@ -1854,7 +1854,7 @@ class LpProblem:
                 # Losses are not modelled in this path; lossmethod != 0 is rejected in __init__.
                 branch_ac_losses=[0.0] * len(branch_ac_list),
                 branch_dc_losses=[0.0] * len(branch_dc_list),
-                # Fault scenarios run the hourly path only -- see LpFaultProblem.__init__.
+                # Fault scenarios run the single-period path only -- see LpFaultProblem.__init__.
                 fault_start=None,
             ).store(results)
 
@@ -1869,7 +1869,7 @@ class LpProblem:
             self._storage[i] = float(pyo.value(m.varStorage[i, commit_hours - 1]) or 0.0)
 
         # Same for the flexible-load reservoirs, so the next window is priced from
-        # where this one left off -- the hourly path does this in
+        # where this one left off -- the single-period path does this in
         # _storeResultsAndUpdateStorage.
         for j in flex_list:
             self._storage_flexload[j] = float(pyo.value(m.varFlexStorage[j, commit_hours - 1]) or 0.0)
@@ -1878,7 +1878,7 @@ class LpProblem:
         """Build, solve, and store results for one rolling-horizon LP window.
 
         Creates a fresh APPSI HiGHS instance for the day model, respecting
-        the same environment variable seeds/threads as the hourly path.
+        the same environment variable seeds/threads as the single-period path.
         """
         ts0 = day_timesteps[0]
         if commit_hours is None:
@@ -2375,7 +2375,7 @@ class LpProblem:
         generator storage, so it falls as the reservoir fills. Outside [0, 1] the
         curves do not apply and a flat penalty pushes the level back into range.
 
-        Both solve paths price flexible load with this. The hourly loop re-evaluates
+        Both solve paths price flexible load with this. The single-period loop re-evaluates
         it every timestep from the level carried in ``self._storage_flexload``; the
         multi-period path evaluates it once per window from the level at window start,
         the same approximation it already makes for generator storage.
@@ -2644,7 +2644,7 @@ class LpProblem:
 
             print(f"Solving (24h joint LP) — {len(windows)} window(s): {solve_h}h lookahead / {commit_h}h commit ...")
             for win in windows:
-                # For daily_reset generators, clear _gen_prev at commit boundary (same rule intent as hourly)
+                # For daily_reset generators, clear _gen_prev at commit boundary (same rule intent as single-period)
                 if self._ramp_daily_reset is not None:
                     for i in self.model.s_gen:
                         if self._disable_nuclear_ramp_profile_conflict[int(i)]:
@@ -2762,7 +2762,7 @@ class LpProblem:
             self._storeResultsAndUpdateStorage(timestep, results)
 
         if self._objective_mode == "multi_period" and self._daily_objective_trace:
-            print("Daily objective trace (hourly-path accumulation):")
+            print("Daily objective trace (single-period-path accumulation):")
             for d in sorted(self._daily_objective_trace):
                 print(f"  day={d}: objective_sum={self._daily_objective_trace[d]:.6f}")
 

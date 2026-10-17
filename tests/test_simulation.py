@@ -152,7 +152,7 @@ def test_continue_from_last_with_ramp_limits(tmp_path, testcase_9bus_data):
     strict=True,
     reason=(
         "continue_from_last is not exactly resumable with lossmethod=1 or 2. The loss "
-        "linearisation is taken around the previous timestep's flows, which the hourly "
+        "linearisation is taken around the previous timestep's flows, which the single-period "
         "path carries implicitly in Var.value rather than persisting. On resume the "
         "model is fresh, so the pre-solve in solve() seeds the operating point instead "
         "of the real preceding solution, and results diverge from the first resumed "

@@ -4,7 +4,7 @@ Property tests: invariants that must hold regardless of how storage is valued.
 These are deliberately value-free. They pin relationships (continuity, capacity limits,
 table shapes, determinism) rather than specific flows or prices, so they survive the
 open question about storage valuation in multi-period mode and act as the regression
-net for refactoring work. See test_sim_hourly_rolling_equiv.py for that question.
+net for refactoring work. See test_sim_single_period_rolling_equiv.py for that question.
 """
 
 import sqlite3
@@ -29,7 +29,7 @@ RESULT_TABLES = [
 ]
 
 
-def _solve(data, dbfile, mode="hourly", **kwargs):
+def _solve(data, dbfile, mode="single_period", **kwargs):
     """Solve the case in the given objective mode and return the Results object."""
     if mode == "multi_period":
         kwargs.setdefault("horizon_hours", 24)
@@ -51,7 +51,7 @@ def _tables(res):
     return out
 
 
-@pytest.fixture(params=["hourly", "multi_period"])
+@pytest.fixture(params=["single_period", "multi_period"])
 def solved_case(request, tmp_path, testcase_9bus_data):
     """The 9-bus case solved in each objective mode, with its input data."""
     data = testcase_9bus_data
@@ -117,7 +117,7 @@ def test_branch_flow_within_capacity(solved_case):
 def test_storage_continuity(solved_case):
     """storage[t] == storage[t-1] + (inflow + pump*eff - output)*dt - spilled.
 
-    Holds in both modes by construction but by different mechanisms: the hourly path
+    Holds in both modes by construction but by different mechanisms: the single-period path
     clips the energy balance after each solve and records the overflow as
     inflow_spilled, while multi-period makes storage an LP variable with an explicit
     spill term. Both must satisfy the same identity.
@@ -151,7 +151,7 @@ def test_objective_is_finite(solved_case):
     assert (obj.abs() < 1e12).all(), "objective is implausibly large"
 
 
-@pytest.mark.parametrize("mode", ["hourly", "multi_period"])
+@pytest.mark.parametrize("mode", ["single_period", "multi_period"])
 def test_run_twice_is_deterministic(tmp_path, testcase_9bus_data, mode):
     """The same inputs must produce bit-identical results across runs.
 
@@ -187,10 +187,10 @@ def _with_flexible_load(data):
     return data
 
 
-def test_flexible_load_storage_evolves_hourly(tmp_path, testcase_9bus_data):
-    """Reference case: in hourly mode flexible-load storage does move."""
+def test_flexible_load_storage_evolves_single_period(tmp_path, testcase_9bus_data):
+    """Reference case: in single-period mode flexible-load storage does move."""
     data = _with_flexible_load(testcase_9bus_data)
-    res = _solve(data, tmp_path / "flex_hourly.sqlite", mode="hourly")
+    res = _solve(data, tmp_path / "flex_single_period.sqlite", mode="single_period")
     flex = _tables(res)["Res_FlexibleLoad"]
 
     assert not flex.empty, "fixture produced no flexible load rows"
@@ -268,7 +268,7 @@ def test_branch_capacity_sensitivity_is_reported_multi_period(tmp_path, testcase
 @pytest.mark.xfail(
     strict=True,
     reason=(
-        "Branch capacity sensitivities are identically zero in hourly mode. Across the "
+        "Branch capacity sensitivities are identically zero in single-period mode. Across the "
         "9-bus and two-area cases, under both glpk and appsi_highs and all three loss "
         "methods, Res_BranchesSens contains nothing but zeros -- while the same 9-bus "
         "case in multi_period mode does produce non-zero values. Branches sit at their "
@@ -278,10 +278,10 @@ def test_branch_capacity_sensitivity_is_reported_multi_period(tmp_path, testcase
         "constraint form is not the cause."
     ),
 )
-def test_branch_capacity_sensitivity_is_reported_hourly(tmp_path, testcase_9bus_data):
+def test_branch_capacity_sensitivity_is_reported_single_period(tmp_path, testcase_9bus_data):
     """A branch held at its rating by congestion must carry a non-zero shadow price."""
     data = testcase_9bus_data
-    res = _solve(data, tmp_path / "sens_hourly.sqlite", mode="hourly")
+    res = _solve(data, tmp_path / "sens_single_period.sqlite", mode="single_period")
     binding = _branches_at_capacity(res, data)
 
     assert not binding.empty, "no branch reached its rating; the case cannot test congestion pricing"
