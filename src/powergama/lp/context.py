@@ -53,6 +53,15 @@ class GridContext:
     dcbranch_from_node: dict = field(default_factory=dict)
     dcbranch_to_node: dict = field(default_factory=dict)
 
+    # --- entity id lists, in model index order ------------------------------
+    # The multi-period builder needs these without a built single-period model;
+    # they are the same lists its Pyomo Sets are initialised from.
+    node_ids: list = field(default_factory=list)
+    gen_ids: list = field(default_factory=list)
+    load_ids: list = field(default_factory=list)
+    branch_ac_ids: list = field(default_factory=list)
+    branch_dc_ids: list = field(default_factory=list)
+
     # --- index sets --------------------------------------------------------
     idx_generatorsWithPumping: list = field(default_factory=list)
     idx_generatorsWithStorage: list = field(default_factory=list)
@@ -156,6 +165,11 @@ class GridContext:
                 self.dcbranch_to_node[n] = []
 
     def _build_index_sets(self, grid):
+        self.node_ids = grid.node["id"].tolist()
+        self.gen_ids = grid.generator.index.tolist()
+        self.load_ids = grid.consumer.index.tolist()
+        self.branch_ac_ids = grid.branch.index.tolist()
+        self.branch_dc_ids = grid.dcbranch.index.tolist()
         self.idx_generatorsWithPumping = grid.getIdxGeneratorsWithPumping()
         self.idx_generatorsWithStorage = grid.getIdxGeneratorsWithStorage()
         self.idx_consumersWithFlexLoad = grid.getIdxConsumersWithFlexibleLoad()
