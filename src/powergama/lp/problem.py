@@ -35,6 +35,7 @@ from . import solver as solver_mod
 from .config import CONFIG_ATTRS, LpConfig
 from .context import CONTEXT_ATTRS, GridContext
 from .rt import build as rt_build
+from .rt import data as rt_data
 from .rt import diagnostics as rt_diagnostics
 
 
@@ -1625,52 +1626,7 @@ class LpProblem:
                     self.model.p_gen_pmin[i] = da_output
                     self.model.p_gen_pmax[i] = da_output
 
-            if self._rt_target_ref is not None:
-                rt_ref = self._rt_target_ref.iloc[i]
-                if isinstance(rt_ref, str) and rt_ref in self._grid.profiles.columns:
-                    self.model.p_rt_target_active[i] = 1
-                    self.model.p_rt_target[i] = max(
-                        0.0, float(P_max[i]) * float(self._grid.profiles.loc[timestep, rt_ref])
-                    )
-                else:
-                    self.model.p_rt_target_active[i] = 0
-                    self.model.p_rt_target[i] = 0.0
-            else:
-                self.model.p_rt_target_active[i] = 0
-                self.model.p_rt_target[i] = 0.0
-
         # 1b. Apply ramp-rate limits (PU of installed capacity) around previous dispatch.
-        # Update consumer (flexible load) DA targets for DA-target deviation penalties
-        if self._rt_consumer_target_ref is not None and self._rt_consumer_target_indices:
-            for j in self.model.s_load_flex:
-                rt_cons_ref = self._rt_consumer_target_ref.iloc[int(j)]
-                if isinstance(rt_cons_ref, str) and rt_cons_ref in self._grid.profiles.columns:
-                    self.model.p_rt_flexload_target_active[j] = 1
-                    demand_avg = float(self._grid.consumer.loc[j, "demand_avg"])
-                    self.model.p_rt_flexload_target[j] = max(
-                        0.0, demand_avg * float(self._grid.profiles.loc[timestep, rt_cons_ref])
-                    )
-                else:
-                    self.model.p_rt_flexload_target_active[j] = 0
-                    self.model.p_rt_flexload_target[j] = 0.0
-
-        # Update storage DA filling targets and one-step storage balance RHS.
-        if self._rt_storage_target_ref is not None and self._rt_storage_target_indices:
-            for i in self.model.s_gen_storage:
-                inflow_factor = self._grid.generator.loc[i, "inflow_fac"]
-                inflow_profile = self._grid.generator.loc[i, "inflow_ref"]
-                capacity = self._grid.generator.loc[i, "pmax"]
-                gen_inflow = capacity * inflow_factor * self._grid.profiles[inflow_profile][timestep]
-                self.model.p_rt_storage_balance_rhs[i] = max(0.0, float(self._storage[i] + gen_inflow * self.timeDelta))
-
-                rt_storage_ref = self._rt_storage_target_ref.iloc[int(i)]
-                if isinstance(rt_storage_ref, str) and rt_storage_ref in self._grid.profiles.columns:
-                    storage_cap = float(self._grid.generator.loc[i, "storage_cap"])
-                    target_frac = float(self._grid.profiles.loc[timestep, rt_storage_ref])
-                    self.model.p_rt_storage_target[i] = max(0.0, storage_cap * max(0.0, min(1.0, target_frac)))
-                else:
-                    self.model.p_rt_storage_target[i] = 0.0
-
         # 1b. Apply ramp-rate limits around previous-timestep dispatch,
         #     with delta caps scaled by installed capacity (ramp_pu * pmax_installed).
         #     Generators with NaN ramp values or NaN _gen_prev (first timestep) are unconstrained.
@@ -1762,105 +1718,12 @@ class LpProblem:
         for i in self._idx_consumersWithFlexLoad:
             self.model.p_loadflex_cost[i] = self._flexload_storage_value(i, self._storage_flexload[i], timestep)
 
-        # In deviation objective mode, all generation technologies use the same
-        # RT-local deviation pricing scheme (no DA-price coupling):
-        #   deviation_price = max(0, current_marginal_cost + balancing_fee)
-        # applied symmetrically to upward and downward deviation variables.
-        # This ensures every technology follows a pure deviation-based RT scheme,
-        # while ramp-rate constraints continue to govern feasible redispatch.
-        _fee = float(self._rt_balancing_fee_eur_per_mwh)
-        _split_eps = 1e-6
-
-        def _enforce_split_sum_guard(p_pos: float, p_neg: float, eps: float = _split_eps) -> tuple[float, float]:
-            """Ensure split-variable coefficients satisfy p_pos + p_neg >= eps.
-
-            This prevents degenerate/unbounded rays where both split variables can
-            increase together without improving the physical deviation variable.
-            The adjustment is applied to the smaller coefficient, matching the
-            intended semantics of preserving the larger directional signal.
-            """
-            s = float(p_pos) + float(p_neg)
-            if s >= float(eps):
-                return float(p_pos), float(p_neg)
-            add = float(eps) - s
-            if float(p_pos) <= float(p_neg):
-                return float(p_pos) + add, float(p_neg)
-            return float(p_pos), float(p_neg) + add
-
-        for i in self.model.s_gen:
-            if int(i) in self._rt_target_gen_indices:
-                _gen_cost = float(pyo.value(self.model.p_gen_cost[i]))
-                _is_res = (
-                    int(i) in self._idx_rt_wind or int(i) in self._idx_rt_solar or int(i) in self._idx_rt_hydro_ror
-                )
-                if _is_res:
-                    # RES: reward upward and penalize curtailment with a tunable factor.
-                    # c+ = -c0
-                    # c- = rt_p_res_curtailment_factor * c0
-                    _dev_price_pos = -_fee
-                    _dev_price_neg = self._rt_p_res_curtailment_factor * _fee
-                else:
-                    # Non-RES: c+ = c0 + cDA, c- = c0 - cDA
-                    # c- may be negative when cDA > c0 (incentive to reduce generation).
-                    _dev_price_pos = _fee + _gen_cost
-                    _dev_price_neg = _fee - _gen_cost
-                _dev_price_pos, _dev_price_neg = _enforce_split_sum_guard(_dev_price_pos, _dev_price_neg)
-                self.model.p_rt_deviation_price_gen_pos[i] = _dev_price_pos
-                self.model.p_rt_deviation_price_gen_neg[i] = _dev_price_neg
-                self.model.p_rt_deviation_price_gen[i] = max(_dev_price_pos, _dev_price_neg)
-            else:
-                self.model.p_rt_deviation_price_gen[i] = 0.0
-                self.model.p_rt_deviation_price_gen_pos[i] = 0.0
-                self.model.p_rt_deviation_price_gen_neg[i] = 0.0
-        for i in self.model.s_load_flex:
-            if int(i) in self._rt_consumer_target_indices:
-                # Flex load / load-shedding: c+ = c0 + c_flex, c- = c0 - c_flex
-                _flex_cost = float(pyo.value(self.model.p_loadflex_cost[i]))
-                _c_flex_pos = _fee + _flex_cost
-                _c_flex_neg = _fee - _flex_cost
-                _c_flex_pos, _c_flex_neg = _enforce_split_sum_guard(_c_flex_pos, _c_flex_neg)
-                self.model.p_rt_deviation_price_flex_pos[i] = _c_flex_pos
-                self.model.p_rt_deviation_price_flex_neg[i] = _c_flex_neg
-                self.model.p_rt_deviation_price_flex[i] = 0.5 * (_c_flex_pos + _c_flex_neg)
-            else:
-                self.model.p_rt_deviation_price_flex[i] = 0.0
-                self.model.p_rt_deviation_price_flex_pos[i] = 0.0
-                self.model.p_rt_deviation_price_flex_neg[i] = 0.0
-        for i in self.model.s_gen_storage:
-            if int(i) in self._rt_storage_target_indices:
-                # Storage DA-marginal pricing: c+ = c0 + c_DA, c- = c0 - c_DA
-                # c_DA is the DA marginal storage value (from da_storage_marginalprice parquet),
-                # falling back to current storagevalue (p_gen_cost[i]) if not available.
-                _c_da_storage = self._da_storage_marginalprice.get((int(timestep), int(i)), None)
-                if _c_da_storage is None:
-                    _c_da_storage = float(pyo.value(self.model.p_gen_cost[i]))
-                else:
-                    _c_da_storage = float(_c_da_storage)
-                c_pos = _fee + _c_da_storage
-                c_neg = _fee - _c_da_storage
-                c_pos, c_neg = _enforce_split_sum_guard(c_pos, c_neg)
-                self.model.p_rt_deviation_price_storage_pos[i] = c_pos
-                self.model.p_rt_deviation_price_storage_neg[i] = c_neg
-                self.model.p_rt_deviation_price_storage[i] = 0.5 * (c_pos + c_neg)
-            else:
-                self.model.p_rt_deviation_price_storage[i] = 0.0
-                self.model.p_rt_deviation_price_storage_pos[i] = 0.0
-                self.model.p_rt_deviation_price_storage_neg[i] = 0.0
-
-        # 4. Optional hard lock of BE cross-border branch flows to DA values
+        # 4. Reset AC/DC branch flow bounds: to the DA-locked window where the
+        #    project-specific bounds artifact provides one, otherwise to the
+        #    branch rating. Runs in every mode. The RT border-flow *targets* that
+        #    used to share this loop are written by rt_data.update_border_flow_targets.
         for b in self.model.s_branch_ac:
             key = (int(timestep), int(b))
-            if self._border_ac_flow_lock is not None and key in self._border_ac_flow_lock.index:
-                da_flow = float(self._border_ac_flow_lock.loc[key])
-                if np.isfinite(da_flow):
-                    self.model.p_rt_io_target_ac[b] = da_flow
-                    self.model.p_rt_io_target_active_ac[b] = 1
-                else:
-                    self.model.p_rt_io_target_ac[b] = 0.0
-                    self.model.p_rt_io_target_active_ac[b] = 0
-            else:
-                self.model.p_rt_io_target_ac[b] = 0.0
-                self.model.p_rt_io_target_active_ac[b] = 0
             if (
                 self._border_ac_flow_lb is not None
                 and self._border_ac_flow_ub is not None
@@ -1882,17 +1745,6 @@ class LpProblem:
 
         for b in self.model.s_branch_dc:
             key = (int(timestep), int(b))
-            if self._border_dc_flow_lock is not None and key in self._border_dc_flow_lock.index:
-                da_flow = float(self._border_dc_flow_lock.loc[key])
-                if np.isfinite(da_flow):
-                    self.model.p_rt_io_target_dc[b] = da_flow
-                    self.model.p_rt_io_target_active_dc[b] = 1
-                else:
-                    self.model.p_rt_io_target_dc[b] = 0.0
-                    self.model.p_rt_io_target_active_dc[b] = 0
-            else:
-                self.model.p_rt_io_target_dc[b] = 0.0
-                self.model.p_rt_io_target_active_dc[b] = 0
             if (
                 self._border_dc_flow_lb is not None
                 and self._border_dc_flow_ub is not None
@@ -1911,6 +1763,12 @@ class LpProblem:
                 lb, ub = self._default_dc_flow_bounds.get(int(b), (None, None))
                 self.model.varDcBranchFlow[b].setlb(lb)
                 self.model.varDcBranchFlow[b].setub(ub)
+
+        if self._is_rt:
+            rt_data.update_generator_targets(self, timestep, P_max)
+            rt_data.update_flexload_and_storage_targets(self, timestep)
+            rt_data.update_deviation_prices(self, timestep)
+            rt_data.update_border_flow_targets(self, timestep)
 
         return
 
