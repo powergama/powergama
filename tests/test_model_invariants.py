@@ -2,10 +2,9 @@
 
 These are not simulation properties -- they are structural rules that keep the
 model-construction code decoupled from `LpProblem` being the Pyomo model itself.
-`LpProblem` subclasses `pyo.ConcreteModel`, so inside a rule `model is self` and
-both spellings resolve to the same object. The distinction only starts to matter
-when the model moves into an attribute, and the two failure modes are very
-different:
+`LpProblem` holds the model as `self.model` rather than being one, so the two
+spellings no longer resolve to the same object at all. The two failure modes are
+very different:
 
 - `model._grid` raises AttributeError at construction time, which is the good case.
 - `self.p_gen_cost` inside a rule keeps resolving, against the wrong object, and
@@ -25,7 +24,10 @@ import pytest
 
 import powergama
 
-MODULE = Path(__file__).parent.parent / "src" / "powergama" / "LpProblemPyomo.py"
+LP_PACKAGE = Path(__file__).parent.parent / "src" / "powergama" / "lp"
+# Every module in the lp package, so the rules stay pinned as construction code is
+# split across single_period/, multi_period/ and rt/.
+MODULES = sorted(LP_PACKAGE.rglob("*.py"))
 
 # Pyomo components live under these name prefixes: Params, Sets, Vars, Constraints,
 # the objective and the dual suffix.
@@ -52,11 +54,12 @@ def _attribute_reads(node, base):
 
 
 @pytest.fixture(scope="module")
-def tree():
-    return ast.parse(MODULE.read_text(encoding="utf-8"))
+def trees():
+    assert MODULES, f"no modules found under {LP_PACKAGE}"
+    return [(m, ast.parse(m.read_text(encoding="utf-8"))) for m in MODULES]
 
 
-def test_rules_read_components_off_the_model_argument(tree):
+def test_rules_read_components_off_the_model_argument(trees):
     """No rule may reach a Pyomo component through `self`.
 
     This is the silent failure: once the model is an attribute rather than the
@@ -64,7 +67,8 @@ def test_rules_read_components_off_the_model_argument(tree):
     one -- with nothing raised.
     """
     offenders = [
-        f"{MODULE.name}:{sub.lineno} in {fn.name if isinstance(fn, ast.FunctionDef) else '<lambda>'}(): self.{sub.attr}"
+        f"{path.name}:{sub.lineno} in {fn.name if isinstance(fn, ast.FunctionDef) else '<lambda>'}(): self.{sub.attr}"
+        for path, tree in trees
         for fn in _rule_functions(tree)
         for sub in _attribute_reads(fn, "self")
         if COMPONENT_NAME.match(sub.attr)
@@ -72,7 +76,7 @@ def test_rules_read_components_off_the_model_argument(tree):
     assert not offenders, "Pyomo components must be read off the rule's model argument:\n  " + "\n  ".join(offenders)
 
 
-def test_rules_read_non_components_off_self(tree):
+def test_rules_read_non_components_off_self(trees):
     """No rule may reach non-component state through the model argument.
 
     `model._grid` and `model._lossmethod` work only because the model *is* the
@@ -80,8 +84,9 @@ def test_rules_read_non_components_off_self(tree):
     `self.` does not find them -- so pin them here instead.
     """
     offenders = [
-        f"{MODULE.name}:{sub.lineno} in {fn.name if isinstance(fn, ast.FunctionDef) else '<lambda>'}(): "
+        f"{path.name}:{sub.lineno} in {fn.name if isinstance(fn, ast.FunctionDef) else '<lambda>'}(): "
         f"{sub.value.id}.{sub.attr}"
+        for path, tree in trees
         for fn in _rule_functions(tree)
         for arg in MODEL_ARG_NAMES
         for sub in _attribute_reads(fn, arg)
