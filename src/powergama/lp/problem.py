@@ -17,7 +17,6 @@ Module containing PowerGAMA LpProblem class
            A = Mx(N-1) node-branch incidence (adjacency) matrix
 """
 
-import os
 import warnings
 from pathlib import Path
 
@@ -35,6 +34,7 @@ from ..timestep_result import TimestepResult, aggregate_to_nodes
 from . import project_locks
 from . import solver as solver_mod
 from .config import CONFIG_ATTRS, LpConfig
+from .context import CONTEXT_ATTRS, GridContext
 
 
 class LpProblem:
@@ -119,6 +119,18 @@ class LpProblem:
 
         print("Initialising LP problem...")
 
+        # Find synchronous areas and specify reference node in each area
+        G = nx.Graph()
+        G.add_nodes_from(grid.node["id"])
+        G.add_edges_from(zip(grid.branch["node_from"], grid.branch["node_to"]))
+        G_subs = (G.subgraph(c) for c in nx.connected_components(G))
+        self.refnodes = []
+        for gr in G_subs:
+            refnode = list(gr.nodes)[0]
+            self.refnodes.append(refnode)
+            print("Found synchronous area (size = {}), using ref node = {}".format(gr.order(), refnode))
+        # use first node as voltage angle reference
+
         # Caller-supplied settings, validated once. Readers still say
         # self._lossmethod / self._is_rt and so on; __getattr__ resolves those
         # against the config.
@@ -139,188 +151,18 @@ class LpProblem:
         self.timeDelta = grid.timeDelta
         self._rt_solver_debug_path: Path | None = None
         self._rt_debug_session_id: str = ""
-        self._rt_target_tracking_active = bool(self._rt_deviation_objective_active)
         rt_diagnostics.initialize_debug_stream(self, grid)
         self._timestep_day_hour: dict[int, tuple[int, int]] = {}
         self._daily_objective_trace: dict[int, float] = {}
         self._hourly_objective_trace: list[tuple[int, int, int, float]] = []
         self._solver_persistent = False
-        self._generators_at_node = grid.generator.groupby("node").groups
-        self._loads_at_node = grid.consumer.groupby("node").groups
-        self._branch_from_node = grid.branch.groupby("node_from").groups
-        self._branch_to_node = grid.branch.groupby("node_to").groups
-        self._dcbranch_from_node = grid.dcbranch.groupby("node_from").groups
-        self._dcbranch_to_node = grid.dcbranch.groupby("node_to").groups
-        for n in grid.node["id"]:
-            # fill in so dict is defined for all nodes:
-            if n not in self._generators_at_node:
-                self._generators_at_node[n] = []
-            if n not in self._loads_at_node:
-                self._loads_at_node[n] = []
-            if n not in self._branch_from_node:
-                self._branch_from_node[n] = []
-            if n not in self._branch_to_node:
-                self._branch_to_node[n] = []
-            if n not in self._dcbranch_from_node:
-                self._dcbranch_from_node[n] = []
-            if n not in self._dcbranch_to_node:
-                self._dcbranch_to_node[n] = []
-
-        self._idx_generatorsWithPumping = grid.getIdxGeneratorsWithPumping()
-        self._idx_generatorsWithStorage = grid.getIdxGeneratorsWithStorage()
-        self._idx_consumersWithFlexLoad = grid.getIdxConsumersWithFlexibleLoad()
-        # Optional profile references for time-varying dispatch bounds.
-        # pmax_ref scales installed pmax (availability factor), pmin_ref sets a
-        # profile-driven floor as a fraction of installed pmax.
-        self._pmax_ref = grid.generator["pmax_ref"] if "pmax_ref" in grid.generator.columns else None
-        self._pmin_ref = grid.generator["pmin_ref"] if "pmin_ref" in grid.generator.columns else None
-        self._rt_target_ref = grid.generator["rt_target_ref"] if "rt_target_ref" in grid.generator.columns else None
-        self._rt_target_gen_indices = {
-            int(i)
-            for i in grid.generator.index
-            if self._rt_target_ref is not None
-            and isinstance(self._rt_target_ref.loc[i], str)
-            and str(self._rt_target_ref.loc[i]).strip()
-        }
-        # Ramp-rate limits (MW per timestep). NaN means unconstrained.
-        # Optional consumer (flexible load) DA target references for DA-target deviation penalties.
-        self._rt_consumer_target_ref = (
-            grid.consumer["rt_target_ref"] if "rt_target_ref" in grid.consumer.columns else None
-        )
-        self._rt_consumer_target_indices = {
-            int(i)
-            for i in grid.consumer.index
-            if self._rt_consumer_target_ref is not None
-            and isinstance(self._rt_consumer_target_ref.loc[i], str)
-            and str(self._rt_consumer_target_ref.loc[i]).strip()
-            and int(i) in self._idx_consumersWithFlexLoad
-        }
-        # Optional storage (reservoir/battery filling) DA target references for DA-target deviation penalties.
-        # Stores normalized filling fraction [0, 1] to ensure storage state continuity matches DA.
-        self._rt_storage_target_ref = (
-            grid.generator["rt_storage_target_ref"] if "rt_storage_target_ref" in grid.generator.columns else None
-        )
-        self._rt_storage_target_indices = {
-            int(i)
-            for i in grid.generator.index
-            if self._rt_storage_target_ref is not None
-            and isinstance(self._rt_storage_target_ref.loc[i], str)
-            and str(self._rt_storage_target_ref.loc[i]).strip()
-            and int(i) in self._idx_generatorsWithStorage
-        }
-        # Ramp-rate limits in per-unit of installed generator capacity. NaN means unconstrained.
-        self._ramp_up_pu = (
-            grid.generator["ramp_up_pu"].values.copy() if "ramp_up_pu" in grid.generator.columns else None
-        )
-        self._ramp_down_pu = (
-            grid.generator["ramp_down_pu"].values.copy() if "ramp_down_pu" in grid.generator.columns else None
-        )
-        self._ramp_cap_mw = pd.to_numeric(grid.generator["pmax"], errors="coerce").fillna(0.0).values
-        # If True for a generator, the ramp constraint is released at the start of every 24-hour
-        # block (timestep % 24 == 0).  This models plant types (e.g. nuclear) whose output level
-        # is decided day-ahead but is held constant throughout the day.
-        # NOTE: Assumes simulations start at hour 0 (midnight).  Timestep indices from
-        # continue_from_last runs preserve the original numbering so midnight detection remains valid.
-        if "ramp_daily_reset" in grid.generator.columns:
-            self._ramp_daily_reset = grid.generator["ramp_daily_reset"].fillna(False).astype(bool).values
-        else:
-            self._ramp_daily_reset = None
-        self._cfg.check_ramp_daily_reset(self._ramp_daily_reset)
-        # Optional bypass for nuclear ramp/daily-reset when nuclear operational
-        # profile limits are active (pmax_ref/pmin_ref runtime binding).
-        # This avoids infeasible day-joint intersections where a constant
-        # intra-day ramp policy conflicts with hour-varying profile bounds.
-        _nuclear_limits_active = str(os.environ.get("T45_NUCLEAR_OPERATIONAL_LIMITS", "")).strip().lower() not in {
-            "",
-            "0",
-            "false",
-            "off",
-            "no",
-        }
-        self._disable_nuclear_ramp_profile_conflict = np.zeros(len(grid.generator), dtype=bool)
-        if _nuclear_limits_active and ("type" in grid.generator.columns):
-            _gtype = grid.generator["type"].astype(str).str.lower().str.strip()
-            _is_nuclear = _gtype.eq("nuclear")
-            _has_pmax_ref = pd.Series(False, index=grid.generator.index)
-            _has_pmin_ref = pd.Series(False, index=grid.generator.index)
-            if self._pmax_ref is not None:
-                _has_pmax_ref = self._pmax_ref.astype(str).str.strip().ne("")
-            if self._pmin_ref is not None:
-                _has_pmin_ref = self._pmin_ref.astype(str).str.strip().ne("")
-            if "nuclear_fully_constrained" in grid.generator.columns:
-                _fully_constrained = grid.generator["nuclear_fully_constrained"].fillna(False).astype(bool)
-            else:
-                # Backward-compatible fallback: matching non-empty pmax/pmin refs
-                # typically indicate a fully pinned nuclear profile.
-                _pmax_txt = (
-                    self._pmax_ref.astype(str).str.strip()
-                    if self._pmax_ref is not None
-                    else pd.Series("", index=grid.generator.index)
-                )
-                _pmin_txt = (
-                    self._pmin_ref.astype(str).str.strip()
-                    if self._pmin_ref is not None
-                    else pd.Series("", index=grid.generator.index)
-                )
-                _fully_constrained = _pmax_txt.ne("") & _pmax_txt.eq(_pmin_txt)
-            _disable = _is_nuclear & _has_pmax_ref & _has_pmin_ref & _fully_constrained
-            if _disable.any():
-                self._disable_nuclear_ramp_profile_conflict[_disable.values] = True
+        # Everything the grid implies, derived once. Readers still say
+        # self._idx_generatorsWithStorage and so on; __getattr__ resolves those
+        # against the context.
+        self._ctx = GridContext.from_grid(grid, self._Bbus, self._DA, self.refnodes)
+        self._cfg.check_ramp_daily_reset(self._ctx.ramp_daily_reset)
         # Previous-timestep generation dispatch; NaN signals first timestep (no ramp constraint).
         self._gen_prev = np.full(len(grid.generator), np.nan)
-        self._idx_branchesWithConstraints = grid.getIdxBranchesWithFlowConstraints()
-        # Classify BE generators by type/tag for differentiated deviation pricing.
-        _gtype = (
-            grid.generator["type"].astype(str).str.lower()
-            if "type" in grid.generator.columns
-            else pd.Series("", index=grid.generator.index)
-        )
-        _gdesc = (
-            grid.generator["desc"].astype(str)
-            if "desc" in grid.generator.columns
-            else pd.Series("", index=grid.generator.index)
-        )
-        # Generator type classification for RT deviation cost attribution in debug output.
-        # These classify by generator type only — no country filter.
-        _storage_gens_set = self._idx_generatorsWithStorage
-        self._idx_rt_peak_gen: set[int] = {
-            int(i) for i in grid.generator.index if _gtype.loc[i] == "fossil_gas" and "[RT]" in str(_gdesc.loc[i])
-        }
-        self._idx_rt_normal_gas: set[int] = {
-            int(i) for i in grid.generator.index if _gtype.loc[i] == "fossil_gas" and "[RT]" not in str(_gdesc.loc[i])
-        }
-        self._idx_rt_wind: set[int] = {
-            int(i) for i in grid.generator.index if _gtype.loc[i] in {"wind_off", "wind_on", "wind"}
-        }
-        self._idx_rt_solar: set[int] = {int(i) for i in grid.generator.index if _gtype.loc[i] == "solar"}
-        self._idx_rt_nuclear: set[int] = {int(i) for i in grid.generator.index if _gtype.loc[i] == "nuclear"}
-        self._idx_rt_biomass: set[int] = {int(i) for i in grid.generator.index if _gtype.loc[i] == "biomass"}
-        self._idx_rt_fossil_other: set[int] = {int(i) for i in grid.generator.index if _gtype.loc[i] == "fossil_other"}
-        self._idx_rt_storage_gens: set[int] = set(_storage_gens_set)
-        self._idx_rt_hydro_ror: set[int] = {
-            int(i)
-            for i in grid.generator.index
-            if _gtype.loc[i] == "hydro"
-            and int(i) not in _storage_gens_set
-            and float(pd.to_numeric(grid.generator.loc[i, "pump_cap"], errors="coerce") or 0.0) <= 0.0
-            and float(pd.to_numeric(grid.generator.loc[i, "storage_cap"], errors="coerce") or 0.0) <= 0.0
-        }
-        self._default_ac_flow_bounds = {}
-        self._default_dc_flow_bounds = {}
-        for b in grid.branch.index:
-            cap = pd.to_numeric(grid.branch.loc[b, "capacity"], errors="coerce")
-            if np.isfinite(cap):
-                self._default_ac_flow_bounds[int(b)] = (-float(cap), float(cap))
-            else:
-                self._default_ac_flow_bounds[int(b)] = (None, None)
-        for b in grid.dcbranch.index:
-            cap = pd.to_numeric(grid.dcbranch.loc[b, "capacity"], errors="coerce")
-            if np.isfinite(cap):
-                self._default_dc_flow_bounds[int(b)] = (-float(cap), float(cap))
-            else:
-                self._default_dc_flow_bounds[int(b)] = (None, None)
-        # Optional inter-area NTC constraints
-        self._inter_area_ntc = grid.inter_area_ntc
         # Optional sparse DA locks (parquet long format) injected by prepare-rt.
         # Unpacked onto self rather than held as a single object: these names are
         # read directly by rt_diagnostics and by both model builders.
@@ -364,18 +206,6 @@ class LpProblem:
         self._energyspilled = grid.generator["storage_cap"].copy(deep=True)
         self._energyspilled[:] = 0
 
-        # Find synchronous areas and specify reference node in each area
-        G = nx.Graph()
-        G.add_nodes_from(grid.node["id"])
-        G.add_edges_from(zip(grid.branch["node_from"], grid.branch["node_to"]))
-        G_subs = (G.subgraph(c) for c in nx.connected_components(G))
-        self.refnodes = []
-        for gr in G_subs:
-            refnode = list(gr.nodes)[0]
-            self.refnodes.append(refnode)
-            print("Found synchronous area (size = {}), using ref node = {}".format(gr.order(), refnode))
-        # use first node as voltage angle reference
-
         # 3. Create pyomo model
         self._create_sets_and_parameters(grid)
         self._create_variables()
@@ -396,13 +226,15 @@ class LpProblem:
         self._create_constraint_powerflow_equation(grid)
 
     def __getattr__(self, name):
-        """Fall through to the config, then the Pyomo model.
+        """Fall through to the config, then the grid context, then the Pyomo model.
 
-        Settled configuration lives on `self._cfg`, but the rest of the code --
+        Settled configuration lives on `self._cfg` and grid derivations on
+        `self._ctx`, but the rest of the code --
         including rt_diagnostics, which reads some 77 attributes off the problem --
         spells it `self._lossmethod`, `self._is_rt` and so on. Resolving those names
         here keeps every reader working while the values live in one frozen object.
-        Only names in CONFIG_ATTRS are redirected, and every one of them is immutable,
+        Only names in CONFIG_ATTRS and CONTEXT_ATTRS are redirected, and none of them
+        is mutated after construction,
         so there is no counterpart to the write hazard described below.
 
         Keeps `lp.varAcBranchFlow12.extract_values()` and the like working for callers
@@ -417,13 +249,19 @@ class LpProblem:
         """
         # __getattr__ runs before __init__ assigns self.model during unpickling and on
         # any failed lookup inside __init__ itself; guard against recursing forever.
-        if name in ("model", "_cfg"):
+        if name in ("model", "_cfg", "_ctx"):
             raise AttributeError(name)
         state = self.__dict__
-        if name.startswith("_") and name[1:] in CONFIG_ATTRS:
-            cfg = state.get("_cfg")
-            if cfg is not None:
-                return getattr(cfg, name[1:])
+        if name.startswith("_"):
+            bare = name[1:]
+            if bare in CONFIG_ATTRS:
+                cfg = state.get("_cfg")
+                if cfg is not None:
+                    return getattr(cfg, bare)
+            if bare in CONTEXT_ATTRS:
+                ctx = state.get("_ctx")
+                if ctx is not None:
+                    return getattr(ctx, bare)
         try:
             return getattr(state["model"], name)
         except KeyError:
@@ -676,26 +514,6 @@ class LpProblem:
             return
 
         self.model.s_inter_area_ntc = pyo.RangeSet(0, len(self._inter_area_ntc) - 1)
-        self._inter_area_ntc_rows = {}
-
-        for cidx, (_, row) in enumerate(self._inter_area_ntc.iterrows()):
-            area_from = row["area_from"]
-            area_to = row["area_to"]
-            ntc_forward = float(row["ntc_forward"])
-            ntc_backward = float(row["ntc_backward"])
-
-            # Get branches between the two areas
-            br_ac = grid_data.getInterAreaBranches(area_from=area_from, area_to=area_to, acdc="ac")
-            br_dc = grid_data.getInterAreaBranches(area_from=area_from, area_to=area_to, acdc="dc")
-
-            self._inter_area_ntc_rows[cidx] = {
-                "ac_pos": list(br_ac["branches_pos"]),
-                "ac_neg": list(br_ac["branches_neg"]),
-                "dc_pos": list(br_dc["branches_pos"]),
-                "dc_neg": list(br_dc["branches_neg"]),
-                "ntc_forward": ntc_forward,
-                "ntc_backward": ntc_backward,
-            }
 
         def ntc_forward_rule(model, cidx):
             row = self._inter_area_ntc_rows[int(cidx)]
