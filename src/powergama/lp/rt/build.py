@@ -149,16 +149,20 @@ def add_border_flow_target_tracking(model, grid, ctx, cfg):
     model.cRtIoTargetTrackingDc = pyo.Constraint(model.s_branch_dc, rule=_dc_rule)
 
 
-def deviation_cost(model, ctx, cfg):
-    """The RT deviation penalties added to the objective.
+def edit_objective_terms(model, ctx, cfg, terms):
+    """Turn the cost-minimising objective into a deviation-minimising one.
 
-    This is the one part of the RT layer that is not purely additive to the
-    single-period model. In deviation mode the *base* cost expression is also
-    replaced -- generation cost drops out and only load shedding remains -- and
-    that substitution still lives in the single-period objective rule. Until the
-    objective is assembled from contributed terms, RT cannot be a self-registering
-    extension; see the note in this package's __init__.
+    RT drops the operating cost -- the day-ahead run already settled it -- and
+    prices deviations from the day-ahead schedule instead. Load shedding stays:
+    otherwise the solver could bypass the tracked balancing channels by dropping
+    demand instead of redispatching generation, storage or flexible load.
     """
+    del terms["operating_cost"]
+    terms["rt_deviation"] = deviation_cost(model, ctx, cfg)
+
+
+def deviation_cost(model, ctx, cfg):
+    """The RT deviation penalties added to the objective."""
     cost = sum(
         model.p_rt_deviation_price_gen_pos[i] * model.varRtTargetDevPos[i]
         + model.p_rt_deviation_price_gen_neg[i] * model.varRtTargetDevNeg[i]

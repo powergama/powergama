@@ -445,29 +445,33 @@ def create_constraint_powerflow_equation(model, grid, ctx, cfg):
     model.cReferenceNode = pyo.Constraint(model.s_node, rule=referenceNode_rule)
 
 
+def objective_terms(model):
+    """The core objective, as named terms that an extension may add to, drop or replace.
+
+    The objective is their sum, in insertion order.
+    """
+    terms = {}
+    # Cost of generation, less the value of pumping and of serving flexible load.
+    terms["operating_cost"] = (
+        sum(model.varGeneration[i] * model.p_gen_cost[i] for i in model.s_gen)
+        - sum(model.varPump[i] * model.p_genpump_cost[i] for i in model.s_gen_pump)
+        - sum(model.varFlexLoad[i] * model.p_loadflex_cost[i] for i in model.s_load_flex)
+    )
+    # Penalty slack: keeps every timestep feasible.
+    terms["load_shedding"] = sum(model.varLoadShed[i] * const.loadshedcost for i in model.s_load) + sum(
+        model.varDumpLoad[i] * const.loadshedcost for i in model.s_load
+    )
+    return terms
+
+
 def create_objective(model, grid, ctx, cfg):
     """Create pyomo model objective function"""
 
     def cost_rule(model):
-        """Operational costs: cost of generation, pumping, flexible load and load shed"""
-
-        # Operational costs phase 1 (if stage2DeltaTime>0)
+        terms = objective_terms(model)
         if cfg.rt_deviation_objective_active:
-            # Load shedding must remain expensive even in pure RT deviation mode;
-            # otherwise the solver can bypass tracked balancing channels by
-            # dropping demand instead of redispatching generation, storage, or flex load.
-            cost = sum(model.varLoadShed[i] * const.loadshedcost for i in model.s_load)
-            cost += sum(model.varDumpLoad[i] * const.loadshedcost for i in model.s_load)
-        else:
-            cost = sum(model.varGeneration[i] * model.p_gen_cost[i] for i in model.s_gen)
-            cost -= sum(model.varPump[i] * model.p_genpump_cost[i] for i in model.s_gen_pump)
-            cost -= sum(model.varFlexLoad[i] * model.p_loadflex_cost[i] for i in model.s_load_flex)
-            cost += sum(model.varLoadShed[i] * const.loadshedcost for i in model.s_load)
-            cost += sum(model.varDumpLoad[i] * const.loadshedcost for i in model.s_load)
-
-        if cfg.rt_deviation_objective_active:
-            cost += rt_build.deviation_cost(model, ctx, cfg)
-        return cost
+            rt_build.edit_objective_terms(model, ctx, cfg, terms)
+        return sum(terms.values())
 
     model.OBJ = pyo.Objective(rule=cost_rule, sense=pyo.minimize)
 
