@@ -85,7 +85,8 @@ def create_sets_and_parameters(model, grid, ctx, cfg):
         mutable=True,
         initialize={g: grid.generator.loc[g, "pump_cap"] for g in model.s_gen_pump},
     )
-    rt_build.add_params(model)
+    model.p_demand = pyo.Param(model.s_load, within=pyo.Reals, default=0, mutable=True)
+    rt_build.add_params(model, cfg)
     # Written each timestep by _updateLpProblem from _flexload_storage_value. Only
     # the single-period path uses it; the multi-period path prices flexible load per
     # window in _build_day_joint_model instead.
@@ -133,11 +134,11 @@ def create_variables(model, grid, ctx, cfg):
         model.varLossDc21 = pyo.Var(model.s_branch_dc, within=pyo.NonNegativeReals)
     model.varGeneration = pyo.Var(model.s_gen, within=pyo.NonNegativeReals)
     model.varPump = pyo.Var(model.s_gen_pump, within=pyo.NonNegativeReals)
-    rt_build.add_generation_deviation_vars(model)
+    rt_build.add_generation_deviation_vars(model, cfg)
     model.varFlexLoad = pyo.Var(model.s_load_flex, within=pyo.NonNegativeReals)
     model.varLoadShed = pyo.Var(model.s_load, within=pyo.NonNegativeReals)
     model.varDumpLoad = pyo.Var(model.s_load, within=pyo.NonNegativeReals)
-    rt_build.add_remaining_deviation_vars(model)
+    rt_build.add_remaining_deviation_vars(model, cfg)
     model.varVoltageAngle = pyo.Var(model.s_node, within=pyo.Reals, initialize=0.0)
 
 

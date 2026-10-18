@@ -1,19 +1,19 @@
-"""Per-timestep real-time data: day-ahead targets and deviation prices.
+"""Per-timestep real-time data: day-ahead locks, targets and deviation prices.
 
-Called from the single-period update once per timestep, under ``cfg.is_rt``.
-These write only ``p_rt_*`` parameters, so they are independent of the
-single-period parameter writes and of each other.
+Called from the single-period update once per timestep, under ``cfg.is_rt``,
+after the core has written this timestep's generator limits and demand.
 
-Two of them used to be interleaved rather than separate blocks, and are now
-their own passes over the same index sets:
+`apply_da_locks` overrides those core values: it pins locked generators,
+replaces locked demand and sets the border-flow windows. The rest write only
+``p_rt_*`` parameters, so they are independent of the single-period parameter
+writes and of each other.
 
-- the generator DA target was written inside the main generator loop;
-- the border flow targets were written inside the loop that also resets AC/DC
-  branch flow bounds, which is not RT-specific and has to run in every mode.
-
-Both reorderings are safe because nothing between the old and new write points
-reads the parameters being written -- the tracking constraints read them at
-solve time -- and both are pinned by the LP-text oracle.
+The locks used to be applied inside the core loops, in every mode. They are RT
+inputs only -- produced from a day-ahead run by the external prepare-rt step --
+so they now live here, and a normal run never reads them. Applying a generator
+lock after the ramp clipping rather than before gives the same limits: the
+clipping used to skip pinned generators in RT, and now the lock simply
+overwrites whatever it computed. tests/test_sim_realtime.py covers both.
 
 These take the LpProblem rather than explicit arguments, for the same reason
 the single-period updater does: they read mutable simulation state (_storage,
@@ -25,19 +25,60 @@ import numpy as np
 import pyomo.environ as pyo
 
 
+def apply_da_locks(lp, timestep):
+    """Apply the day-ahead hard locks: pinned generators, fixed demand, border-flow windows."""
+    # Foreign generators pinned to their DA output.
+    if lp._foreign_gen_lock is not None:
+        for i in lp.model.s_gen:
+            key = (int(timestep), int(i))
+            if key in lp._foreign_gen_lock.index:
+                da_output = float(lp._foreign_gen_lock.loc[key])
+                if not np.isfinite(da_output):
+                    da_output = 0.0
+                da_output = max(0.0, da_output)
+                lp.model.p_gen_pmin[i] = da_output
+                lp.model.p_gen_pmax[i] = da_output
+
+    # Foreign consumers fixed to their DA demand.
+    if lp._foreign_cons_lock is not None:
+        for i in lp.model.s_load:
+            key = (int(timestep), int(i))
+            if key in lp._foreign_cons_lock.index:
+                locked_demand = float(lp._foreign_cons_lock.loc[key])
+                if np.isfinite(locked_demand):
+                    lp.model.p_demand[i] = locked_demand
+
+    # Border-flow windows as variable bounds, reset to none where this timestep has
+    # no window. The branch rating stays with cMaxFlowAc/cMaxFlowDc (issue #39).
+    _set_flow_bounds(lp.model.varAcBranchFlow, lp._border_ac_flow_lb, lp._border_ac_flow_ub, timestep)
+    _set_flow_bounds(lp.model.varDcBranchFlow, lp._border_dc_flow_lb, lp._border_dc_flow_ub, timestep)
+
+
+def _set_flow_bounds(var, lb_series, ub_series, timestep):
+    for b in var:
+        key = (int(timestep), int(b))
+        lb = ub = None
+        if lb_series is not None and ub_series is not None and key in lb_series.index and key in ub_series.index:
+            lb = float(lb_series.loc[key])
+            ub = float(ub_series.loc[key])
+            if not np.isfinite(lb):
+                lb = None
+            if not np.isfinite(ub):
+                ub = None
+        var[b].setlb(lb)
+        var[b].setub(ub)
+
+
 def update_generator_targets(lp, timestep, P_max):
     """Write each generator's DA dispatch target for this timestep."""
     for i in lp.model.s_gen:
         if lp._rt_target_ref is not None:
             rt_ref = lp._rt_target_ref.iloc[i]
             if isinstance(rt_ref, str) and rt_ref in lp._grid.profiles.columns:
-                lp.model.p_rt_target_active[i] = 1
                 lp.model.p_rt_target[i] = max(0.0, float(P_max[i]) * float(lp._grid.profiles.loc[timestep, rt_ref]))
             else:
-                lp.model.p_rt_target_active[i] = 0
                 lp.model.p_rt_target[i] = 0.0
         else:
-            lp.model.p_rt_target_active[i] = 0
             lp.model.p_rt_target[i] = 0.0
 
 
@@ -48,13 +89,11 @@ def update_flexload_and_storage_targets(lp, timestep):
         for j in lp.model.s_load_flex:
             rt_cons_ref = lp._rt_consumer_target_ref.iloc[int(j)]
             if isinstance(rt_cons_ref, str) and rt_cons_ref in lp._grid.profiles.columns:
-                lp.model.p_rt_flexload_target_active[j] = 1
                 demand_avg = float(lp._grid.consumer.loc[j, "demand_avg"])
                 lp.model.p_rt_flexload_target[j] = max(
                     0.0, demand_avg * float(lp._grid.profiles.loc[timestep, rt_cons_ref])
                 )
             else:
-                lp.model.p_rt_flexload_target_active[j] = 0
                 lp.model.p_rt_flexload_target[j] = 0.0
 
     # Update storage DA filling targets and one-step storage balance RHS.
@@ -120,9 +159,7 @@ def update_deviation_prices(lp, timestep):
             _dev_price_pos, _dev_price_neg = _enforce_split_sum_guard(_dev_price_pos, _dev_price_neg)
             lp.model.p_rt_deviation_price_gen_pos[i] = _dev_price_pos
             lp.model.p_rt_deviation_price_gen_neg[i] = _dev_price_neg
-            lp.model.p_rt_deviation_price_gen[i] = max(_dev_price_pos, _dev_price_neg)
         else:
-            lp.model.p_rt_deviation_price_gen[i] = 0.0
             lp.model.p_rt_deviation_price_gen_pos[i] = 0.0
             lp.model.p_rt_deviation_price_gen_neg[i] = 0.0
     for i in lp.model.s_load_flex:
@@ -134,9 +171,7 @@ def update_deviation_prices(lp, timestep):
             _c_flex_pos, _c_flex_neg = _enforce_split_sum_guard(_c_flex_pos, _c_flex_neg)
             lp.model.p_rt_deviation_price_flex_pos[i] = _c_flex_pos
             lp.model.p_rt_deviation_price_flex_neg[i] = _c_flex_neg
-            lp.model.p_rt_deviation_price_flex[i] = 0.5 * (_c_flex_pos + _c_flex_neg)
         else:
-            lp.model.p_rt_deviation_price_flex[i] = 0.0
             lp.model.p_rt_deviation_price_flex_pos[i] = 0.0
             lp.model.p_rt_deviation_price_flex_neg[i] = 0.0
     for i in lp.model.s_gen_storage:
@@ -154,19 +189,13 @@ def update_deviation_prices(lp, timestep):
             c_pos, c_neg = _enforce_split_sum_guard(c_pos, c_neg)
             lp.model.p_rt_deviation_price_storage_pos[i] = c_pos
             lp.model.p_rt_deviation_price_storage_neg[i] = c_neg
-            lp.model.p_rt_deviation_price_storage[i] = 0.5 * (c_pos + c_neg)
         else:
-            lp.model.p_rt_deviation_price_storage[i] = 0.0
             lp.model.p_rt_deviation_price_storage_pos[i] = 0.0
             lp.model.p_rt_deviation_price_storage_neg[i] = 0.0
 
 
 def update_border_flow_targets(lp, timestep):
-    """Write the DA border-flow targets for AC and DC branches.
-
-    Split out of the loop that also resets branch flow bounds: that part runs in
-    every mode and stays in the single-period updater.
-    """
+    """Write the DA border-flow targets for AC and DC branches."""
     for b in lp.model.s_branch_ac:
         key = (int(timestep), int(b))
         if lp._border_ac_flow_lock is not None and key in lp._border_ac_flow_lock.index:

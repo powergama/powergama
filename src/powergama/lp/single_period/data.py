@@ -64,17 +64,6 @@ def update_timestep(lp, timestep):
             lp.model.p_gen_pmin[i] = max(min(max(0, P_inflow + P_storage[i]), pmin_now), 0)
             lp.model.p_gen_pmax[i] = min(max(0, P_inflow + P_storage[i]), capacity_now)
 
-        # Optional hard lock of foreign generators to DA output (sparse parquet lock table).
-        if lp._foreign_gen_lock is not None:
-            key = (int(timestep), int(i))
-            if key in lp._foreign_gen_lock.index:
-                da_output = float(lp._foreign_gen_lock.loc[key])
-                if not np.isfinite(da_output):
-                    da_output = 0.0
-                da_output = max(0.0, da_output)
-                lp.model.p_gen_pmin[i] = da_output
-                lp.model.p_gen_pmax[i] = da_output
-
     # 1b. Apply ramp-rate limits (PU of installed capacity) around previous dispatch.
     # 1b. Apply ramp-rate limits around previous-timestep dispatch,
     #     with delta caps scaled by installed capacity (ramp_pu * pmax_installed).
@@ -99,9 +88,11 @@ def update_timestep(lp, timestep):
             pmax_now = pyo.value(lp.model.p_gen_pmax[i])
             pmin_now = pyo.value(lp.model.p_gen_pmin[i])
             # In RT, skip ramp constraints for fully pinned generators (pmin ≈ pmax),
-            # e.g. nuclear and DA-locked gas. The profile lock already uniquely defines
-            # the feasible output; applying the ramp on top clips pmax below pmin and
+            # e.g. nuclear pinned by pmin_ref/pmax_ref profiles. The profile already uniquely
+            # defines the feasible output; applying the ramp on top clips pmax below pmin and
             # the guard silently lowers pmin, causing gas backoff and spurious load shedding.
+            # DA-locked generators are pinned later, by rt_data.apply_da_locks, which
+            # overwrites whatever is computed here.
             # In DA, generators are never pinned this way so this branch is never taken.
             if lp._is_rt and pmax_now - pmin_now < 1e-6:
                 continue
@@ -122,13 +113,6 @@ def update_timestep(lp, timestep):
         average = lp._grid.consumer.loc[i, "demand_avg"] * (1 - lp._grid.consumer.loc[i, "flex_fraction"])
         profile_ref = lp._grid.consumer.loc[i, "demand_ref"]
         demand_now = lp._grid.profiles.loc[timestep, profile_ref] * average
-        # Optional hard lock of foreign consumers to DA demand (sparse parquet lock table).
-        if lp._foreign_cons_lock is not None:
-            key = (int(timestep), int(i))
-            if key in lp._foreign_cons_lock.index:
-                locked_demand = float(lp._foreign_cons_lock.loc[key])
-                if np.isfinite(locked_demand):
-                    demand_now = locked_demand
         lp.model.p_demand[i] = demand_now
 
     # 3. Cost parameters
@@ -169,54 +153,11 @@ def update_timestep(lp, timestep):
             lp._grid, i, lp._storage_flexload[i], timestep
         )
 
-    # 4. Reset AC/DC branch flow bounds: to the DA-locked window where the
-    #    project-specific bounds artifact provides one, otherwise clear them.
-    #    The rating is already enforced by cMaxFlowAc/cMaxFlowDc; repeating it
-    #    as a variable bound makes the solver price congestion on the bound
-    #    (reduced cost) and leave the constraint dual at zero (issue #39).
-    #    Runs in every mode. The RT border-flow *targets* that used to share
-    #    this loop are written by rt_data.update_border_flow_targets.
-    for b in lp.model.s_branch_ac:
-        key = (int(timestep), int(b))
-        if (
-            lp._border_ac_flow_lb is not None
-            and lp._border_ac_flow_ub is not None
-            and key in lp._border_ac_flow_lb.index
-            and key in lp._border_ac_flow_ub.index
-        ):
-            lb = float(lp._border_ac_flow_lb.loc[key])
-            ub = float(lp._border_ac_flow_ub.loc[key])
-            if not np.isfinite(lb):
-                lb = None
-            if not np.isfinite(ub):
-                ub = None
-            lp.model.varAcBranchFlow[b].setlb(lb)
-            lp.model.varAcBranchFlow[b].setub(ub)
-        else:
-            lp.model.varAcBranchFlow[b].setlb(None)
-            lp.model.varAcBranchFlow[b].setub(None)
-
-    for b in lp.model.s_branch_dc:
-        key = (int(timestep), int(b))
-        if (
-            lp._border_dc_flow_lb is not None
-            and lp._border_dc_flow_ub is not None
-            and key in lp._border_dc_flow_lb.index
-            and key in lp._border_dc_flow_ub.index
-        ):
-            lb = float(lp._border_dc_flow_lb.loc[key])
-            ub = float(lp._border_dc_flow_ub.loc[key])
-            if not np.isfinite(lb):
-                lb = None
-            if not np.isfinite(ub):
-                ub = None
-            lp.model.varDcBranchFlow[b].setlb(lb)
-            lp.model.varDcBranchFlow[b].setub(ub)
-        else:
-            lp.model.varDcBranchFlow[b].setlb(None)
-            lp.model.varDcBranchFlow[b].setub(None)
-
+    # 4. Real-time: day-ahead locks override the limits and demand set above,
+    #    then this timestep's targets and deviation prices. Branch flows carry no
+    #    variable bounds outside RT; the rating is enforced by cMaxFlowAc/cMaxFlowDc.
     if lp._is_rt:
+        rt_data.apply_da_locks(lp, timestep)
         rt_data.update_generator_targets(lp, timestep, P_max)
         rt_data.update_flexload_and_storage_targets(lp, timestep)
         rt_data.update_deviation_prices(lp, timestep)

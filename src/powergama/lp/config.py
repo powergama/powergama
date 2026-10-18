@@ -36,7 +36,6 @@ class LpConfig:
     commit_hours: int = 24
     storage_initial_fill_scale: float = 1.0
     is_rt: bool = False
-    rt_dispatch_objective_mode: str = "deviation"
     rt_balancing_fee_eur_per_mwh: float = 1.0
     rt_p_res_curtailment_factor: float = 2.0
     rt_xborder_flow_penalty_eur_per_mwh: float = 0.0
@@ -60,7 +59,6 @@ class LpConfig:
         horizon_hours=24,
         commit_hours=24,
         storage_initial_fill_scale=1.0,
-        rt_dispatch_objective_mode="deviation",
         rt_balancing_fee_eur_per_mwh=1.0,
         rt_p_res_curtailment_factor=2.0,
         rt_xborder_flow_penalty_eur_per_mwh=0.0,
@@ -100,7 +98,6 @@ class LpConfig:
             commit_hours=int(max(1, int(commit_hours))),
             storage_initial_fill_scale=float(max(0.0, min(1.0, storage_initial_fill_scale))),
             is_rt=is_rt,
-            rt_dispatch_objective_mode=("deviation" if is_rt else str(rt_dispatch_objective_mode).strip().lower()),
             rt_balancing_fee_eur_per_mwh=float(rt_balancing_fee_eur_per_mwh),
             rt_p_res_curtailment_factor=float(rt_p_res_curtailment_factor),
             rt_xborder_flow_penalty_eur_per_mwh=max(0.0, float(rt_xborder_flow_penalty_eur_per_mwh)),

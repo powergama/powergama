@@ -87,7 +87,8 @@ class LpProblem:
     rt_xborder_flow_penalty_eur_per_mwh : float
         Penalty per MWh of deviation from day-ahead cross-border flows.
     rt_dispatch_objective_mode : str
-        Ignored when is_rt=True, which forces "deviation".
+        Deprecated and ignored: it never affected the model. RT always minimises
+        deviation. Passing a value other than None warns.
 
     Notes
     =====
@@ -105,7 +106,7 @@ class LpProblem:
         horizon_hours=24,
         commit_hours=24,
         storage_initial_fill_scale=1.0,
-        rt_dispatch_objective_mode="deviation",
+        rt_dispatch_objective_mode=None,
         rt_balancing_fee_eur_per_mwh=1.0,
         rt_p_res_curtailment_factor=2.0,
         rt_xborder_flow_penalty_eur_per_mwh=0.0,
@@ -135,6 +136,14 @@ class LpProblem:
             print("Found synchronous area (size = {}), using ref node = {}".format(gr.order(), refnode))
         # use first node as voltage angle reference
 
+        if rt_dispatch_objective_mode is not None:
+            warnings.warn(
+                "rt_dispatch_objective_mode is deprecated and ignored: it never affected the model. "
+                "RT (is_rt=True) always minimises deviation.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
         # Caller-supplied settings, validated once. Readers still say
         # self._lossmethod / self._is_rt and so on; __getattr__ resolves those
         # against the config.
@@ -145,7 +154,6 @@ class LpProblem:
             horizon_hours=horizon_hours,
             commit_hours=commit_hours,
             storage_initial_fill_scale=storage_initial_fill_scale,
-            rt_dispatch_objective_mode=rt_dispatch_objective_mode,
             rt_balancing_fee_eur_per_mwh=rt_balancing_fee_eur_per_mwh,
             rt_p_res_curtailment_factor=rt_p_res_curtailment_factor,
             rt_xborder_flow_penalty_eur_per_mwh=rt_xborder_flow_penalty_eur_per_mwh,
@@ -161,10 +169,21 @@ class LpProblem:
         self._hourly_objective_trace: list[tuple[int, int, int, float]] = []
         self._solver_persistent = False
         # Optional sparse DA locks (parquet long format) injected by prepare-rt.
+        # They are RT inputs only, so a normal run leaves them at their empty
+        # defaults -- and says so, rather than dropping a supplied input silently.
         # Loaded before the context, which needs the border branch sets they
         # identify. The rest are unpacked onto self rather than held as one
-        # object, because rt_diagnostics and both model builders read these names.
-        _locks = project_locks.load_da_locks(grid)
+        # object, because rt_data and rt_diagnostics read these names.
+        if self._cfg.is_rt:
+            _locks = project_locks.load_da_locks(grid)
+        else:
+            _locks = project_locks.DaLocks()
+            _ignored = project_locks.lock_attrs_set(grid)
+            if _ignored:
+                warnings.warn(
+                    f"Day-ahead lock files are RT inputs and are ignored without is_rt=True: {', '.join(_ignored)}",
+                    UserWarning,
+                )
         self._foreign_gen_lock = _locks.foreign_gen_lock
         self._foreign_cons_lock = _locks.foreign_cons_lock
         self._border_ac_flow_lock = _locks.border_ac_flow_lock
@@ -178,7 +197,7 @@ class LpProblem:
         # Everything the grid implies, derived once. Readers still say
         # self._idx_generatorsWithStorage and so on; __getattr__ resolves those
         # against the context.
-        self._ctx = GridContext.from_grid(grid, self._Bbus, self._DA, self.refnodes, _locks)
+        self._ctx = GridContext.from_grid(grid, self._Bbus, self._DA, self.refnodes, _locks, is_rt=self._cfg.is_rt)
         self._cfg.check_ramp_daily_reset(self._ctx.ramp_daily_reset)
         # Previous-timestep generation dispatch; NaN signals first timestep (no ramp constraint).
         self._gen_prev = np.full(len(grid.generator), np.nan)

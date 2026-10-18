@@ -2,6 +2,14 @@
 
 ## unpublished
 2026-10-18
+- real-time inputs and model parts now exist only with `is_rt=True`. A normal run no longer
+  declares the RT parameters and deviation variables (with `appsi_highs` these were unused
+  solver columns in every run), or derives RT context
+- **behaviour change:** the day-ahead lock parquets (`foreign_gen_lock_parquet` and friends) are
+  RT inputs and are now read and applied only with `is_rt=True`. They used to apply in every
+  mode, including multi-period. A grid carrying them in a normal run gets a `UserWarning`
+- `rt_dispatch_objective_mode` is deprecated and ignored (it never affected the model); passing
+  it warns. Removed RT parameters that were written but never read
 - multi-period mode now applies the `POWERGAMA_HIGHS_*` environment variables the same way as
   single-period (#45): it honours `POWERGAMA_HIGHS_PARALLEL`, which it used to ignore, and
   warns on a malformed `POWERGAMA_HIGHS_RANDOM_SEED` or `POWERGAMA_HIGHS_THREADS` instead of

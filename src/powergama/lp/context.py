@@ -114,13 +114,14 @@ class GridContext:
     border_dc_sign: dict = field(default_factory=dict)
 
     @classmethod
-    def from_grid(cls, grid, Bbus, DA, refnodes, locks):
+    def from_grid(cls, grid, Bbus, DA, refnodes, locks, is_rt=False):
         """Derive everything the builders need from *grid*.
 
         Bbus/DA/refnodes are passed in rather than computed here: the matrices are
         expensive and the caller already prints progress around them. *locks* is a
         :class:`~powergama.lp.project_locks.DaLocks`, needed only for the border
-        branch sets it identifies.
+        branch sets it identifies. The RT fields are derived only when *is_rt*, and
+        otherwise stay at their empty defaults.
         """
         ctx = cls(
             Bbus=Bbus,
@@ -135,7 +136,9 @@ class GridContext:
         ctx._build_index_sets(grid)
         ctx._build_profile_refs(grid)
         ctx._build_ramping(grid)
-        ctx._build_rt_classification(grid)
+        if is_rt:
+            ctx._build_rt_target_refs(grid)
+            ctx._build_rt_classification(grid)
         ctx._build_flow_bounds(grid)
         ctx._build_inter_area_ntc(grid)
         return ctx
@@ -181,6 +184,10 @@ class GridContext:
         # profile-driven floor as a fraction of installed pmax.
         self.pmax_ref = grid.generator["pmax_ref"] if "pmax_ref" in grid.generator.columns else None
         self.pmin_ref = grid.generator["pmin_ref"] if "pmin_ref" in grid.generator.columns else None
+
+    def _build_rt_target_refs(self, grid):
+        # RT day-ahead targets: profile references for generator dispatch, flexible-load
+        # demand and storage filling, and the entities that actually carry one.
         self.rt_target_ref = grid.generator["rt_target_ref"] if "rt_target_ref" in grid.generator.columns else None
         self.rt_target_gen_indices = {
             int(i)

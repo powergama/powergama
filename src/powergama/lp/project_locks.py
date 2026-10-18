@@ -11,9 +11,9 @@ marker that this layer encodes one study's conventions. Whether it belongs in th
 core library at all is an open question, deliberately not answered here -- moving
 the loader into one place is what makes the question askable.
 
-The *application* of these locks is not here: it stays woven into the two model
-builders and the per-timestep update, because it is inline conditionals in the
-middle of generator and branch loops rather than a separable block.
+These are inputs to the real-time step only: a day-ahead run produces them, and
+the RT simulation is pinned to them. They are loaded only when ``is_rt`` is set,
+and applied by :func:`powergama.lp.rt.data.apply_da_locks`.
 """
 
 import warnings
@@ -21,6 +21,22 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import pandas as pd
+
+# The GridData attributes the prepare-rt step sets, each a path to a parquet file.
+LOCK_ATTRS = (
+    "foreign_gen_lock_parquet",
+    "foreign_consumer_lock_parquet",
+    "border_ac_flow_lock_parquet",
+    "border_dc_flow_lock_parquet",
+    "border_ac_flow_bounds_parquet",
+    "border_dc_flow_bounds_parquet",
+    "da_storage_marginalprice_parquet",
+)
+
+
+def lock_attrs_set(grid) -> list[str]:
+    """The lock attributes that are set (non-empty) on *grid*."""
+    return [a for a in LOCK_ATTRS if getattr(grid, a, "")]
 
 
 @dataclass

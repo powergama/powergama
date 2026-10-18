@@ -87,7 +87,8 @@ def initialize_debug_stream(lp, grid):
             "event": "rt_debug_header",
             "debug_session_id": lp._rt_debug_session_id,
             "debug_header_written_at_utc": str(pd.Timestamp.utcnow().isoformat()),
-            "dispatch_objective_mode": lp._rt_dispatch_objective_mode,
+            # RT always minimises deviation; kept for readers of the header format.
+            "dispatch_objective_mode": "deviation",
             "rt_target_tracking_active": bool(lp._rt_target_tracking_active),
             "rt_balancing_fee_eur_per_mwh": float(lp._rt_balancing_fee_eur_per_mwh),
             "rt_xborder_flow_penalty_eur_per_mwh": float(lp._rt_xborder_flow_penalty_eur_per_mwh),

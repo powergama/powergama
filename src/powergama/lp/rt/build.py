@@ -5,6 +5,11 @@ single-period builder calls these at the exact points the declarations used to
 sit, which keeps Pyomo's component declaration order -- and therefore the column
 order of the written LP -- unchanged.
 
+Every function returns without declaring anything unless ``cfg.is_rt``, so a
+normal run carries no RT components at all. That matters beyond tidiness: APPSI
+hands every ``Var`` on the model to HiGHS, used or not, so unused deviation
+variables would otherwise be solver columns in every run.
+
 The tracking constraints are declared over the full index set and Skip the
 entries with no DA target, rather than being declared over the targeted subset.
 That is preserved from the original: it keeps the constraint index aligned with
@@ -14,29 +19,19 @@ the variable index, and Skip costs nothing in the written LP.
 import pyomo.environ as pyo
 
 
-def add_params(model):
-    """Mutable parameters holding this timestep's DA targets and deviation prices.
-
-    Declared unconditionally, including when is_rt is False. They then stay at
-    their defaults and, carrying no coefficient anywhere, never reach the LP.
-    """
+def add_params(model, cfg):
+    """Mutable parameters holding this timestep's DA targets and deviation prices."""
+    if not cfg.is_rt:
+        return
     model.p_rt_target = pyo.Param(model.s_gen, within=pyo.Reals, default=0, mutable=True)
-    model.p_rt_target_active = pyo.Param(model.s_gen, within=pyo.Binary, default=0, mutable=True)
-    model.p_rt_deviation_price_gen = pyo.Param(model.s_gen, within=pyo.NonNegativeReals, default=0, mutable=True)
     model.p_rt_deviation_price_gen_pos = pyo.Param(model.s_gen, within=pyo.Reals, default=0, mutable=True)
     model.p_rt_deviation_price_gen_neg = pyo.Param(model.s_gen, within=pyo.Reals, default=0, mutable=True)
-    model.p_demand = pyo.Param(model.s_load, within=pyo.Reals, default=0, mutable=True)
     # Consumer (flexible load) RT DA target for DA-target deviation penalties
     model.p_rt_flexload_target = pyo.Param(model.s_load_flex, within=pyo.NonNegativeReals, default=0, mutable=True)
-    model.p_rt_flexload_target_active = pyo.Param(model.s_load_flex, within=pyo.Binary, default=0, mutable=True)
-    model.p_rt_deviation_price_flex = pyo.Param(model.s_load_flex, within=pyo.NonNegativeReals, default=0, mutable=True)
     model.p_rt_deviation_price_flex_pos = pyo.Param(model.s_load_flex, within=pyo.Reals, default=0, mutable=True)
     model.p_rt_deviation_price_flex_neg = pyo.Param(model.s_load_flex, within=pyo.Reals, default=0, mutable=True)
     model.p_rt_storage_target = pyo.Param(model.s_gen_storage, within=pyo.NonNegativeReals, default=0, mutable=True)
     model.p_rt_storage_balance_rhs = pyo.Param(
-        model.s_gen_storage, within=pyo.NonNegativeReals, default=0, mutable=True
-    )
-    model.p_rt_deviation_price_storage = pyo.Param(
         model.s_gen_storage, within=pyo.NonNegativeReals, default=0, mutable=True
     )
     model.p_rt_deviation_price_storage_pos = pyo.Param(model.s_gen_storage, within=pyo.Reals, default=0, mutable=True)
@@ -47,18 +42,22 @@ def add_params(model):
     model.p_rt_io_target_active_dc = pyo.Param(model.s_branch_dc, within=pyo.Binary, default=0, mutable=True)
 
 
-def add_generation_deviation_vars(model):
+def add_generation_deviation_vars(model, cfg):
     """Generator DA target tracking deviations.
 
     Separate from the rest only to preserve declaration order: these sit between
     varPump and varFlexLoad in the single-period builder.
     """
+    if not cfg.is_rt:
+        return
     model.varRtTargetDevPos = pyo.Var(model.s_gen, within=pyo.NonNegativeReals)
     model.varRtTargetDevNeg = pyo.Var(model.s_gen, within=pyo.NonNegativeReals)
 
 
-def add_remaining_deviation_vars(model):
+def add_remaining_deviation_vars(model, cfg):
     """Flexible load, storage trajectory and border flow tracking deviations."""
+    if not cfg.is_rt:
+        return
     # Flexible load DA target tracking deviations (soft penalty)
     model.varRtFlexLoadTargetDevPos = pyo.Var(model.s_load_flex, within=pyo.NonNegativeReals)
     model.varRtFlexLoadTargetDevNeg = pyo.Var(model.s_load_flex, within=pyo.NonNegativeReals)

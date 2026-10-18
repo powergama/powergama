@@ -50,7 +50,7 @@ A simulation is a pipeline of four objects:
   | [lp/context.py](src/powergama/lp/context.py) | `GridContext` — everything derived once from `GridData` |
   | [lp/solver.py](src/powergama/lp/solver.py) | solver construction, HiGHS env vars, the dual handle |
   | [lp/storage_value.py](src/powergama/lp/storage_value.py) | flexible-load valuation, used by both formulations |
-  | [lp/project_locks.py](src/powergama/lp/project_locks.py) | optional foreign/border DA lock parquet loader (project-specific) |
+  | [lp/project_locks.py](src/powergama/lp/project_locks.py) | optional foreign/border DA lock parquet loader (project-specific, RT only) |
   | `lp/single_period/{build,data,extract}.py` | one LP per timestep |
   | `lp/multi_period/{build,data,extract}.py` | a joint LP per window |
   | `lp/rt/{build,data,diagnostics}.py` | the balancing side-path |
@@ -109,7 +109,11 @@ Selected via `LpProblem` constructor arguments (see [usage.md](userguide/usage.m
 3. **Balancing / real-time** (`is_rt=True`) — a single-period solve with penalties on deviation
    from a day-ahead schedule supplied through `rt_target_ref` / `rt_storage_target_ref` profile
    columns. Not a third formulation: `lp/rt/` extends the single-period one through a handful of
-   named seams. Rejected in multi-period mode.
+   named seams. Rejected in multi-period mode. It is the second step after a day-ahead run: the
+   DA lock parquets (`project_locks.py`) are RT inputs too. **Nothing RT exists without
+   `is_rt`** — no locks read (a grid carrying them warns), no RT context fields, no `p_rt_*`,
+   `varRt*` or `cRt*` components. Keep it that way: a new RT component goes in `lp/rt/` behind
+   the same `cfg.is_rt` early return. `tests/test_sim_realtime.py` checks both directions.
 
 The mode was called `"hourly"` until the rename; a timestep need not be an hour. The old spelling
 raises, with no alias.
