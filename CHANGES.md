@@ -2,6 +2,10 @@
 
 ## unpublished
 2026-10-18
+- multi-period mode now applies the `POWERGAMA_HIGHS_*` environment variables the same way as
+  single-period (#45): it honours `POWERGAMA_HIGHS_PARALLEL`, which it used to ignore, and
+  warns on a malformed `POWERGAMA_HIGHS_RANDOM_SEED` or `POWERGAMA_HIGHS_THREADS` instead of
+  silently dropping it
 - fix branch capacity sensitivities being identically zero in single-period mode (#39). The
   branch rating was set both as a constraint and as a variable bound, and the solver attributed
   the binding limit to the bound, leaving the constraint dual that is reported at zero. With

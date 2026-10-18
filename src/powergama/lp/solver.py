@@ -4,21 +4,15 @@ Nothing here knows anything about the power system model beyond needing a
 ``ConcreteModel`` to hand to a persistent solver, so it is the one piece of
 ``LpProblem`` that genuinely stands alone.
 
-Note the duplication that is preserved rather than fixed. Both paths read the same
-``POWERGAMA_HIGHS_*`` environment variables, and they do it differently:
+Both paths apply the same ``POWERGAMA_HIGHS_*`` environment variables to HiGHS,
+through `_highs_env_options`:
 
-======================================  ====================  ===================
-                                        single-period          multi-period
-======================================  ====================  ===================
-``POWERGAMA_HIGHS_RANDOM_SEED``         warns on bad input     ignored on bad input
-``POWERGAMA_HIGHS_THREADS``             warns on bad input     ignored on bad input
-``POWERGAMA_HIGHS_PARALLEL``            honoured               **not read at all**
-======================================  ====================  ===================
-
-Unifying them changes behaviour for anyone who sets those variables, so it is a
-change rather than cleanup and belongs with solver work. The two parsers are kept
-as separate functions, side by side, so that the divergence is at least visible to
-whoever fixes it.
+======================================  ============================================
+``POWERGAMA_HIGHS_RANDOM_SEED``         integer; warns and is ignored otherwise
+``POWERGAMA_HIGHS_THREADS``             integer >= 1; warns and is ignored if not
+                                        an integer, silently ignored if < 1
+``POWERGAMA_HIGHS_PARALLEL``            ``off``, ``on`` or ``choose``; ignored otherwise
+======================================  ============================================
 """
 
 import os
@@ -28,11 +22,8 @@ import pyomo.environ as pyo
 from pyomo.contrib import appsi
 
 
-def _highs_env_options_single_period(opt):
-    """Apply POWERGAMA_HIGHS_* to a HiGHS solver on the single-period path.
-
-    Warns on malformed input and honours PARALLEL. See the module docstring.
-    """
+def _highs_env_options(opt):
+    """Apply POWERGAMA_HIGHS_* to a HiGHS solver. See the module docstring."""
     seed_raw = str(os.environ.get("POWERGAMA_HIGHS_RANDOM_SEED", "")).strip()
     if seed_raw:
         try:
@@ -58,29 +49,6 @@ def _highs_env_options_single_period(opt):
     parallel_raw = str(os.environ.get("POWERGAMA_HIGHS_PARALLEL", "")).strip().lower()
     if parallel_raw in {"off", "on", "choose"}:
         opt.highs_options["parallel"] = parallel_raw
-
-
-def _highs_env_options_window(opt):
-    """Apply POWERGAMA_HIGHS_* to a HiGHS solver on the multi-period path.
-
-    Silent on malformed input and does not read PARALLEL. See the module docstring.
-    """
-
-    def getenv_int(name: str) -> int | None:
-        """Helper to get integer environment value, or None if it does not exist"""
-        value = os.environ.get(name)
-        if value is None:
-            return None
-        try:
-            return int(value.strip())
-        except ValueError:
-            return None
-
-    if (seed := getenv_int("POWERGAMA_HIGHS_RANDOM_SEED")) is not None:
-        opt.highs_options["random_seed"] = seed
-
-    if (threads := getenv_int("POWERGAMA_HIGHS_THREADS")) is not None and threads >= 1:
-        opt.highs_options["threads"] = threads
 
 
 def create_solver(solver, model, solver_path=None, solve_args=None):
@@ -112,7 +80,7 @@ def create_solver(solver, model, solver_path=None, solve_args=None):
 
         # Optional reproducibility controls for APPsi/HiGHS.
         # These keep workflow APIs unchanged while enabling seed/thread control per run.
-        _highs_env_options_single_period(opt)
+        _highs_env_options(opt)
 
         if opt.available():
             print(":) Found solver")
@@ -178,5 +146,5 @@ def create_window_solver(solver_name):
         )
 
     day_opt = appsi.solvers.highs.Highs()
-    _highs_env_options_window(day_opt)
+    _highs_env_options(day_opt)
     return day_opt
