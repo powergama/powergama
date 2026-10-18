@@ -179,7 +179,9 @@ Test data sets:
   every NTC constraint is skipped.
 - `two_area` — covers exactly those gaps (two areas with a binding inter-area NTC, an HVDC link,
   a pumped-storage generator, a flexible load, ramp limits). Use this when touching NTC, pumping,
-  flexible load or multi-period window logic.
+  flexible load or multi-period window logic. `tests/rt_case.py` builds the RT case on it: a
+  baseline run, then every kind of RT target and DA lock derived from it. Use that for RT work;
+  `test_rt_diagnostics.py` covers the JSONL debug stream with it.
 - `mount_synth` — small synthetic case where storage is needed to avoid load shedding.
 - `data_europe2014` — 1539 nodes; marked `slow`.
 
