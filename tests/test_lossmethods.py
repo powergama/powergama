@@ -137,7 +137,9 @@ def test_lossmethod1_flows(tmp_path):
     # Check
     # flow12 and flow21 are both >0. Physically, only one of them should be
     # But in the circumstances of this test case, with the present modelling, this behaviour is as expected
-    assert df_flows.loc[1, "flow12"] == pytest.approx(70)
-    assert df_flows.loc[1, "flow21"] == pytest.approx(51.34715)
+    # flow12 sits at its bound, 1% above the 70 MW capacity: the margin keeps the bound from
+    # coinciding with the capacity constraint, whose dual is the branch sensitivity (issue #39).
+    assert df_flows.loc[1, "flow12"] == pytest.approx(70.7)
+    assert df_flows.loc[1, "flow21"] == pytest.approx(52.04038)
     # flow minus loss equals capacity of last segment
     assert df_flows.loc[1, "flow12"] - df_flows.loc[1, "loss12"] - df_flows.loc[1, "flow21"] == pytest.approx(18)

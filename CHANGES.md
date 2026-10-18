@@ -1,6 +1,13 @@
 # Changes
 
 ## unpublished
+2026-10-18
+- fix branch capacity sensitivities being identically zero in single-period mode (#39). The
+  branch rating was set both as a constraint and as a variable bound, and the solver attributed
+  the binding limit to the bound, leaving the constraint dual that is reported at zero. With
+  `lossmethod=1` the same applied to the directional flows, whose bounds are now 1% above
+  capacity; this lets the unphysical two-way flow of #29 grow by up to 1% of capacity
+
 2026-10-17
 - rename simulation mode: `objective_mode="hourly"` is now `"single_period"`, since a timestep
   need not be an hour. The old spelling raises; there is no alias (this name was never released)

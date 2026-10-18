@@ -108,12 +108,16 @@ def create_variables(model, grid, ctx, cfg):
     model.varAcBranchFlow = pyo.Var(model.s_branch_ac, within=pyo.Reals)
     model.varDcBranchFlow = pyo.Var(model.s_branch_dc, within=pyo.Reals)
     if cfg.lossmethod == 1:
-
+        # Bounds sit 1% above capacity so they never coincide with cMaxFlowAc/cMaxFlowDc. At exactly
+        # the capacity, a branch at its rating also has flow12 (or flow21) at its bound, the solver
+        # prices congestion on that bound, and the constraint dual reported as sensitivity is zero.
+        # The margin is kept small because these bounds are also what limits two-way flow (#29).
+        # Ref issue: https://github.com/powergama/powergama/issues/39
         def maxflow(model, j):
-            return (0, grid.branch.loc[j, "capacity"])
+            return (0, 1.01 * grid.branch.loc[j, "capacity"])
 
         def maxflow_dc(model, j):
-            return (0, grid.dcbranch.loc[j, "capacity"])
+            return (0, 1.01 * grid.dcbranch.loc[j, "capacity"])
 
         # Ref issue: https://github.com/powergama/powergama/issues/29
         # Adding bounds on 12 and 21 flows reduces the problem with simultaneously large 12 and 21 flows
