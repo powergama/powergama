@@ -72,14 +72,6 @@ class GridContext:
     pmax_ref: object = None
     pmin_ref: object = None
 
-    # --- RT day-ahead target references ------------------------------------
-    rt_target_ref: object = None
-    rt_target_gen_indices: set = field(default_factory=set)
-    rt_consumer_target_ref: object = None
-    rt_consumer_target_indices: set = field(default_factory=set)
-    rt_storage_target_ref: object = None
-    rt_storage_target_indices: set = field(default_factory=set)
-
     # --- ramping ------------------------------------------------------------
     ramp_up_pu: object = None
     ramp_down_pu: object = None
@@ -87,55 +79,24 @@ class GridContext:
     ramp_daily_reset: object = None
     disable_nuclear_ramp_profile_conflict: object = None
 
-    # --- RT generator classification (read only by rt_diagnostics, except
-    #     wind/solar/hydro_ror which the deviation pricing uses) -------------
-    idx_rt_peak_gen: set = field(default_factory=set)
-    idx_rt_normal_gas: set = field(default_factory=set)
-    idx_rt_wind: set = field(default_factory=set)
-    idx_rt_solar: set = field(default_factory=set)
-    idx_rt_nuclear: set = field(default_factory=set)
-    idx_rt_biomass: set = field(default_factory=set)
-    idx_rt_fossil_other: set = field(default_factory=set)
-    idx_rt_storage_gens: set = field(default_factory=set)
-    idx_rt_hydro_ror: set = field(default_factory=set)
-
     # --- branch flow bounds and NTC ----------------------------------------
     default_ac_flow_bounds: dict = field(default_factory=dict)
     default_dc_flow_bounds: dict = field(default_factory=dict)
     inter_area_ntc: object = None
     inter_area_ntc_rows: dict = field(default_factory=dict)
 
-    # --- border branches, identified by the project-specific DA lock tables ---
-    # Grid-shaped lookups even though their source is an injected artifact, so
-    # the constraint rules that read them can take ctx like everything else.
-    idx_border_ac: set = field(default_factory=set)
-    idx_border_dc: set = field(default_factory=set)
-    border_ac_sign: dict = field(default_factory=dict)
-    border_dc_sign: dict = field(default_factory=dict)
-
     @classmethod
-    def from_grid(cls, grid, Bbus, DA, refnodes, locks):
+    def from_grid(cls, grid, Bbus, DA, refnodes):
         """Derive everything the builders need from *grid*.
 
         Bbus/DA/refnodes are passed in rather than computed here: the matrices are
-        expensive and the caller already prints progress around them. *locks* is a
-        :class:`~powergama.lp.project_locks.DaLocks`, needed only for the border
-        branch sets it identifies.
+        expensive and the caller already prints progress around them.
         """
-        ctx = cls(
-            Bbus=Bbus,
-            DA=DA,
-            refnodes=refnodes,
-            idx_border_ac=locks.idx_border_ac,
-            idx_border_dc=locks.idx_border_dc,
-            border_ac_sign=locks.border_ac_sign,
-            border_dc_sign=locks.border_dc_sign,
-        )
+        ctx = cls(Bbus=Bbus, DA=DA, refnodes=refnodes)
         ctx._build_node_maps(grid)
         ctx._build_index_sets(grid)
         ctx._build_profile_refs(grid)
         ctx._build_ramping(grid)
-        ctx._build_rt_classification(grid)
         ctx._build_flow_bounds(grid)
         ctx._build_inter_area_ntc(grid)
         return ctx
@@ -181,39 +142,6 @@ class GridContext:
         # profile-driven floor as a fraction of installed pmax.
         self.pmax_ref = grid.generator["pmax_ref"] if "pmax_ref" in grid.generator.columns else None
         self.pmin_ref = grid.generator["pmin_ref"] if "pmin_ref" in grid.generator.columns else None
-        self.rt_target_ref = grid.generator["rt_target_ref"] if "rt_target_ref" in grid.generator.columns else None
-        self.rt_target_gen_indices = {
-            int(i)
-            for i in grid.generator.index
-            if self.rt_target_ref is not None
-            and isinstance(self.rt_target_ref.loc[i], str)
-            and str(self.rt_target_ref.loc[i]).strip()
-        }
-        # Optional consumer (flexible load) DA target references for DA-target deviation penalties.
-        self.rt_consumer_target_ref = (
-            grid.consumer["rt_target_ref"] if "rt_target_ref" in grid.consumer.columns else None
-        )
-        self.rt_consumer_target_indices = {
-            int(i)
-            for i in grid.consumer.index
-            if self.rt_consumer_target_ref is not None
-            and isinstance(self.rt_consumer_target_ref.loc[i], str)
-            and str(self.rt_consumer_target_ref.loc[i]).strip()
-            and int(i) in self.idx_consumersWithFlexLoad
-        }
-        # Optional storage (reservoir/battery filling) DA target references for DA-target deviation penalties.
-        # Stores normalized filling fraction [0, 1] to ensure storage state continuity matches DA.
-        self.rt_storage_target_ref = (
-            grid.generator["rt_storage_target_ref"] if "rt_storage_target_ref" in grid.generator.columns else None
-        )
-        self.rt_storage_target_indices = {
-            int(i)
-            for i in grid.generator.index
-            if self.rt_storage_target_ref is not None
-            and isinstance(self.rt_storage_target_ref.loc[i], str)
-            and str(self.rt_storage_target_ref.loc[i]).strip()
-            and int(i) in self.idx_generatorsWithStorage
-        }
 
     def _build_ramping(self, grid):
         # Ramp-rate limits in per-unit of installed generator capacity. NaN means unconstrained.
@@ -272,42 +200,6 @@ class GridContext:
             _disable = _is_nuclear & _has_pmax_ref & _has_pmin_ref & _fully_constrained
             if _disable.any():
                 self.disable_nuclear_ramp_profile_conflict[_disable.values] = True
-
-    def _build_rt_classification(self, grid):
-        # Classify BE generators by type/tag for differentiated deviation pricing.
-        _gtype = (
-            grid.generator["type"].astype(str).str.lower()
-            if "type" in grid.generator.columns
-            else pd.Series("", index=grid.generator.index)
-        )
-        _gdesc = (
-            grid.generator["desc"].astype(str)
-            if "desc" in grid.generator.columns
-            else pd.Series("", index=grid.generator.index)
-        )
-        # Generator type classification for RT deviation cost attribution in debug output.
-        # These classify by generator type only — no country filter.
-        _storage_gens_set = self.idx_generatorsWithStorage
-        self.idx_rt_peak_gen = {
-            int(i) for i in grid.generator.index if _gtype.loc[i] == "fossil_gas" and "[RT]" in str(_gdesc.loc[i])
-        }
-        self.idx_rt_normal_gas = {
-            int(i) for i in grid.generator.index if _gtype.loc[i] == "fossil_gas" and "[RT]" not in str(_gdesc.loc[i])
-        }
-        self.idx_rt_wind = {int(i) for i in grid.generator.index if _gtype.loc[i] in {"wind_off", "wind_on", "wind"}}
-        self.idx_rt_solar = {int(i) for i in grid.generator.index if _gtype.loc[i] == "solar"}
-        self.idx_rt_nuclear = {int(i) for i in grid.generator.index if _gtype.loc[i] == "nuclear"}
-        self.idx_rt_biomass = {int(i) for i in grid.generator.index if _gtype.loc[i] == "biomass"}
-        self.idx_rt_fossil_other = {int(i) for i in grid.generator.index if _gtype.loc[i] == "fossil_other"}
-        self.idx_rt_storage_gens = set(_storage_gens_set)
-        self.idx_rt_hydro_ror = {
-            int(i)
-            for i in grid.generator.index
-            if _gtype.loc[i] == "hydro"
-            and int(i) not in _storage_gens_set
-            and float(pd.to_numeric(grid.generator.loc[i, "pump_cap"], errors="coerce") or 0.0) <= 0.0
-            and float(pd.to_numeric(grid.generator.loc[i, "storage_cap"], errors="coerce") or 0.0) <= 0.0
-        }
 
     def _build_flow_bounds(self, grid):
         for b in grid.branch.index:

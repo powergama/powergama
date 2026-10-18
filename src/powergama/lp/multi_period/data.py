@@ -15,7 +15,6 @@ WindowData is the explicit interface between this module and :mod:`.build`:
 
 from dataclasses import dataclass, field
 
-import numpy as np
 import pandas as pd
 
 from .. import storage_value
@@ -40,7 +39,6 @@ class WindowData:
     flex_storage_cap: object = None
     flex_storage_ini: object = None
     flexload_cost_h: object = None
-    foreign_lock: object = None
     gen_cost_h: object = None
     gen_pump_set: object = None
     gen_storage_set: object = None
@@ -69,7 +67,7 @@ def prepare_window(lp, day_timesteps):
     day's inflow/demand profile and can pre-charge/pre-dispatch storage.
 
     Everything else (power balance, DC flow-angle, branch limits, ramp
-    rates, BE border locks) is the same physics as the single-period model,
+    rates) is the same physics as the single-period model,
     now indexed by (entity, hour) instead of (entity) alone.
 
     Returns (model, pre_data_dict).
@@ -178,12 +176,6 @@ def prepare_window(lp, day_timesteps):
             avg = float(grid.consumer.loc[j, "demand_avg"]) * (1 - float(grid.consumer.loc[j, "flex_fraction"]))
             prof = grid.consumer.loc[j, "demand_ref"]
             d_now = float(grid.profiles.loc[ts, prof]) * avg
-            if lp._foreign_cons_lock is not None:
-                key = (int(ts), int(j))
-                if key in lp._foreign_cons_lock.index:
-                    locked = float(lp._foreign_cons_lock.loc[key])
-                    if np.isfinite(locked):
-                        d_now = locked
             demand_h[(hi, j)] = float(d_now)
 
     # ── flexible load: reservoir parameters and per-hour value ────
@@ -217,53 +209,17 @@ def prepare_window(lp, day_timesteps):
                 storage_value.flexload_storage_value(lp._grid, j, lp._storage_flexload[j], ts)
             )
 
-    # ── pre-compute per-hour branch flow bounds (including DA locks) ─
+    # ── per-hour branch flow bounds: the branch rating ───────────
+    # The day-ahead lock windows are RT inputs and never apply here.
     ac_lb: dict = {}  # (hi, b) → lb or None
     ac_ub: dict = {}  # (hi, b) → ub or None
     dc_lb: dict = {}
     dc_ub: dict = {}
-    for hi, ts in enumerate(day_timesteps):
+    for hi in range(H):
         for b in ctx.branch_ac_ids:
-            key = (int(ts), int(b))
-            if (
-                lp._border_ac_flow_lb is not None
-                and key in lp._border_ac_flow_lb.index
-                and key in lp._border_ac_flow_ub.index
-            ):
-                lb = float(lp._border_ac_flow_lb.loc[key])
-                ub = float(lp._border_ac_flow_ub.loc[key])
-                ac_lb[(hi, b)] = lb if np.isfinite(lb) else None
-                ac_ub[(hi, b)] = ub if np.isfinite(ub) else None
-            else:
-                lo, hi_ = lp._default_ac_flow_bounds.get(int(b), (None, None))
-                ac_lb[(hi, b)] = lo
-                ac_ub[(hi, b)] = hi_
+            ac_lb[(hi, b)], ac_ub[(hi, b)] = lp._default_ac_flow_bounds.get(int(b), (None, None))
         for b in ctx.branch_dc_ids:
-            key = (int(ts), int(b))
-            if (
-                lp._border_dc_flow_lb is not None
-                and key in lp._border_dc_flow_lb.index
-                and key in lp._border_dc_flow_ub.index
-            ):
-                lb = float(lp._border_dc_flow_lb.loc[key])
-                ub = float(lp._border_dc_flow_ub.loc[key])
-                dc_lb[(hi, b)] = lb if np.isfinite(lb) else None
-                dc_ub[(hi, b)] = ub if np.isfinite(ub) else None
-            else:
-                lo, hi_ = lp._default_dc_flow_bounds.get(int(b), (None, None))
-                dc_lb[(hi, b)] = lo
-                dc_ub[(hi, b)] = hi_
-
-    # ── foreign gen locks ─────────────────────────────────────────
-    foreign_lock: dict = {}  # (hi, i) → fixed MW or None
-    if lp._foreign_gen_lock is not None:
-        for hi, ts in enumerate(day_timesteps):
-            for i in ctx.gen_ids:
-                key = (int(ts), int(i))
-                if key in lp._foreign_gen_lock.index:
-                    v = float(lp._foreign_gen_lock.loc[key])
-                    if np.isfinite(v):
-                        foreign_lock[(hi, i)] = max(0.0, v)
+            dc_lb[(hi, b)], dc_ub[(hi, b)] = lp._default_dc_flow_bounds.get(int(b), (None, None))
 
     return WindowData(
         H=H,
@@ -281,7 +237,6 @@ def prepare_window(lp, day_timesteps):
         flex_storage_cap=flex_storage_cap,
         flex_storage_ini=flex_storage_ini,
         flexload_cost_h=flexload_cost_h,
-        foreign_lock=foreign_lock,
         gen_cost_h=gen_cost_h,
         gen_pump_set=gen_pump_set,
         gen_storage_set=gen_storage_set,

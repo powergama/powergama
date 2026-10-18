@@ -12,35 +12,36 @@ argument, never off anything else; grid data, configuration and the precomputed
 lookups come from `grid`, `cfg` and `ctx`, closed over at build time.
 
 Declaration order matters: Pyomo writes components to the LP in the order they
-are added, so the sequence in build_model() is not arbitrary, and the RT seams
-sit exactly where the RT declarations used to.
+are added, so the sequence in build_model() is not arbitrary. Extensions
+(:mod:`..extension`) declare theirs after the core's, in each phase.
 """
 
 import numpy as np
 import pyomo.environ as pyo
 
 from ... import constants as const
-from ..rt import build as rt_build
 
 
-def build_model(model, grid, ctx, cfg):
+def build_model(model, grid, ctx, cfg, extensions=()):
     """Construct the whole single-period model, in declaration order."""
     create_sets_and_parameters(model, grid, ctx, cfg)
+    for ext in extensions:
+        ext.add_parameters(model, grid, ctx)
     create_variables(model, grid, ctx, cfg)
-    create_objective(model, grid, ctx, cfg)
+    for ext in extensions:
+        ext.add_variables(model, grid, ctx)
+    create_objective(model, grid, ctx, cfg, extensions)
     powerbalance_rhs = get_powerbalance_rhs(model, ctx)
     create_constraint_powerflow_limit(model, grid, ctx, cfg)
     create_constraint_inter_area_ntc(model, grid, ctx, cfg)
     create_constraint_powerloss(model, grid, ctx, cfg, penalty_twoway_flow=cfg.penalty_twoway_flow)
     create_constraint_generator_output(model, grid, ctx, cfg)
-    rt_build.add_target_tracking(model, grid, ctx, cfg)
     create_constraint_generator_pump(model, grid, ctx, cfg)
     create_constraint_load_flex(model, grid, ctx, cfg)
-    rt_build.add_flexload_target_tracking(model, grid, ctx, cfg)
-    rt_build.add_storage_target_tracking(model, grid, ctx, cfg)
-    rt_build.add_border_flow_target_tracking(model, grid, ctx, cfg)
     create_constraint_powerbalance(model, grid, ctx, cfg, powerbalance_rhs)
     create_constraint_powerflow_equation(model, grid, ctx, cfg)
+    for ext in extensions:
+        ext.add_constraints(model, grid, ctx)
 
 
 def create_sets_and_parameters(model, grid, ctx, cfg):
@@ -85,7 +86,7 @@ def create_sets_and_parameters(model, grid, ctx, cfg):
         mutable=True,
         initialize={g: grid.generator.loc[g, "pump_cap"] for g in model.s_gen_pump},
     )
-    rt_build.add_params(model)
+    model.p_demand = pyo.Param(model.s_load, within=pyo.Reals, default=0, mutable=True)
     # Written each timestep by _updateLpProblem from _flexload_storage_value. Only
     # the single-period path uses it; the multi-period path prices flexible load per
     # window in _build_day_joint_model instead.
@@ -133,11 +134,9 @@ def create_variables(model, grid, ctx, cfg):
         model.varLossDc21 = pyo.Var(model.s_branch_dc, within=pyo.NonNegativeReals)
     model.varGeneration = pyo.Var(model.s_gen, within=pyo.NonNegativeReals)
     model.varPump = pyo.Var(model.s_gen_pump, within=pyo.NonNegativeReals)
-    rt_build.add_generation_deviation_vars(model)
     model.varFlexLoad = pyo.Var(model.s_load_flex, within=pyo.NonNegativeReals)
     model.varLoadShed = pyo.Var(model.s_load, within=pyo.NonNegativeReals)
     model.varDumpLoad = pyo.Var(model.s_load, within=pyo.NonNegativeReals)
-    rt_build.add_remaining_deviation_vars(model)
     model.varVoltageAngle = pyo.Var(model.s_node, within=pyo.Reals, initialize=0.0)
 
 
@@ -444,29 +443,33 @@ def create_constraint_powerflow_equation(model, grid, ctx, cfg):
     model.cReferenceNode = pyo.Constraint(model.s_node, rule=referenceNode_rule)
 
 
-def create_objective(model, grid, ctx, cfg):
+def objective_terms(model):
+    """The core objective, as named terms that an extension may add to, drop or replace.
+
+    The objective is their sum, in insertion order.
+    """
+    terms = {}
+    # Cost of generation, less the value of pumping and of serving flexible load.
+    terms["operating_cost"] = (
+        sum(model.varGeneration[i] * model.p_gen_cost[i] for i in model.s_gen)
+        - sum(model.varPump[i] * model.p_genpump_cost[i] for i in model.s_gen_pump)
+        - sum(model.varFlexLoad[i] * model.p_loadflex_cost[i] for i in model.s_load_flex)
+    )
+    # Penalty slack: keeps every timestep feasible.
+    terms["load_shedding"] = sum(model.varLoadShed[i] * const.loadshedcost for i in model.s_load) + sum(
+        model.varDumpLoad[i] * const.loadshedcost for i in model.s_load
+    )
+    return terms
+
+
+def create_objective(model, grid, ctx, cfg, extensions=()):
     """Create pyomo model objective function"""
 
     def cost_rule(model):
-        """Operational costs: cost of generation, pumping, flexible load and load shed"""
-
-        # Operational costs phase 1 (if stage2DeltaTime>0)
-        if cfg.rt_deviation_objective_active:
-            # Load shedding must remain expensive even in pure RT deviation mode;
-            # otherwise the solver can bypass tracked balancing channels by
-            # dropping demand instead of redispatching generation, storage, or flex load.
-            cost = sum(model.varLoadShed[i] * const.loadshedcost for i in model.s_load)
-            cost += sum(model.varDumpLoad[i] * const.loadshedcost for i in model.s_load)
-        else:
-            cost = sum(model.varGeneration[i] * model.p_gen_cost[i] for i in model.s_gen)
-            cost -= sum(model.varPump[i] * model.p_genpump_cost[i] for i in model.s_gen_pump)
-            cost -= sum(model.varFlexLoad[i] * model.p_loadflex_cost[i] for i in model.s_load_flex)
-            cost += sum(model.varLoadShed[i] * const.loadshedcost for i in model.s_load)
-            cost += sum(model.varDumpLoad[i] * const.loadshedcost for i in model.s_load)
-
-        if cfg.rt_deviation_objective_active:
-            cost += rt_build.deviation_cost(model, ctx, cfg)
-        return cost
+        terms = objective_terms(model)
+        for ext in extensions:
+            ext.edit_objective_terms(model, terms)
+        return sum(terms.values())
 
     model.OBJ = pyo.Objective(rule=cost_rule, sense=pyo.minimize)
 

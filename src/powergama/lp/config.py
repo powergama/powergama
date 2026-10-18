@@ -8,8 +8,8 @@ reaching into ``self`` for a dozen unrelated flags.
 The unsupported mode combinations are rejected here rather than at the point of
 use. Each of them used to be a silent wrong answer:
 
-- ``is_rt`` with ``multi_period`` solved a cost-minimising LP while the caller
-  asked for a deviation-minimising one.
+- an extension with ``multi_period`` was silently ignored: the multi-period
+  model has no extension hooks (see :meth:`LpConfig.check_extensions`).
 - ``lossmethod != 0`` with ``multi_period`` reported losses as hard zeros.
 - ``ramp_daily_reset`` with ``commit_hours != 24`` released the ramp constraint
   at every commit boundary instead of at midnight.
@@ -35,21 +35,6 @@ class LpConfig:
     horizon_hours: int = 24
     commit_hours: int = 24
     storage_initial_fill_scale: float = 1.0
-    is_rt: bool = False
-    rt_dispatch_objective_mode: str = "deviation"
-    rt_balancing_fee_eur_per_mwh: float = 1.0
-    rt_p_res_curtailment_factor: float = 2.0
-    rt_xborder_flow_penalty_eur_per_mwh: float = 0.0
-
-    @property
-    def rt_deviation_objective_active(self) -> bool:
-        """Whether the objective minimises deviation rather than cost."""
-        return bool(self.is_rt)
-
-    @property
-    def rt_target_tracking_active(self) -> bool:
-        """Whether the RT target-tracking constraints and variables are built."""
-        return bool(self.rt_deviation_objective_active)
 
     @classmethod
     def from_args(
@@ -60,29 +45,12 @@ class LpConfig:
         horizon_hours=24,
         commit_hours=24,
         storage_initial_fill_scale=1.0,
-        rt_dispatch_objective_mode="deviation",
-        rt_balancing_fee_eur_per_mwh=1.0,
-        rt_p_res_curtailment_factor=2.0,
-        rt_xborder_flow_penalty_eur_per_mwh=0.0,
-        is_rt=False,
     ):
         """Normalise and validate the LpProblem constructor arguments."""
         mode = str(objective_mode).strip().lower()
         if mode not in VALID_OBJECTIVE_MODES:
             raise ValueError("objective_mode must be one of: " + ", ".join(VALID_OBJECTIVE_MODES))
 
-        is_rt = bool(is_rt)
-        lossmethod = lossmethod
-
-        if is_rt and mode == "multi_period":
-            # The day-joint model has no RT layer: no p_rt_* parameters, no deviation
-            # variables and no deviation objective. Combining these silently solved a
-            # cost-minimising LP instead of a deviation-minimising one.
-            raise NotImplementedError(
-                "is_rt=True is not supported with objective_mode='multi_period': the multi-period "
-                "model does not implement real-time target tracking or the deviation objective. "
-                "Use objective_mode='single_period' for balancing simulations."
-            )
         if mode == "multi_period" and lossmethod != 0:
             # Previously only a warning; the day-joint power balance has no loss terms at
             # all and losses were reported as hard-coded zeros.
@@ -99,12 +67,24 @@ class LpConfig:
             horizon_hours=int(max(1, int(horizon_hours))),
             commit_hours=int(max(1, int(commit_hours))),
             storage_initial_fill_scale=float(max(0.0, min(1.0, storage_initial_fill_scale))),
-            is_rt=is_rt,
-            rt_dispatch_objective_mode=("deviation" if is_rt else str(rt_dispatch_objective_mode).strip().lower()),
-            rt_balancing_fee_eur_per_mwh=float(rt_balancing_fee_eur_per_mwh),
-            rt_p_res_curtailment_factor=float(rt_p_res_curtailment_factor),
-            rt_xborder_flow_penalty_eur_per_mwh=max(0.0, float(rt_xborder_flow_penalty_eur_per_mwh)),
         )
+
+    def check_extensions(self, extensions) -> None:
+        """Reject an extension the chosen formulation cannot honour.
+
+        Extensions hook into the single-period model only. Ignoring one in
+        multi-period mode would solve a different problem from the one asked for --
+        for the RT extension, a cost-minimising LP instead of a deviation-minimising
+        one.
+        """
+        if self.objective_mode != "multi_period":
+            return
+        for ext in extensions:
+            if not ext.supports_multi_period:
+                raise NotImplementedError(
+                    f"{type(ext).__name__} is not supported with objective_mode='multi_period': the "
+                    "multi-period model has no extension hooks. Use objective_mode='single_period'."
+                )
 
     def check_ramp_daily_reset(self, ramp_daily_reset) -> None:
         """Reject ramp_daily_reset on a commit window that is not a whole day.
@@ -136,6 +116,4 @@ class LpConfig:
 # leading underscore the rest of the code uses. Listed explicitly rather than
 # probed with hasattr, so that adding a field to LpConfig cannot silently start
 # shadowing an LpProblem attribute of the same name.
-CONFIG_ATTRS = frozenset(
-    [f.name for f in dataclasses.fields(LpConfig)] + ["rt_deviation_objective_active", "rt_target_tracking_active"]
-)
+CONFIG_ATTRS = frozenset(f.name for f in dataclasses.fields(LpConfig))

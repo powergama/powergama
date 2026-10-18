@@ -1,14 +1,12 @@
 """
-Real-time solver diagnostics and objective tracing for :class:`~powergama.LpProblem`.
+Real-time solver diagnostics, written by :class:`~powergama.lp.rt.RtExtension`.
 
-This is write-only instrumentation: every entry point returns early unless the problem
-is in real-time mode and a debug path has been configured, and nothing here feeds back
-into the optimisation. It is gated on these environment variables:
+This is write-only instrumentation: every entry point returns early unless a debug
+path has been configured, and nothing here feeds back into the optimisation. The path
+comes from this environment variable:
 
 ``POWERGAMA_RT_SOLVER_DEBUG_JSONL``
     Path to a JSONL file receiving one record per solved timestep.
-``POWERGAMA_OBJECTIVE_TRACE_CSV``
-    Path to a CSV file receiving the per-day/per-hour objective trace.
 
 The JSONL path may also be set per-problem by assigning a ``rt_solver_debug_jsonl``
 attribute on the :class:`~powergama.GridData` object, which takes precedence over the
@@ -16,8 +14,8 @@ environment variable. That attribute is not part of the documented ``GridData`` 
 (it is absent from ``GridData.keys_powergama``) and is injected by downstream callers;
 it is read via ``getattr`` with a default so ordinary grid data is unaffected.
 
-Each function takes the :class:`LpProblem` as its first argument rather than being a
-method, to keep the (large) set of model attributes it reads explicit. It is a reader of
+Each function takes the :class:`LpProblem` and the extension (``rt``) rather than being
+a method, to keep the (large) set of model attributes it reads explicit. It is a reader of
 most of the model: Pyomo components (``varGeneration``, the ``p_rt_*`` parameter family,
 the index sets, ``OBJ``), simulation state (``_storage``, ``_gen_prev``), the RT index
 sets and ``_grid``. That read surface is why this is instrumentation living alongside the
@@ -37,32 +35,12 @@ import pyomo.environ as pyo
 from ... import constants as const
 
 
-def write_objective_trace(lp):
-    """Write optional per-hour objective trace CSV for mode parity diagnostics."""
-    trace_path = str(os.environ.get("POWERGAMA_OBJECTIVE_TRACE_CSV", "")).strip()
-    if not trace_path or not lp._hourly_objective_trace:
-        return
-    try:
-        out_path = Path(trace_path)
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        trace_df = pd.DataFrame(
-            lp._hourly_objective_trace,
-            columns=["timestep", "day_index", "hour_in_day", "objective_value"],
-        )
-        trace_df["objective_mode"] = str(lp._objective_mode)
-        trace_df["horizon_hours"] = int(lp._horizon_hours)
-        trace_df.to_csv(out_path, index=False)
-        print(f"Wrote objective trace CSV: {out_path}")
-    except Exception as ex:
-        warnings.warn(f"Failed to write POWERGAMA_OBJECTIVE_TRACE_CSV='{trace_path}': {ex}", UserWarning)
-
-
-def append_payload(lp, payload, *, warning_context=""):
+def append_payload(rt, payload, *, warning_context=""):
     """Best-effort JSONL append for RT solver diagnostics."""
-    if not lp._is_rt or lp._rt_solver_debug_path is None:
+    if rt.debug_path is None:
         return False
     try:
-        with lp._rt_solver_debug_path.open("a", encoding="utf-8") as fh:
+        with rt.debug_path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(payload, ensure_ascii=True) + "\n")
         return True
     except Exception as ex:
@@ -71,45 +49,41 @@ def append_payload(lp, payload, *, warning_context=""):
         return False
 
 
-def initialize_debug_stream(lp, grid):
+def initialize_debug_stream(rt, grid):
     """Initialize optional RT solver debug stream and write a session header."""
     _rt_debug_raw = str(getattr(grid, "rt_solver_debug_jsonl", "")).strip()
     if not _rt_debug_raw:
         _rt_debug_raw = str(os.environ.get("POWERGAMA_RT_SOLVER_DEBUG_JSONL", "")).strip()
-    if not (lp._is_rt and _rt_debug_raw):
+    if not _rt_debug_raw:
         return
     try:
         _dbg_path = Path(_rt_debug_raw)
         _dbg_path.parent.mkdir(parents=True, exist_ok=True)
-        lp._rt_solver_debug_path = _dbg_path
-        lp._rt_debug_session_id = str(uuid.uuid4())
+        rt.debug_path = _dbg_path
+        rt.debug_session_id = str(uuid.uuid4())
         _meta = {
             "event": "rt_debug_header",
-            "debug_session_id": lp._rt_debug_session_id,
+            "debug_session_id": rt.debug_session_id,
             "debug_header_written_at_utc": str(pd.Timestamp.utcnow().isoformat()),
-            "dispatch_objective_mode": lp._rt_dispatch_objective_mode,
-            "rt_target_tracking_active": bool(lp._rt_target_tracking_active),
-            "rt_balancing_fee_eur_per_mwh": float(lp._rt_balancing_fee_eur_per_mwh),
-            "rt_xborder_flow_penalty_eur_per_mwh": float(lp._rt_xborder_flow_penalty_eur_per_mwh),
+            # RT always minimises deviation; kept for readers of the header format.
+            "dispatch_objective_mode": "deviation",
+            "rt_target_tracking_active": True,
+            "rt_balancing_fee_eur_per_mwh": float(rt.balancing_fee_eur_per_mwh),
+            "rt_xborder_flow_penalty_eur_per_mwh": float(rt.xborder_flow_penalty_eur_per_mwh),
         }
         append_payload(
-            lp,
+            rt,
             _meta,
             warning_context=f"Failed to write RT solver debug header to '{_rt_debug_raw}'",
         )
     except Exception as ex:
         warnings.warn(f"Failed to initialize RT solver debug stream '{_rt_debug_raw}': {ex}", UserWarning)
-        lp._rt_solver_debug_path = None
+        rt.debug_path = None
 
 
-def append_event(lp, payload):
-    """Public wrapper for optional debug append used by workflow helpers."""
-    append_payload(lp, payload)
-
-
-def append_hourly_debug(lp, timestep):
+def append_hourly_debug(lp, rt, timestep):
     """Append per-timestep RT solver internals for redispatch diagnostics."""
-    if not lp._is_rt or lp._rt_solver_debug_path is None:
+    if rt.debug_path is None:
         return
 
     def _val(x):
@@ -150,11 +124,11 @@ def append_hourly_debug(lp, timestep):
 
     storage_rows = []
     da_reference_storage_mismatch_cost = 0.0
-    for i in sorted(int(ii) for ii in lp._rt_storage_target_indices):
+    for i in sorted(int(ii) for ii in rt.ctx.storage_target_indices):
         storage_cap = _val(lp._grid.generator.loc[i, "storage_cap"]) or 0.0
         pre_storage = _val(lp._storage[i]) or 0.0
         soc_rt = (pre_storage / storage_cap) if storage_cap > 0.0 else 0.0
-        ref_target = lp._rt_storage_target_ref.iloc[int(i)] if lp._rt_storage_target_ref is not None else ""
+        ref_target = rt.ctx.storage_target_ref.iloc[int(i)] if rt.ctx.storage_target_ref is not None else ""
         soc_da_target = _prof(timestep, ref_target)
         dt_h = float(lp.timeDelta) if np.isfinite(lp.timeDelta) and lp.timeDelta > 0.0 else 1.0
         da_gen_target_mw = _val(lp.model.p_rt_target[i]) or 0.0
@@ -205,7 +179,7 @@ def append_hourly_debug(lp, timestep):
     da_replay_unavoidable_gas_dev_cost_lb = 0.0
     da_replay_infeasible_gas_count = 0
     for i in sorted(
-        int(ii) for ii in lp._rt_target_gen_indices if int(ii) in (lp._idx_rt_normal_gas | lp._idx_rt_peak_gen)
+        int(ii) for ii in rt.ctx.target_gen_indices if int(ii) in (rt.ctx.idx_normal_gas | rt.ctx.idx_peak_gen)
     ):
         pmin_now = _val(lp.model.p_gen_pmin[i])
         pmax_now = _val(lp.model.p_gen_pmax[i])
@@ -237,7 +211,7 @@ def append_hourly_debug(lp, timestep):
                 "indx": int(i),
                 "node": str(lp._grid.generator.loc[i, "node"]),
                 "desc": str(lp._grid.generator.loc[i, "desc"]),
-                "is_peak_rt_block": bool(int(i) in lp._idx_rt_peak_gen),
+                "is_peak_rt_block": bool(int(i) in rt.ctx.idx_peak_gen),
                 "gen_mw": _val(lp.model.varGeneration[i]) or 0.0,
                 "gen_target_mw": _val(lp.model.p_rt_target[i]) or 0.0,
                 "gen_dev_pos_mw": _val(lp.model.varRtTargetDevPos[i]) or 0.0,
@@ -279,28 +253,28 @@ def append_hourly_debug(lp, timestep):
         _sum_expr(
             lp.model.varGeneration[i] - lp.model.p_rt_target[i]
             for i in lp.model.s_gen
-            if int(i) in lp._rt_target_gen_indices
+            if int(i) in rt.ctx.target_gen_indices
         )
         + _sum_expr(lp.model.varLoadShed[j] for j in lp.model.s_load)
         - _sum_expr(lp.model.varDumpLoad[j] for j in lp.model.s_load)
         - _sum_expr(
             lp.model.varFlexLoad[j] - lp.model.p_rt_flexload_target[j]
             for j in lp.model.s_load_flex
-            if int(j) in lp._rt_consumer_target_indices
+            if int(j) in rt.ctx.consumer_target_indices
         )
         + _sum_expr(
-            lp._border_ac_sign.get(int(b), 0.0)
+            rt.ctx.border_ac_sign.get(int(b), 0.0)
             * (_val(lp.model.p_rt_io_target_active_ac[b]) or 0.0)
             * ((_val(lp.model.varAcBranchFlow[b]) or 0.0) - (_val(lp.model.p_rt_io_target_ac[b]) or 0.0))
             for b in lp.model.s_branch_ac
-            if int(b) in lp._idx_border_ac
+            if int(b) in rt.ctx.idx_border_ac
         )
         + _sum_expr(
-            lp._border_dc_sign.get(int(b), 0.0)
+            rt.ctx.border_dc_sign.get(int(b), 0.0)
             * (_val(lp.model.p_rt_io_target_active_dc[b]) or 0.0)
             * ((_val(lp.model.varDcBranchFlow[b]) or 0.0) - (_val(lp.model.p_rt_io_target_dc[b]) or 0.0))
             for b in lp.model.s_branch_dc
-            if int(b) in lp._idx_border_dc
+            if int(b) in rt.ctx.idx_border_dc
         )
     )
 
@@ -321,27 +295,27 @@ def append_hourly_debug(lp, timestep):
     redispatch_mw_attribution: dict[str, dict[str, float]] = {}
 
     def _bucket_for_gen(ii: int) -> str:
-        if ii in lp._idx_rt_storage_gens:
+        if ii in rt.ctx.idx_storage_gens:
             return "storage_generation"
-        if ii in lp._idx_rt_wind:
+        if ii in rt.ctx.idx_wind:
             return "wind"
-        if ii in lp._idx_rt_solar:
+        if ii in rt.ctx.idx_solar:
             return "solar"
-        if ii in (lp._idx_rt_normal_gas | lp._idx_rt_peak_gen):
+        if ii in (rt.ctx.idx_normal_gas | rt.ctx.idx_peak_gen):
             return "gas"
-        if ii in lp._idx_rt_nuclear:
+        if ii in rt.ctx.idx_nuclear:
             return "nuclear"
-        if ii in lp._idx_rt_hydro_ror:
+        if ii in rt.ctx.idx_hydro_ror:
             return "hydro_ror"
-        if ii in lp._idx_rt_biomass:
+        if ii in rt.ctx.idx_biomass:
             return "biomass"
-        if ii in lp._idx_rt_fossil_other:
+        if ii in rt.ctx.idx_fossil_other:
             return "fossil_other"
         return "other"
 
     for i in lp.model.s_gen:
         ii = int(i)
-        if ii not in lp._rt_target_gen_indices:
+        if ii not in rt.ctx.target_gen_indices:
             continue
         dev_pos = _val(lp.model.varRtTargetDevPos[i]) or 0.0
         dev_neg = _val(lp.model.varRtTargetDevNeg[i]) or 0.0
@@ -367,14 +341,14 @@ def append_hourly_debug(lp, timestep):
         lp.model.p_rt_deviation_price_flex_pos[j] * lp.model.varRtFlexLoadTargetDevPos[j]
         + lp.model.p_rt_deviation_price_flex_neg[j] * lp.model.varRtFlexLoadTargetDevNeg[j]
         for j in lp.model.s_load_flex
-        if int(j) in lp._rt_consumer_target_indices
+        if int(j) in rt.ctx.consumer_target_indices
     )
 
     gen_dev_cost_total = _sum_expr(
         lp.model.p_rt_deviation_price_gen_pos[i] * lp.model.varRtTargetDevPos[i]
         + lp.model.p_rt_deviation_price_gen_neg[i] * lp.model.varRtTargetDevNeg[i]
         for i in lp.model.s_gen
-        if int(i) in lp._rt_target_gen_indices
+        if int(i) in rt.ctx.target_gen_indices
     )
     redispatch_cost_attribution_eur["meta_be_gen_dev_cost_accounted"] = float(
         sum(
@@ -399,7 +373,7 @@ def append_hourly_debug(lp, timestep):
         "timestep": int(timestep),
         "objective": _val(lp.model.OBJ()),
         "flags": {
-            "rt_deviation_objective_active": bool(lp._rt_deviation_objective_active),
+            "rt_deviation_objective_active": True,
         },
         "residual": {
             "rt_balancing_deviation_mw": float(be_balancing_dev),
@@ -411,51 +385,53 @@ def append_hourly_debug(lp, timestep):
                 lp.model.p_rt_deviation_price_gen_pos[i] * lp.model.varRtTargetDevPos[i]
                 + lp.model.p_rt_deviation_price_gen_neg[i] * lp.model.varRtTargetDevNeg[i]
                 for i in lp.model.s_gen
-                if int(i) in lp._rt_target_gen_indices
+                if int(i) in rt.ctx.target_gen_indices
             ),
             "flex_dev": _sum_expr(
                 lp.model.p_rt_deviation_price_flex_pos[j] * lp.model.varRtFlexLoadTargetDevPos[j]
                 + lp.model.p_rt_deviation_price_flex_neg[j] * lp.model.varRtFlexLoadTargetDevNeg[j]
                 for j in lp.model.s_load_flex
-                if int(j) in lp._rt_consumer_target_indices
+                if int(j) in rt.ctx.consumer_target_indices
             ),
             "storage_dev": _sum_expr(
                 lp.model.p_rt_deviation_price_storage_pos[i] * lp.model.varRtStorageTargetDevPos[i]
                 + lp.model.p_rt_deviation_price_storage_neg[i] * lp.model.varRtStorageTargetDevNeg[i]
                 for i in lp.model.s_gen_storage
-                if int(i) in lp._rt_storage_target_indices
+                if int(i) in rt.ctx.storage_target_indices
             ),
             "da_ref_storage_mismatch_cost": float(da_reference_storage_mismatch_cost),
         },
         "active_channels": {
-            "rt_storage_target_count": int(len(lp._rt_storage_target_indices)),
-            "rt_target_gen_count": int(len(lp._rt_target_gen_indices)),
+            "rt_storage_target_count": int(len(rt.ctx.storage_target_indices)),
+            "rt_target_gen_count": int(len(rt.ctx.target_gen_indices)),
             "foreign_gen_lock_rows": int(
                 sum(
                     1
                     for i in lp.model.s_gen
-                    if lp._foreign_gen_lock is not None and (int(timestep), int(i)) in lp._foreign_gen_lock.index
+                    if rt.locks.foreign_gen_lock is not None
+                    and (int(timestep), int(i)) in rt.locks.foreign_gen_lock.index
                 )
             ),
             "foreign_cons_lock_rows": int(
                 sum(
                     1
                     for j in lp.model.s_load
-                    if lp._foreign_cons_lock is not None and (int(timestep), int(j)) in lp._foreign_cons_lock.index
+                    if rt.locks.foreign_cons_lock is not None
+                    and (int(timestep), int(j)) in rt.locks.foreign_cons_lock.index
                 )
             ),
             "rt_io_target_active_ac": int(
                 sum(
                     int(_val(lp.model.p_rt_io_target_active_ac[b]) or 0)
                     for b in lp.model.s_branch_ac
-                    if int(b) in lp._idx_border_ac
+                    if int(b) in rt.ctx.idx_border_ac
                 )
             ),
             "rt_io_target_active_dc": int(
                 sum(
                     int(_val(lp.model.p_rt_io_target_active_dc[b]) or 0)
                     for b in lp.model.s_branch_dc
-                    if int(b) in lp._idx_border_dc
+                    if int(b) in rt.ctx.idx_border_dc
                 )
             ),
         },
@@ -479,132 +455,30 @@ def append_hourly_debug(lp, timestep):
     }
 
     append_payload(
-        lp,
+        rt,
         payload,
         warning_context=f"Failed writing RT solver debug at timestep={timestep}",
     )
 
 
-def append_multi_period_debug(lp, m, hi, timestep):
-    """Append per-timestep RT debug rows for multi_period joint solves."""
-    if not lp._is_rt or lp._rt_solver_debug_path is None:
+def append_solve_start(lp, rt, timesteps, continue_from_last, results):
+    """Append the record that opens one solve() call."""
+    if rt.debug_path is None:
         return
-
-    def _val(x):
+    last_saved = None
+    if continue_from_last and (results is not None):
         try:
-            v = pyo.value(x, exception=False)
-            if v is None:
-                return 0.0
-            fv = float(v)
-            if not np.isfinite(fv):
-                return 0.0
-            return fv
+            last_saved = results.get_last_timestep_in_results()
         except Exception:
-            return 0.0
-
-    def _prof(ts, ref_name):
-        if not isinstance(ref_name, str):
-            return None
-        ref = str(ref_name).strip()
-        if not ref:
-            return None
-        try:
-            if ref in lp._grid.profiles.columns:
-                return float(lp._grid.profiles.loc[int(ts), ref])
-        except Exception:
-            return None
-        return None
-
-    storage_rows = []
-    for i in sorted(int(ii) for ii in lp._rt_storage_target_indices):
-        storage_cap = float(pd.to_numeric(lp._grid.generator.loc[i, "storage_cap"], errors="coerce") or 0.0)
-        rt_storage_mwh = _val(m.varStorage[i, hi]) if i in lp.model.s_gen_storage else 0.0
-        soc_rt = (rt_storage_mwh / storage_cap) if storage_cap > 0.0 else 0.0
-
-        target_storage_mwh = 0.0
-        ref_target = lp._rt_storage_target_ref.iloc[int(i)] if lp._rt_storage_target_ref is not None else ""
-        soc_da_target = _prof(timestep, ref_target)
-        if lp._rt_storage_target_ref is not None:
-            ref = lp._rt_storage_target_ref.iloc[int(i)]
-            rv = _prof(timestep, ref)
-            if rv is not None and storage_cap > 0.0:
-                target_storage_mwh = max(0.0, storage_cap * max(0.0, min(1.0, rv)))
-
-        gen_mw = _val(m.varGeneration[i, hi])
-        pump_mw = _val(m.varPump[i, hi]) if i in lp.model.s_gen_pump else 0.0
-
-        storage_rows.append(
-            {
-                "indx": int(i),
-                "node": str(lp._grid.generator.loc[i, "node"]),
-                "desc": str(lp._grid.generator.loc[i, "desc"]),
-                "rt_storage_mwh": float(rt_storage_mwh),
-                "target_storage_mwh": float(target_storage_mwh),
-                "storage_dev_pos_mwh": float(max(0.0, rt_storage_mwh - target_storage_mwh)),
-                "storage_dev_neg_mwh": float(max(0.0, target_storage_mwh - rt_storage_mwh)),
-                "soc_rt": float(max(0.0, min(1.0, soc_rt))),
-                "rt_storage_target_ref": str(ref_target) if isinstance(ref_target, str) else "",
-                "soc_da_target_profile": float(soc_da_target) if soc_da_target is not None else None,
-                "gen_mw": float(gen_mw),
-                "pump_mw": float(pump_mw),
-            }
-        )
-
-    gas_rows = []
-    rt_gas_idx = lp._idx_rt_normal_gas | lp._idx_rt_peak_gen
-    for i in sorted(int(ii) for ii in lp._rt_target_gen_indices if int(ii) in rt_gas_idx):
-        gen_mw = _val(m.varGeneration[i, hi])
-        target_mw = 0.0
-        if lp._rt_target_ref is not None:
-            ref = lp._rt_target_ref.iloc[int(i)]
-            rv = _prof(timestep, ref)
-            if rv is not None:
-                pmax_base = float(pd.to_numeric(lp._grid.generator.loc[i, "pmax"], errors="coerce") or 0.0)
-                pmax_fac = 1.0
-                if lp._pmax_ref is not None:
-                    pmax_ref = lp._pmax_ref.iloc[int(i)]
-                    pmax_ref_val = _prof(timestep, pmax_ref)
-                    if pmax_ref_val is not None:
-                        pmax_fac = float(pmax_ref_val)
-                target_mw = max(0.0, pmax_base * pmax_fac * rv)
-
-        gas_rows.append(
-            {
-                "indx": int(i),
-                "node": str(lp._grid.generator.loc[i, "node"]),
-                "desc": str(lp._grid.generator.loc[i, "desc"]),
-                "is_peak_rt_block": bool(int(i) in lp._idx_rt_peak_gen),
-                "gen_mw": float(gen_mw),
-                "gen_target_mw": float(target_mw),
-                "gen_dev_pos_mw": float(max(0.0, gen_mw - target_mw)),
-                "gen_dev_neg_mw": float(max(0.0, target_mw - gen_mw)),
-            }
-        )
-
+            last_saved = None
     payload = {
-        "event": "rt_timestep_debug",
-        "debug_path_mode": "multi_period",
-        "timestep": int(timestep),
-        "hour_in_window": int(hi),
-        "da_injection_check": {
-            "storage_check_available": False,
-            "gas_da_injected_dev_cost": 0.0,
-            "storage_da_injected_dev_cost": None,
-            "storage_da_injected_abs_balance_mismatch_mwh": None,
-            "storage_da_injected_signed_balance_mismatch_mwh": None,
-            "actual_gas_rt_dev_cost": None,
-            "actual_storage_rt_dev_cost": None,
-            "actual_total_rt_dev_cost": None,
-            "note": "multi_period debug mode does not compute DA-reference storage mismatch diagnostics",
-        },
-        "redispatch_cost_attribution_eur": {},
-        "redispatch_mw_attribution": {},
-        "rt_storage_rows": storage_rows,
-        "rt_gen_rows": gas_rows,
+        "event": "rt_debug_solve_start",
+        "debug_session_id": rt.debug_session_id,
+        "written_at_utc": str(pd.Timestamp.utcnow().isoformat()),
+        "continue_from_last": bool(continue_from_last),
+        "last_saved_timestep": (int(last_saved) if last_saved is not None else None),
+        "first_timestep": (int(timesteps[0]) if timesteps else None),
+        "last_timestep": (int(timesteps[-1]) if timesteps else None),
+        "n_timesteps": int(len(timesteps)),
     }
-
-    append_payload(
-        lp,
-        payload,
-        warning_context=f"Failed writing multi_period RT solver debug at timestep={timestep}",
-    )
+    append_payload(rt, payload)

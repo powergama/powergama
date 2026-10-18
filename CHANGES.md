@@ -2,6 +2,36 @@
 
 ## unpublished
 2026-10-18
+- **breaking:** real-time (balancing) simulation is now an extension, `RtExtension`, passed to
+  the problem as `extensions=[...]` (#44). `LpProblem` no longer takes `is_rt`,
+  `rt_balancing_fee_eur_per_mwh`, `rt_p_res_curtailment_factor`,
+  `rt_xborder_flow_penalty_eur_per_mwh` or `rt_dispatch_objective_mode`, and the core model code
+  no longer refers to RT at all. Extensions plug into the single-period model through the hooks
+  of `powergama.lp.ModelExtension`, and the objective is built from named terms an extension can
+  edit. To migrate:
+  - `LpProblem(data, is_rt=True, rt_balancing_fee_eur_per_mwh=a, rt_p_res_curtailment_factor=b,
+    rt_xborder_flow_penalty_eur_per_mwh=c)` becomes
+    `LpProblem(data, extensions=[RtExtension(balancing_fee_eur_per_mwh=a, res_curtailment_factor=b,
+    xborder_flow_penalty_eur_per_mwh=c)])`, with `from powergama.lp.rt import RtExtension`.
+    Drop `rt_dispatch_objective_mode`; it never affected the model
+  - RT state is read from the extension object, not the problem: `lp._idx_rt_wind` becomes
+    `rt.ctx.idx_wind`, `lp._rt_target_gen_indices` becomes `rt.ctx.target_gen_indices`, the lock
+    tables (`lp._foreign_gen_lock`, ...) become `rt.locks.foreign_gen_lock`, ...
+  - `lp.append_rt_solver_debug_event(payload)` becomes `rt.append_debug_event(payload)`
+  - `powergama.lp.project_locks` moved to `powergama.lp.rt.locks`
+  - the input data is unchanged: `rt_target_ref` / `rt_storage_target_ref` profile columns and the
+    lock-file attributes on `GridData` work as before
+- RT inputs and model parts exist only with `RtExtension`. A normal run no longer declares the
+  RT parameters and deviation variables (with `appsi_highs` these were unused solver columns in
+  every run), derives RT context or reads the lock files
+- **behaviour change:** the day-ahead lock parquets (`foreign_gen_lock_parquet` and friends) are
+  RT inputs and are read and applied only by `RtExtension`. They used to apply in every mode,
+  including multi-period, where they are now ignored
+- RT results can differ from before in timesteps with several equally cheap solutions, because
+  the RT variables and constraints are now declared after the core ones. Objective values are
+  unchanged
+- removed RT parameters that were written but never read, and the multi-period RT debug output,
+  which could never be reached
 - multi-period mode now applies the `POWERGAMA_HIGHS_*` environment variables the same way as
   single-period (#45): it honours `POWERGAMA_HIGHS_PARALLEL`, which it used to ignore, and
   warns on a malformed `POWERGAMA_HIGHS_RANDOM_SEED` or `POWERGAMA_HIGHS_THREADS` instead of

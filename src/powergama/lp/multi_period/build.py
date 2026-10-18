@@ -72,18 +72,13 @@ def build_window_model(lp, wd):
     def _gen_ub_ns_rule(m, i, h):
         if i in wd.gen_storage_set:
             return pyo.Constraint.Skip
-        locked = wd.foreign_lock.get((h, i))
-        pmax = locked if locked is not None else wd.inflow_h.get((h, i), 0.0)
-        return m.varGeneration[i, h] <= pmax
+        return m.varGeneration[i, h] <= wd.inflow_h.get((h, i), 0.0)
 
     m.cGenUbNs = pyo.Constraint(m.s_gen, m.s_h, rule=_gen_ub_ns_rule)
 
     def _gen_lb_ns_rule(m, i, h):
         if i in wd.gen_storage_set:
             return pyo.Constraint.Skip
-        locked = wd.foreign_lock.get((h, i))
-        if locked is not None:
-            return m.varGeneration[i, h] >= locked
         infl = wd.inflow_h.get((h, i), 0.0)
         pmin = wd.pmin_h.get((h, i), 0.0)
         return m.varGeneration[i, h] >= max(0.0, min(infl, pmin))
@@ -94,26 +89,17 @@ def build_window_model(lp, wd):
     # gen[i,h] <= inflow[h,i] + storage_prev / wd.dt  (availability)
     # gen[i,h] <= capacity[h,i]                    (hardware cap)
     def _gen_ub_stor_avail_rule(m, i, h):
-        locked = wd.foreign_lock.get((h, i))
-        if locked is not None:
-            return m.varGeneration[i, h] <= locked
         prev_s = wd.storage_ini[i] if h == 0 else m.varStorage[i, h - 1]
         return m.varGeneration[i, h] <= wd.inflow_h.get((h, i), 0.0) + prev_s / wd.dt
 
     m.cGenUbStorAvail = pyo.Constraint(m.s_gen_storage, m.s_h, rule=_gen_ub_stor_avail_rule)
 
     def _gen_ub_stor_cap_rule(m, i, h):
-        locked = wd.foreign_lock.get((h, i))
-        if locked is not None:
-            return m.varGeneration[i, h] <= locked
         return m.varGeneration[i, h] <= wd.capacity_h.get((h, i), 0.0)
 
     m.cGenUbStorCap = pyo.Constraint(m.s_gen_storage, m.s_h, rule=_gen_ub_stor_cap_rule)
 
     def _gen_lb_stor_rule(m, i, h):
-        locked = wd.foreign_lock.get((h, i))
-        if locked is not None:
-            return m.varGeneration[i, h] >= locked
         infl = wd.inflow_h.get((h, i), 0.0)
         pmin = wd.pmin_h.get((h, i), 0.0)
         return m.varGeneration[i, h] >= max(0.0, min(infl, pmin))
@@ -169,10 +155,6 @@ def build_window_model(lp, wd):
             ramp_pu = lp._ramp_up_pu[i] if lp._ramp_up_pu is not None else np.nan
             if np.isnan(ramp_pu):
                 return pyo.Constraint.Skip
-            # In RT, skip ramp for fully pinned generators (capacity ≈ pmin, e.g.
-            # DA-locked gas and nuclear). Same reasoning as the single-period path.
-            if lp._is_rt and abs(wd.capacity_h.get((h, i), 0.0) - wd.pmin_h.get((h, i), 0.0)) < 1e-6:
-                return pyo.Constraint.Skip
             if h == 0:
                 prev = lp._gen_prev[i]
                 if np.isnan(prev):
@@ -187,9 +169,6 @@ def build_window_model(lp, wd):
                 return pyo.Constraint.Skip
             ramp_pu = lp._ramp_down_pu[i] if lp._ramp_down_pu is not None else np.nan
             if np.isnan(ramp_pu):
-                return pyo.Constraint.Skip
-            # In RT, skip ramp for fully pinned generators — same as ramp-up rule.
-            if lp._is_rt and abs(wd.capacity_h.get((h, i), 0.0) - wd.pmin_h.get((h, i), 0.0)) < 1e-6:
                 return pyo.Constraint.Skip
             if h == 0:
                 prev = lp._gen_prev[i]

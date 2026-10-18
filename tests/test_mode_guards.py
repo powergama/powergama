@@ -8,16 +8,17 @@ rather than failing. The tests assert that they now raise instead.
 import pytest
 
 import powergama
+from powergama.lp.rt import RtExtension
 
 
 def test_rt_with_multi_period_raises(testcase_9bus_data):
-    """is_rt has no effect in the multi-period model, so the combination must raise.
+    """The multi-period model has no extension hooks, so RT there must raise.
 
-    The multi-period model builds none of the p_rt_* parameters, deviation variables or
-    deviation objective, so it silently solved a cost-minimising LP instead.
+    It would build none of the p_rt_* parameters, deviation variables or deviation
+    objective, and silently solve a cost-minimising LP instead.
     """
-    with pytest.raises(NotImplementedError, match="is_rt"):
-        powergama.LpProblem(testcase_9bus_data, objective_mode="multi_period", is_rt=True)
+    with pytest.raises(NotImplementedError, match="RtExtension"):
+        powergama.LpProblem(testcase_9bus_data, objective_mode="multi_period", extensions=[RtExtension()])
 
 
 @pytest.mark.parametrize("lossmethod", [1, 2])
