@@ -170,9 +170,12 @@ def update_timestep(lp, timestep):
         )
 
     # 4. Reset AC/DC branch flow bounds: to the DA-locked window where the
-    #    project-specific bounds artifact provides one, otherwise to the
-    #    branch rating. Runs in every mode. The RT border-flow *targets* that
-    #    used to share this loop are written by rt_data.update_border_flow_targets.
+    #    project-specific bounds artifact provides one, otherwise clear them.
+    #    The rating is already enforced by cMaxFlowAc/cMaxFlowDc; repeating it
+    #    as a variable bound makes the solver price congestion on the bound
+    #    (reduced cost) and leave the constraint dual at zero (issue #39).
+    #    Runs in every mode. The RT border-flow *targets* that used to share
+    #    this loop are written by rt_data.update_border_flow_targets.
     for b in lp.model.s_branch_ac:
         key = (int(timestep), int(b))
         if (
@@ -190,9 +193,8 @@ def update_timestep(lp, timestep):
             lp.model.varAcBranchFlow[b].setlb(lb)
             lp.model.varAcBranchFlow[b].setub(ub)
         else:
-            lb, ub = lp._default_ac_flow_bounds.get(int(b), (None, None))
-            lp.model.varAcBranchFlow[b].setlb(lb)
-            lp.model.varAcBranchFlow[b].setub(ub)
+            lp.model.varAcBranchFlow[b].setlb(None)
+            lp.model.varAcBranchFlow[b].setub(None)
 
     for b in lp.model.s_branch_dc:
         key = (int(timestep), int(b))
@@ -211,9 +213,8 @@ def update_timestep(lp, timestep):
             lp.model.varDcBranchFlow[b].setlb(lb)
             lp.model.varDcBranchFlow[b].setub(ub)
         else:
-            lb, ub = lp._default_dc_flow_bounds.get(int(b), (None, None))
-            lp.model.varDcBranchFlow[b].setlb(lb)
-            lp.model.varDcBranchFlow[b].setub(ub)
+            lp.model.varDcBranchFlow[b].setlb(None)
+            lp.model.varDcBranchFlow[b].setub(None)
 
     if lp._is_rt:
         rt_data.update_generator_targets(lp, timestep, P_max)

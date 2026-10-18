@@ -265,24 +265,18 @@ def test_branch_capacity_sensitivity_is_reported_multi_period(tmp_path, testcase
     assert binding["cap_sensitivity"].abs().max() > TOL, "every congested branch reported a zero shadow price"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Branch capacity sensitivities are identically zero in single-period mode. Across the "
-        "9-bus and two-area cases, under both glpk and appsi_highs and all three loss "
-        "methods, Res_BranchesSens contains nothing but zeros -- while the same 9-bus "
-        "case in multi_period mode does produce non-zero values. Branches sit at their "
-        "rating for whole runs with nodal price differences of up to 990 EUR/MWh across "
-        "them, so the constraint is plainly binding. Rewriting cMaxFlowAc from one "
-        "two-sided ranged row into two one-sided rows does not recover the dual, so the "
-        "constraint form is not the cause."
-    ),
-)
-def test_branch_capacity_sensitivity_is_reported_single_period(tmp_path, testcase_9bus_data):
-    """A branch held at its rating by congestion must carry a non-zero shadow price."""
+@pytest.mark.parametrize("lossmethod", [0, 1, 2])
+def test_branch_capacity_sensitivity_is_reported_single_period(tmp_path, testcase_9bus_data, lossmethod):
+    """A branch held at its rating by congestion must carry a non-zero shadow price.
+
+    Regression test for issue #39: the rating was also set as a variable bound on
+    varAcBranchFlow (and, with lossmethod 1, on varAcBranchFlow12/21), so the solver
+    priced congestion on the bound and cMaxFlowAc's dual was zero.
+    """
     data = testcase_9bus_data
-    res = _solve(data, tmp_path / "sens_single_period.sqlite", mode="single_period")
+    res = _solve(data, tmp_path / "sens_single_period.sqlite", mode="single_period", lossmethod=lossmethod)
     binding = _branches_at_capacity(res, data)
 
     assert not binding.empty, "no branch reached its rating; the case cannot test congestion pricing"
-    assert binding["cap_sensitivity"].abs().max() > TOL, "every congested branch reported a zero shadow price"
+    # Every congested row, not just one: with the duplicate bound a few rows still came out non-zero.
+    assert (binding["cap_sensitivity"].abs() > TOL).all(), "a congested branch reported a zero shadow price"

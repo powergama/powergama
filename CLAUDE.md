@@ -202,13 +202,12 @@ Write outputs to pytest's `tmp_path`, not the repo root. Skip the heavy cases wi
 - **`continue_from_last` is not exactly resumable with `lossmethod` 1 or 2** — the loss linearisation
   operating point lives in `Var.value` rather than being persisted, so a resumed run reseeds it from
   a pre-solve instead of the real preceding solution.
-- **Branch capacity sensitivities are identically zero in single-period mode** — `Res_BranchesSens` holds
-  nothing but zeros for every single-period run measured (9-bus and two-area, glpk and `appsi_highs`, all
-  three loss methods), while the same case in `multi_period` produces non-zero values. Branches sit
-  at their rating with nodal price differences of up to 990 EUR/MWh across them, so the limit is
-  genuinely binding. Not the constraint form: splitting the two-sided `cMaxFlowAc` into two
-  one-sided rows does not recover the dual. Pinned by `test_properties.py`, with the working
-  multi-period path as the reference case next to it.
+
+**Don't repeat a constraint row as a variable bound.** If a limit is both a row whose dual is read
+and an identical `setlb`/`setub` on the variable, the solver prices it on the bound (reduced cost)
+and the row's dual is zero. That is what made single-period branch sensitivities identically zero
+(issue #39); `test_properties.py` guards it. DA-locked border windows are still set as variable
+bounds, so a branch held by a tighter lock reports zero sensitivity for that timestep.
 
 ## Docs
 
