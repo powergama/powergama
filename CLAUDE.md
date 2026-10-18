@@ -151,7 +151,10 @@ component and records where they disagree. In short:
 - `lossmethod` on `LpProblem`: `0` = lossless (default), `1` = piecewise-linearised losses (needs a
   pre-solve of the first timestep to initialise flows), `2` = losses added as load.
 - `solve(..., continue_from_last=True)` resumes from the last timestep in an existing database,
-  reloading storage and previous generation from it.
+  reloading storage, previous generation and, with losses, the branch flows the loss linearisation
+  is taken around. The resume is exact: anything a timestep carries forward must be restorable from
+  the database, which is why `lossmethod=1` linearises around net flows (the stored quantity)
+  rather than the directional `flow12`/`flow21`.
 
 ### Other modules
 
@@ -208,9 +211,6 @@ Write outputs to pytest's `tmp_path`, not the repo root. Skip the heavy cases wi
   per MWh generated *and* subtracts a terminal storage value, which the continuity equality links,
   giving an effective cost of `storval[h] + storval[last]*dt`. Affects every horizon, not just
   `horizon_hours=1`. Pinned by `test_sim_single_period_rolling_equiv.py`.
-- **`continue_from_last` is not exactly resumable with `lossmethod` 1 or 2** — the loss linearisation
-  operating point lives in `Var.value` rather than being persisted, so a resumed run reseeds it from
-  a pre-solve instead of the real preceding solution.
 
 **Don't repeat a constraint row as a variable bound.** If a limit is both a row whose dual is read
 and an identical `setlb`/`setub` on the variable, the solver prices it on the bound (reduced cost)

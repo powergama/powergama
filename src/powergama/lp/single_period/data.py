@@ -157,26 +157,29 @@ def update_timestep(lp, timestep):
 
 
 def update_loss_parameters(lp, aclossmultiplier=1, dclossmultiplier=1):
-    """Compute/update parameters used for transmission loss calculations"""
+    """Compute/update parameters used for transmission loss calculations.
+
+    The losses for the coming timestep are linearised around the flows of the one
+    just solved, read from varAcBranchFlow / varDcBranchFlow. Both methods use the
+    net flow only, which is also what the results database stores, so a resumed run
+    can seed the same operating point (seed_loss_operating_point).
+    """
     if lp._lossmethod == 1:
         # store power flows for next timestep (used for loss calculation)
+        # Github issue https://github.com/powergama/powergama/issues/29
+        # write it in terms of the net flow and not the directional flow12/flow21 because
+        # under certain circumstances, flow12 and flow21 may both be large (if high loss
+        # is beneficial) since there is no constraint forbidding simultaneous flow in
+        # both direction (only an indirect cost via generation costs). That holds for DC
+        # branches as much as AC: nothing physical prevents it there either (issue #41).
         for b in lp.model.s_branch_ac:
-            # Github issue https://github.com/powergama/powergama/issues/29
-            # write it in terms of varAcBranchFlow and not varBranchFlow12 because
-            # under certain circumstances, varAcBranchFlow12 and varAcBranchFlow21
-            # may both be large (if high loss is beneficial) since there is no constraint
-            # forbidding simultaneous flow in both direction (only an indirect cost
-            # via generation costs)
-            if lp.model.varAcBranchFlow[b].value > 0:
-                lp.model.p_branch_ac_powerflow12[b] = lp.model.varAcBranchFlow[b].value
-                lp.model.p_branch_ac_powerflow21[b] = 0
-            else:
-                lp.model.p_branch_ac_powerflow12[b] = 0
-                lp.model.p_branch_ac_powerflow21[b] = -lp.model.varAcBranchFlow[b].value
+            flow = lp.model.varAcBranchFlow[b].value
+            lp.model.p_branch_ac_powerflow12[b] = max(flow, 0)
+            lp.model.p_branch_ac_powerflow21[b] = max(-flow, 0)
         for b in lp.model.s_branch_dc:
-            # not the same issue for dc lines because there are not power flow equations
-            lp.model.p_branch_dc_powerflow12[b] = lp.model.varDcBranchFlow12[b].value
-            lp.model.p_branch_dc_powerflow21[b] = lp.model.varDcBranchFlow21[b].value
+            flow = lp.model.varDcBranchFlow[b].value
+            lp.model.p_branch_dc_powerflow12[b] = max(flow, 0)
+            lp.model.p_branch_dc_powerflow21[b] = max(-flow, 0)
     elif lp._lossmethod == 2:
         # compute power losses and store for next timestep
         for b in lp.model.s_branch_ac:
@@ -191,3 +194,16 @@ def update_loss_parameters(lp, aclossmultiplier=1, dclossmultiplier=1):
             loss_pu = r_pu * p_pu**2
             lossMVA = loss_pu * const.baseMVA * dclossmultiplier
             lp.model.p_branch_dc_power_loss[b] = lossMVA
+
+
+def seed_loss_operating_point(lp, ac_flows, dc_flows):
+    """Set the flows the next loss update linearises around, from stored results.
+
+    *ac_flows* and *dc_flows* map branch index to net flow (MW), as stored in
+    Res_Branches / Res_DcBranches. Used when resuming a run: the preceding
+    timestep's solution then exists only in the database, not in Var.value.
+    """
+    for b in lp.model.s_branch_ac:
+        lp.model.varAcBranchFlow[b].value = ac_flows[b]
+    for b in lp.model.s_branch_dc:
+        lp.model.varDcBranchFlow[b].value = dc_flows[b]

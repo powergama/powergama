@@ -3,6 +3,7 @@ import sqlite3
 import pandas as pd
 import pyomo.environ as pyo
 import pytest
+from rt_case import two_area_data
 
 import powergama
 
@@ -108,6 +109,7 @@ def _read_result_tables(res):
     with sqlite3.connect(res.db.filename) as con:
         return {
             "branch": pd.read_sql("SELECT * FROM Res_Branches ORDER BY timestep, indx", con),
+            "dcbranch": pd.read_sql("SELECT * FROM Res_DcBranches ORDER BY timestep, indx", con),
             "gen": pd.read_sql("SELECT * FROM Res_Generators ORDER BY timestep, indx", con),
             "storage": pd.read_sql("SELECT * FROM Res_Storage ORDER BY timestep, indx", con),
         }
@@ -148,25 +150,30 @@ def test_continue_from_last_with_ramp_limits(tmp_path, testcase_9bus_data):
         pd.testing.assert_frame_equal(one_shot[key], resumed[key], check_exact=False, rtol=1e-6, obj=key)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "continue_from_last is not exactly resumable with lossmethod=1 or 2. The loss "
-        "linearisation is taken around the previous timestep's flows, which the single-period "
-        "path carries implicitly in Var.value rather than persisting. On resume the "
-        "model is fresh, so the pre-solve in solve() seeds the operating point instead "
-        "of the real preceding solution, and results diverge from the first resumed "
-        "timestep onward (~0.04 MW on 9-bus, and it propagates). Storage and _gen_prev "
-        "restore correctly because they are read back from the database. The fix is the "
-        "same: seed the linearisation from Res_Branches, which already holds the flows."
-    ),
-)
-def test_continue_from_last_with_losses(tmp_path, testcase_9bus_data):
-    """Resuming should reproduce a one-shot run when losses are modelled."""
+@pytest.mark.parametrize("lossmethod", [1, 2])
+def test_continue_from_last_with_losses(tmp_path, testcase_9bus_data, lossmethod):
+    """Resuming must reproduce a one-shot run when losses are modelled.
+
+    Regression test for issue #41: losses are linearised around the preceding
+    timestep's flows, which used to live only in Var.value. A resumed run pre-solved
+    its first timestep instead, and diverged from there. It now seeds the operating
+    point from the stored flows.
+    """
     data = testcase_9bus_data
     data.branch["resistance"] = 0.01
     data.generator.loc[1, "pmax"] = 250  # avoid load shedding
 
-    one_shot, resumed = _run_oneshot_vs_resumed(data, tmp_path, "loss", lossmethod=1)
+    one_shot, resumed = _run_oneshot_vs_resumed(data, tmp_path, "loss", lossmethod=lossmethod)
     for key in ("branch", "gen", "storage"):
+        pd.testing.assert_frame_equal(one_shot[key], resumed[key], check_exact=False, rtol=1e-6, obj=key)
+
+
+@pytest.mark.parametrize("lossmethod", [1, 2])
+def test_continue_from_last_with_losses_and_dc_branch(tmp_path, lossmethod):
+    """As above, on the two-area case: an HVDC link, pumped storage and flexible load."""
+    data = two_area_data()
+
+    one_shot, resumed = _run_oneshot_vs_resumed(data, tmp_path, "loss_dc", lossmethod=lossmethod)
+    assert not one_shot["dcbranch"].empty
+    for key in ("branch", "dcbranch", "gen", "storage"):
         pd.testing.assert_frame_equal(one_shot[key], resumed[key], check_exact=False, rtol=1e-6, obj=key)

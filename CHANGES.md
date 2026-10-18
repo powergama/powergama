@@ -2,6 +2,12 @@
 
 ## unpublished
 2026-10-18
+- fix `continue_from_last` with `lossmethod` 1 or 2 not reproducing an uninterrupted run (#41).
+  Losses are linearised around the preceding timestep's flows; a resumed run pre-solved its first
+  timestep instead. It now seeds them from the stored flows
+- `lossmethod=1` now linearises DC branch losses around the net flow, as for AC branches since
+  #29, instead of the directional flows. Results change only after a timestep with simultaneous
+  flow in both directions on a DC branch
 - **breaking:** real-time (balancing) simulation is now an extension, `RtExtension`, passed to
   the problem as `extensions=[...]` (#44). `LpProblem` no longer takes `is_rt`,
   `rt_balancing_fee_eur_per_mwh`, `rt_p_res_curtailment_factor`,
