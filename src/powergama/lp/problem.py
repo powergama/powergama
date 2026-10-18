@@ -544,7 +544,18 @@ class LpProblem:
             write_objective_trace(self)
             return results
 
-        if self._lossmethod in [1, 2]:
+        if self._lossmethod in [1, 2] and continue_from_last:
+            # Losses are linearised around the preceding timestep's flows. When resuming,
+            # that solution is in the database, so seed from it rather than a pre-solve:
+            # anything else changes every result from here on (issue #41).
+            prev = timesteps_to_solve[0] - 1
+            window = [prev, prev + 1]
+            sp_data.seed_loss_operating_point(
+                self,
+                ac_flows={indx: flow for _, indx, flow in results.db.getResultBranchFlowAll(window, "ac")},
+                dc_flows={indx: flow for _, indx, flow in results.db.getResultBranchFlowAll(window, "dc")},
+            )
+        elif self._lossmethod in [1, 2]:
             print("Computing losses in first timestep")
             self._updateLpProblem(timestep=timesteps_to_solve[0])
             res = opt.solve(self.model)
