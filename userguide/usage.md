@@ -73,19 +73,28 @@ can in single-period mode. See [model_description.md](model_description.md).
 
 ## 3. Balancing market (deviations from day-ahead)
 
-This simulation mode can be run after a day-ahead simulation to represent the balancing ("real-time") market, where there may be a cost for devaitions from
-the day-ahead schedule.
+This simulation mode can be run after a day-ahead simulation to represent the balancing ("real-time") market, where there may be a cost for deviations from
+the day-ahead schedule. It is an extension of the single-period mode, switched on by
+passing `RtExtension` to the problem.
 
 In the example below, `rt_lock_profile` is the day-ahead schedule for the given
-generator.
+generator, as a fraction of its `pmax`.
 
 ```python
-data.profiles["rt_lock_profile"] = ... 
+from powergama.lp.rt import RtExtension
+
+data.profiles["rt_lock_profile"] = ...
 data.generator.loc[index_gen, "rt_target_ref"] = "rt_lock_profile"
 
 lp = powergama.LpProblem(
     data,
-    is_rt=True,
-    rt_balancing_fee_eur_per_mwh=100,
+    extensions=[RtExtension(balancing_fee_eur_per_mwh=100)],
 )
 ```
+
+`RtExtension` also takes `res_curtailment_factor` and `xborder_flow_penalty_eur_per_mwh`.
+Storage and flexible-load targets go in `generator.rt_storage_target_ref` and
+`consumer.rt_target_ref`. Hard day-ahead locks (pinned generators, fixed demand,
+border-flow windows) are read from parquet files named by attributes on the
+`GridData` object; see `powergama.lp.rt.locks`. Without the extension, none of
+these inputs are read.

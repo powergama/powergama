@@ -18,7 +18,6 @@ Module containing PowerGAMA LpProblem class
 """
 
 import warnings
-from pathlib import Path
 
 import networkx as nx
 import numpy as np
@@ -28,14 +27,14 @@ import pyomo.opt
 from pyomo.contrib import appsi
 from tqdm import tqdm
 
-from . import project_locks, storage_value
 from . import solver as solver_mod
+from . import storage_value
 from .config import CONFIG_ATTRS, LpConfig
 from .context import CONTEXT_ATTRS, GridContext
 from .multi_period import build as mp_build
 from .multi_period import data as mp_data
 from .multi_period import extract as mp_extract
-from .rt import diagnostics as rt_diagnostics
+from .objective_trace import write_objective_trace
 from .single_period import build as sp_build
 from .single_period import data as sp_data
 from .single_period import extract as sp_extract
@@ -77,23 +76,15 @@ class LpProblem:
     storage_initial_fill_scale : float
         Scales the initial storage filling level of hydro-with-pumping and battery
         generators, relative to `storage_ini` in the grid data.
-    is_rt : bool
-        Solve the balancing ("real-time") problem: minimise deviation from a day-ahead
-        schedule rather than generation cost. Requires objective_mode="single_period".
-    rt_balancing_fee_eur_per_mwh : float
-        Flat fee per MWh of real-time redispatch, to discourage marginal deviations.
-    rt_p_res_curtailment_factor : float
-        Penalty multiplier on real-time curtailment of variable renewable generation.
-    rt_xborder_flow_penalty_eur_per_mwh : float
-        Penalty per MWh of deviation from day-ahead cross-border flows.
-    rt_dispatch_objective_mode : str
-        Deprecated and ignored: it never affected the model. RT always minimises
-        deviation. Passing a value other than None warns.
+    extensions : list of ModelExtension
+        Optional additions to the single-period model, e.g.
+        :class:`powergama.lp.rt.RtExtension` for balancing ("real-time") simulation.
+        See :mod:`powergama.lp.extension`.
 
     Notes
     =====
     Unsupported mode combinations raise NotImplementedError at construction:
-    is_rt with "multi_period", lossmethod != 0 with "multi_period", and
+    an extension with "multi_period", lossmethod != 0 with "multi_period", and
     ramp_daily_reset with commit_hours != 24.
     """
 
@@ -106,11 +97,7 @@ class LpProblem:
         horizon_hours=24,
         commit_hours=24,
         storage_initial_fill_scale=1.0,
-        rt_dispatch_objective_mode=None,
-        rt_balancing_fee_eur_per_mwh=1.0,
-        rt_p_res_curtailment_factor=2.0,
-        rt_xborder_flow_penalty_eur_per_mwh=0.0,
-        is_rt=False,
+        extensions=None,
     ):
         # 1. The Pyomo model. Its identity must be preserved for the whole of solve():
         #    APPSI's incremental update and gurobi_persistent.set_instance both key off
@@ -136,16 +123,8 @@ class LpProblem:
             print("Found synchronous area (size = {}), using ref node = {}".format(gr.order(), refnode))
         # use first node as voltage angle reference
 
-        if rt_dispatch_objective_mode is not None:
-            warnings.warn(
-                "rt_dispatch_objective_mode is deprecated and ignored: it never affected the model. "
-                "RT (is_rt=True) always minimises deviation.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-
         # Caller-supplied settings, validated once. Readers still say
-        # self._lossmethod / self._is_rt and so on; __getattr__ resolves those
+        # self._lossmethod / self._objective_mode and so on; __getattr__ resolves those
         # against the config.
         self._cfg = LpConfig.from_args(
             lossmethod=lossmethod,
@@ -154,50 +133,20 @@ class LpProblem:
             horizon_hours=horizon_hours,
             commit_hours=commit_hours,
             storage_initial_fill_scale=storage_initial_fill_scale,
-            rt_balancing_fee_eur_per_mwh=rt_balancing_fee_eur_per_mwh,
-            rt_p_res_curtailment_factor=rt_p_res_curtailment_factor,
-            rt_xborder_flow_penalty_eur_per_mwh=rt_xborder_flow_penalty_eur_per_mwh,
-            is_rt=is_rt,
         )
+        self._extensions = tuple(extensions or ())
+        self._cfg.check_extensions(self._extensions)
+        self._exempt_pinned_from_ramp = any(ext.exempt_pinned_from_ramp for ext in self._extensions)
         self._grid = grid
         self.timeDelta = grid.timeDelta
-        self._rt_solver_debug_path: Path | None = None
-        self._rt_debug_session_id: str = ""
-        rt_diagnostics.initialize_debug_stream(self, grid)
         self._timestep_day_hour: dict[int, tuple[int, int]] = {}
         self._daily_objective_trace: dict[int, float] = {}
         self._hourly_objective_trace: list[tuple[int, int, int, float]] = []
         self._solver_persistent = False
-        # Optional sparse DA locks (parquet long format) injected by prepare-rt.
-        # They are RT inputs only, so a normal run leaves them at their empty
-        # defaults -- and says so, rather than dropping a supplied input silently.
-        # Loaded before the context, which needs the border branch sets they
-        # identify. The rest are unpacked onto self rather than held as one
-        # object, because rt_data and rt_diagnostics read these names.
-        if self._cfg.is_rt:
-            _locks = project_locks.load_da_locks(grid)
-        else:
-            _locks = project_locks.DaLocks()
-            _ignored = project_locks.lock_attrs_set(grid)
-            if _ignored:
-                warnings.warn(
-                    f"Day-ahead lock files are RT inputs and are ignored without is_rt=True: {', '.join(_ignored)}",
-                    UserWarning,
-                )
-        self._foreign_gen_lock = _locks.foreign_gen_lock
-        self._foreign_cons_lock = _locks.foreign_cons_lock
-        self._border_ac_flow_lock = _locks.border_ac_flow_lock
-        self._border_dc_flow_lock = _locks.border_dc_flow_lock
-        self._border_ac_flow_lb = _locks.border_ac_flow_lb
-        self._border_ac_flow_ub = _locks.border_ac_flow_ub
-        self._border_dc_flow_lb = _locks.border_dc_flow_lb
-        self._border_dc_flow_ub = _locks.border_dc_flow_ub
-        self._da_storage_marginalprice = _locks.da_storage_marginalprice
-
         # Everything the grid implies, derived once. Readers still say
         # self._idx_generatorsWithStorage and so on; __getattr__ resolves those
         # against the context.
-        self._ctx = GridContext.from_grid(grid, self._Bbus, self._DA, self.refnodes, _locks, is_rt=self._cfg.is_rt)
+        self._ctx = GridContext.from_grid(grid, self._Bbus, self._DA, self.refnodes)
         self._cfg.check_ramp_daily_reset(self._ctx.ramp_daily_reset)
         # Previous-timestep generation dispatch; NaN signals first timestep (no ramp constraint).
         self._gen_prev = np.full(len(grid.generator), np.nan)
@@ -227,16 +176,21 @@ class LpProblem:
         self._energyspilled = grid.generator["storage_cap"].copy(deep=True)
         self._energyspilled[:] = 0
 
-        # 3. Build the Pyomo model. Order is load-bearing -- see single_period.build.
-        sp_build.build_model(self.model, grid, self._ctx, self._cfg)
+        # 3. Extensions derive their own data, now that the context and the initial
+        #    simulation state exist.
+        for ext in self._extensions:
+            ext.prepare(self, grid)
+
+        # 4. Build the Pyomo model. Order is load-bearing -- see single_period.build.
+        sp_build.build_model(self.model, grid, self._ctx, self._cfg, self._extensions)
 
     def __getattr__(self, name):
         """Fall through to the config, then the grid context, then the Pyomo model.
 
         Settled configuration lives on `self._cfg` and grid derivations on
         `self._ctx`, but the rest of the code --
-        including rt_diagnostics, which reads some 77 attributes off the problem --
-        spells it `self._lossmethod`, `self._is_rt` and so on. Resolving those names
+        including extensions, whose per-timestep code reads dozens of attributes off
+        the problem -- spells it `self._lossmethod`, `self._objective_mode` and so on. Resolving those names
         here keeps every reader working while the values live in one frozen object.
         Only names in CONFIG_ATTRS and CONTEXT_ATTRS are redirected, and none of them
         is mutated after construction,
@@ -389,10 +343,6 @@ class LpProblem:
         mp_extract.extract_and_store(self, m, wd, results, duals, commit_hours=commit_hours)
 
     # ------------------------------------------------------------------
-
-    def append_rt_solver_debug_event(self, payload):
-        """Public wrapper for optional debug append used by workflow helpers."""
-        rt_diagnostics.append_payload(self, payload)
 
     def _relax_and_retry(self, opt, warmstart, count, solve_args):
         raise NotImplementedError
@@ -551,24 +501,8 @@ class LpProblem:
 
         timesteps_to_solve = self._get_timesteps_to_solve(continue_from_last=continue_from_last, results=results)
         self._build_day_hour_index(timesteps_to_solve)
-        if self._is_rt and self._rt_solver_debug_path is not None:
-            last_saved = None
-            if continue_from_last and (results is not None):
-                try:
-                    last_saved = results.get_last_timestep_in_results()
-                except Exception:
-                    last_saved = None
-            payload = {
-                "event": "rt_debug_solve_start",
-                "debug_session_id": self._rt_debug_session_id,
-                "written_at_utc": str(pd.Timestamp.utcnow().isoformat()),
-                "continue_from_last": bool(continue_from_last),
-                "last_saved_timestep": (int(last_saved) if last_saved is not None else None),
-                "first_timestep": (int(timesteps_to_solve[0]) if timesteps_to_solve else None),
-                "last_timestep": (int(timesteps_to_solve[-1]) if timesteps_to_solve else None),
-                "n_timesteps": int(len(timesteps_to_solve)),
-            }
-            rt_diagnostics.append_payload(self, payload)
+        for ext in self._extensions:
+            ext.on_solve_start(self, timesteps_to_solve, continue_from_last, results)
 
         if continue_from_last:
             self._storage.loc[self._idx_generatorsWithStorage] = results.db.getResultStorageFillingAll(
@@ -607,7 +541,7 @@ class LpProblem:
                             self._gen_prev[i] = np.nan
                 self._solve_and_store_day_joint(win, results, solver, commit_hours=commit_h)
 
-            rt_diagnostics.write_objective_trace(self)
+            write_objective_trace(self)
             return results
 
         if self._lossmethod in [1, 2]:
@@ -709,8 +643,8 @@ class LpProblem:
                 self._daily_objective_trace[day_idx] = self._daily_objective_trace.get(day_idx, 0.0) + obj_value
                 self._hourly_objective_trace.append((int(timestep), int(day_idx), int(hour_in_day), obj_value))
 
-            # Optional deep RT solver diagnostics (JSONL stream)
-            rt_diagnostics.append_hourly_debug(self, timestep)
+            for ext in self._extensions:
+                ext.after_timestep(self, timestep)
 
             # store results and update storage levels
             self._storeResultsAndUpdateStorage(timestep, results)
@@ -720,7 +654,7 @@ class LpProblem:
             for d in sorted(self._daily_objective_trace):
                 print(f"  day={d}: objective_sum={self._daily_objective_trace[d]:.6f}")
 
-        rt_diagnostics.write_objective_trace(self)
+        write_objective_trace(self)
 
         return results
 

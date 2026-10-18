@@ -12,8 +12,8 @@ core library at all is an open question, deliberately not answered here -- movin
 the loader into one place is what makes the question askable.
 
 These are inputs to the real-time step only: a day-ahead run produces them, and
-the RT simulation is pinned to them. They are loaded only when ``is_rt`` is set,
-and applied by :func:`powergama.lp.rt.data.apply_da_locks`.
+the RT simulation is pinned to them. :class:`~powergama.lp.rt.RtExtension` loads
+them, and :func:`powergama.lp.rt.data.apply_da_locks` applies them.
 """
 
 import warnings
@@ -32,11 +32,6 @@ LOCK_ATTRS = (
     "border_dc_flow_bounds_parquet",
     "da_storage_marginalprice_parquet",
 )
-
-
-def lock_attrs_set(grid) -> list[str]:
-    """The lock attributes that are set (non-empty) on *grid*."""
-    return [a for a in LOCK_ATTRS if getattr(grid, a, "")]
 
 
 @dataclass

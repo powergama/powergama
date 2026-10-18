@@ -18,7 +18,7 @@ them, which is the intended direction of travel.
 | time-varying data enters as | mutable `Param`s rewritten per timestep | constants baked in at build time |
 | storage state | carried on the `LpProblem` between solves | an LP variable, `varStorage` |
 | supports losses | yes (`lossmethod` 0/1/2) | no — rejected at construction |
-| supports real-time | yes (`is_rt`) | no — rejected at construction |
+| supports real-time | yes (`RtExtension`) | no — rejected at construction |
 
 A window of length 1 ought to be the single-period problem. It is not. See
 **Where they disagree**.

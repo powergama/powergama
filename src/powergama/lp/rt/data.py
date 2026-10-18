@@ -1,7 +1,7 @@
 """Per-timestep real-time data: day-ahead locks, targets and deviation prices.
 
-Called from the single-period update once per timestep, under ``cfg.is_rt``,
-after the core has written this timestep's generator limits and demand.
+Called once per timestep by :meth:`RtExtension.update_timestep`, after the core
+has written this timestep's generator limits and demand.
 
 `apply_da_locks` overrides those core values: it pins locked generators,
 replaces locked demand and sets the border-flow windows. The rest write only
@@ -15,24 +15,24 @@ lock after the ramp clipping rather than before gives the same limits: the
 clipping used to skip pinned generators in RT, and now the lock simply
 overwrites whatever it computed. tests/test_sim_realtime.py covers both.
 
-These take the LpProblem rather than explicit arguments, for the same reason
-the single-period updater does: they read mutable simulation state (_storage,
-_storage_flexload) alongside grid data and config, and an eight-argument
-signature would be a longer way of spelling `self` rather than an interface.
+These take the LpProblem, for the same reason the single-period updater does:
+they read mutable simulation state (_storage) alongside grid data, and an
+eight-argument signature would be a longer way of spelling `self`. The RT
+extension comes in as ``rt``, for its locks, context and settings.
 """
 
 import numpy as np
 import pyomo.environ as pyo
 
 
-def apply_da_locks(lp, timestep):
+def apply_da_locks(lp, rt, timestep):
     """Apply the day-ahead hard locks: pinned generators, fixed demand, border-flow windows."""
     # Foreign generators pinned to their DA output.
-    if lp._foreign_gen_lock is not None:
+    if rt.locks.foreign_gen_lock is not None:
         for i in lp.model.s_gen:
             key = (int(timestep), int(i))
-            if key in lp._foreign_gen_lock.index:
-                da_output = float(lp._foreign_gen_lock.loc[key])
+            if key in rt.locks.foreign_gen_lock.index:
+                da_output = float(rt.locks.foreign_gen_lock.loc[key])
                 if not np.isfinite(da_output):
                     da_output = 0.0
                 da_output = max(0.0, da_output)
@@ -40,18 +40,18 @@ def apply_da_locks(lp, timestep):
                 lp.model.p_gen_pmax[i] = da_output
 
     # Foreign consumers fixed to their DA demand.
-    if lp._foreign_cons_lock is not None:
+    if rt.locks.foreign_cons_lock is not None:
         for i in lp.model.s_load:
             key = (int(timestep), int(i))
-            if key in lp._foreign_cons_lock.index:
-                locked_demand = float(lp._foreign_cons_lock.loc[key])
+            if key in rt.locks.foreign_cons_lock.index:
+                locked_demand = float(rt.locks.foreign_cons_lock.loc[key])
                 if np.isfinite(locked_demand):
                     lp.model.p_demand[i] = locked_demand
 
     # Border-flow windows as variable bounds, reset to none where this timestep has
     # no window. The branch rating stays with cMaxFlowAc/cMaxFlowDc (issue #39).
-    _set_flow_bounds(lp.model.varAcBranchFlow, lp._border_ac_flow_lb, lp._border_ac_flow_ub, timestep)
-    _set_flow_bounds(lp.model.varDcBranchFlow, lp._border_dc_flow_lb, lp._border_dc_flow_ub, timestep)
+    _set_flow_bounds(lp.model.varAcBranchFlow, rt.locks.border_ac_flow_lb, rt.locks.border_ac_flow_ub, timestep)
+    _set_flow_bounds(lp.model.varDcBranchFlow, rt.locks.border_dc_flow_lb, rt.locks.border_dc_flow_ub, timestep)
 
 
 def _set_flow_bounds(var, lb_series, ub_series, timestep):
@@ -69,11 +69,12 @@ def _set_flow_bounds(var, lb_series, ub_series, timestep):
         var[b].setub(ub)
 
 
-def update_generator_targets(lp, timestep, P_max):
+def update_generator_targets(lp, rt, timestep):
     """Write each generator's DA dispatch target for this timestep."""
+    P_max = lp._grid.generator["pmax"]
     for i in lp.model.s_gen:
-        if lp._rt_target_ref is not None:
-            rt_ref = lp._rt_target_ref.iloc[i]
+        if rt.ctx.target_ref is not None:
+            rt_ref = rt.ctx.target_ref.iloc[i]
             if isinstance(rt_ref, str) and rt_ref in lp._grid.profiles.columns:
                 lp.model.p_rt_target[i] = max(0.0, float(P_max[i]) * float(lp._grid.profiles.loc[timestep, rt_ref]))
             else:
@@ -82,12 +83,12 @@ def update_generator_targets(lp, timestep, P_max):
             lp.model.p_rt_target[i] = 0.0
 
 
-def update_flexload_and_storage_targets(lp, timestep):
+def update_flexload_and_storage_targets(lp, rt, timestep):
     """Write flexible-load DA targets, storage DA targets and the storage balance RHS."""
     # Update consumer (flexible load) DA targets for DA-target deviation penalties
-    if lp._rt_consumer_target_ref is not None and lp._rt_consumer_target_indices:
+    if rt.ctx.consumer_target_ref is not None and rt.ctx.consumer_target_indices:
         for j in lp.model.s_load_flex:
-            rt_cons_ref = lp._rt_consumer_target_ref.iloc[int(j)]
+            rt_cons_ref = rt.ctx.consumer_target_ref.iloc[int(j)]
             if isinstance(rt_cons_ref, str) and rt_cons_ref in lp._grid.profiles.columns:
                 demand_avg = float(lp._grid.consumer.loc[j, "demand_avg"])
                 lp.model.p_rt_flexload_target[j] = max(
@@ -97,7 +98,7 @@ def update_flexload_and_storage_targets(lp, timestep):
                 lp.model.p_rt_flexload_target[j] = 0.0
 
     # Update storage DA filling targets and one-step storage balance RHS.
-    if lp._rt_storage_target_ref is not None and lp._rt_storage_target_indices:
+    if rt.ctx.storage_target_ref is not None and rt.ctx.storage_target_indices:
         for i in lp.model.s_gen_storage:
             inflow_factor = lp._grid.generator.loc[i, "inflow_fac"]
             inflow_profile = lp._grid.generator.loc[i, "inflow_ref"]
@@ -105,7 +106,7 @@ def update_flexload_and_storage_targets(lp, timestep):
             gen_inflow = capacity * inflow_factor * lp._grid.profiles[inflow_profile][timestep]
             lp.model.p_rt_storage_balance_rhs[i] = max(0.0, float(lp._storage[i] + gen_inflow * lp.timeDelta))
 
-            rt_storage_ref = lp._rt_storage_target_ref.iloc[int(i)]
+            rt_storage_ref = rt.ctx.storage_target_ref.iloc[int(i)]
             if isinstance(rt_storage_ref, str) and rt_storage_ref in lp._grid.profiles.columns:
                 storage_cap = float(lp._grid.generator.loc[i, "storage_cap"])
                 target_frac = float(lp._grid.profiles.loc[timestep, rt_storage_ref])
@@ -114,7 +115,7 @@ def update_flexload_and_storage_targets(lp, timestep):
                 lp.model.p_rt_storage_target[i] = 0.0
 
 
-def update_deviation_prices(lp, timestep):
+def update_deviation_prices(lp, rt, timestep):
     """Price this timestep's deviation variables from current marginal costs."""
     # In deviation objective mode, all generation technologies use the same
     # RT-local deviation pricing scheme (no DA-price coupling):
@@ -122,7 +123,7 @@ def update_deviation_prices(lp, timestep):
     # applied symmetrically to upward and downward deviation variables.
     # This ensures every technology follows a pure deviation-based RT scheme,
     # while ramp-rate constraints continue to govern feasible redispatch.
-    _fee = float(lp._rt_balancing_fee_eur_per_mwh)
+    _fee = float(rt.balancing_fee_eur_per_mwh)
     _split_eps = 1e-6
 
     def _enforce_split_sum_guard(p_pos: float, p_neg: float, eps: float = _split_eps) -> tuple[float, float]:
@@ -142,15 +143,15 @@ def update_deviation_prices(lp, timestep):
         return float(p_pos), float(p_neg) + add
 
     for i in lp.model.s_gen:
-        if int(i) in lp._rt_target_gen_indices:
+        if int(i) in rt.ctx.target_gen_indices:
             _gen_cost = float(pyo.value(lp.model.p_gen_cost[i]))
-            _is_res = int(i) in lp._idx_rt_wind or int(i) in lp._idx_rt_solar or int(i) in lp._idx_rt_hydro_ror
+            _is_res = int(i) in rt.ctx.idx_wind or int(i) in rt.ctx.idx_solar or int(i) in rt.ctx.idx_hydro_ror
             if _is_res:
                 # RES: reward upward and penalize curtailment with a tunable factor.
                 # c+ = -c0
                 # c- = rt_p_res_curtailment_factor * c0
                 _dev_price_pos = -_fee
-                _dev_price_neg = lp._rt_p_res_curtailment_factor * _fee
+                _dev_price_neg = rt.res_curtailment_factor * _fee
             else:
                 # Non-RES: c+ = c0 + cDA, c- = c0 - cDA
                 # c- may be negative when cDA > c0 (incentive to reduce generation).
@@ -163,7 +164,7 @@ def update_deviation_prices(lp, timestep):
             lp.model.p_rt_deviation_price_gen_pos[i] = 0.0
             lp.model.p_rt_deviation_price_gen_neg[i] = 0.0
     for i in lp.model.s_load_flex:
-        if int(i) in lp._rt_consumer_target_indices:
+        if int(i) in rt.ctx.consumer_target_indices:
             # Flex load / load-shedding: c+ = c0 + c_flex, c- = c0 - c_flex
             _flex_cost = float(pyo.value(lp.model.p_loadflex_cost[i]))
             _c_flex_pos = _fee + _flex_cost
@@ -175,11 +176,11 @@ def update_deviation_prices(lp, timestep):
             lp.model.p_rt_deviation_price_flex_pos[i] = 0.0
             lp.model.p_rt_deviation_price_flex_neg[i] = 0.0
     for i in lp.model.s_gen_storage:
-        if int(i) in lp._rt_storage_target_indices:
+        if int(i) in rt.ctx.storage_target_indices:
             # Storage DA-marginal pricing: c+ = c0 + c_DA, c- = c0 - c_DA
             # c_DA is the DA marginal storage value (from da_storage_marginalprice parquet),
             # falling back to current storagevalue (p_gen_cost[i]) if not available.
-            _c_da_storage = lp._da_storage_marginalprice.get((int(timestep), int(i)), None)
+            _c_da_storage = rt.locks.da_storage_marginalprice.get((int(timestep), int(i)), None)
             if _c_da_storage is None:
                 _c_da_storage = float(pyo.value(lp.model.p_gen_cost[i]))
             else:
@@ -194,12 +195,12 @@ def update_deviation_prices(lp, timestep):
             lp.model.p_rt_deviation_price_storage_neg[i] = 0.0
 
 
-def update_border_flow_targets(lp, timestep):
+def update_border_flow_targets(lp, rt, timestep):
     """Write the DA border-flow targets for AC and DC branches."""
     for b in lp.model.s_branch_ac:
         key = (int(timestep), int(b))
-        if lp._border_ac_flow_lock is not None and key in lp._border_ac_flow_lock.index:
-            da_flow = float(lp._border_ac_flow_lock.loc[key])
+        if rt.locks.border_ac_flow_lock is not None and key in rt.locks.border_ac_flow_lock.index:
+            da_flow = float(rt.locks.border_ac_flow_lock.loc[key])
             if np.isfinite(da_flow):
                 lp.model.p_rt_io_target_ac[b] = da_flow
                 lp.model.p_rt_io_target_active_ac[b] = 1
@@ -212,8 +213,8 @@ def update_border_flow_targets(lp, timestep):
 
     for b in lp.model.s_branch_dc:
         key = (int(timestep), int(b))
-        if lp._border_dc_flow_lock is not None and key in lp._border_dc_flow_lock.index:
-            da_flow = float(lp._border_dc_flow_lock.loc[key])
+        if rt.locks.border_dc_flow_lock is not None and key in rt.locks.border_dc_flow_lock.index:
+            da_flow = float(rt.locks.border_dc_flow_lock.loc[key])
             if np.isfinite(da_flow):
                 lp.model.p_rt_io_target_dc[b] = da_flow
                 lp.model.p_rt_io_target_active_dc[b] = 1

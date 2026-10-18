@@ -50,10 +50,11 @@ A simulation is a pipeline of four objects:
   | [lp/context.py](src/powergama/lp/context.py) | `GridContext` — everything derived once from `GridData` |
   | [lp/solver.py](src/powergama/lp/solver.py) | solver construction, HiGHS env vars, the dual handle |
   | [lp/storage_value.py](src/powergama/lp/storage_value.py) | flexible-load valuation, used by both formulations |
-  | [lp/project_locks.py](src/powergama/lp/project_locks.py) | optional foreign/border DA lock parquet loader (project-specific, RT only) |
+  | [lp/extension.py](src/powergama/lp/extension.py) | `ModelExtension` — the hooks an optional addition to the single-period model plugs into |
+  | [lp/objective_trace.py](src/powergama/lp/objective_trace.py) | optional per-timestep objective CSV (`POWERGAMA_OBJECTIVE_TRACE_CSV`) |
   | `lp/single_period/{build,data,extract}.py` | one LP per timestep |
   | `lp/multi_period/{build,data,extract}.py` | a joint LP per window |
-  | `lp/rt/{build,data,diagnostics}.py` | the balancing side-path |
+  | `lp/rt/{extension,context,build,data,locks,diagnostics}.py` | `RtExtension`, the balancing extension, and everything only it uses |
 
   **`cfg` and `ctx` are what make the builders plain functions.** Construction code reads nothing
   mutable, so it takes `(model, grid, ctx, cfg)` explicitly. The per-timestep updaters and the
@@ -79,8 +80,8 @@ A simulation is a pipeline of four objects:
   - `self.model`'s object identity must survive the whole of `solve()`: APPSI's incremental update
     and `gurobi_persistent.set_instance` key off it.
   - **Declaration order is load-bearing.** Pyomo writes LP columns in the order components are
-    added, so `single_period.build.build_model()`'s sequence — including where the RT seams sit —
-    is not arbitrary.
+    added, so `single_period.build.build_model()`'s sequence is not arbitrary. Extensions declare
+    theirs after the core's, in each phase.
 
 - **[timestep_result.py](src/powergama/timestep_result.py)** holds `TimestepResult`, the dataclass
   that names the 21-field LP→database contract. Both solve paths build one and call `.store(res)`,
@@ -106,14 +107,16 @@ Selected via `LpProblem` constructor arguments (see [usage.md](userguide/usage.m
    sequentially, storage state passed forward. Built by `lp/single_period/`.
 2. **Multi-period** (`objective_mode="multi_period"`) — a joint LP over `horizon_hours`, of which
    only the first `commit_hours` are committed (rolling horizon). Built by `lp/multi_period/`.
-3. **Balancing / real-time** (`is_rt=True`) — a single-period solve with penalties on deviation
-   from a day-ahead schedule supplied through `rt_target_ref` / `rt_storage_target_ref` profile
-   columns. Not a third formulation: `lp/rt/` extends the single-period one through a handful of
-   named seams. Rejected in multi-period mode. It is the second step after a day-ahead run: the
-   DA lock parquets (`project_locks.py`) are RT inputs too. **Nothing RT exists without
-   `is_rt`** — no locks read (a grid carrying them warns), no RT context fields, no `p_rt_*`,
-   `varRt*` or `cRt*` components. Keep it that way: a new RT component goes in `lp/rt/` behind
-   the same `cfg.is_rt` early return. `tests/test_sim_realtime.py` checks both directions.
+3. **Balancing / real-time** (`extensions=[RtExtension(...)]`, from `powergama.lp.rt`) — a
+   single-period solve with penalties on deviation from a day-ahead schedule supplied through
+   `rt_target_ref` / `rt_storage_target_ref` profile columns and the DA lock parquets
+   (`lp/rt/locks.py`). It is the second step after a day-ahead run, and not a third formulation:
+   `RtExtension` plugs into the single-period one through the `ModelExtension` hooks
+   (`lp/extension.py`), including editing the objective's named terms. Rejected in multi-period
+   mode, which has no hooks. **The core never names RT** — RT settings, state, locks and
+   components all live on the extension, and `tests/test_rt_isolation.py` fails on any RT
+   reference in `lp/` outside `lp/rt/`. A new RT feature goes behind a hook; if no hook fits, add
+   a general one to `ModelExtension` rather than an RT special case in the core.
 
 The mode was called `"hourly"` until the rename; a timestep need not be an hour. The old spelling
 raises, with no alias.

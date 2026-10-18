@@ -10,7 +10,8 @@ import pandas as pd
 import pytest
 
 import powergama
-from powergama.lp.project_locks import LOCK_ATTRS
+from powergama.lp.rt import RtExtension
+from powergama.lp.rt.locks import LOCK_ATTRS
 
 datapath = Path(__file__).parent / "test_data/data_9bus"
 datapath_two_area = Path(__file__).parent / "test_data/two_area"
@@ -133,7 +134,8 @@ def build_rt_case(tmp_path):
 
 
 def solve_rt_case(data, dbfile):
-    lp = powergama.LpProblem(data, is_rt=True, rt_balancing_fee_eur_per_mwh=10, rt_xborder_flow_penalty_eur_per_mwh=5)
+    rt = RtExtension(balancing_fee_eur_per_mwh=10, xborder_flow_penalty_eur_per_mwh=5)
+    lp = powergama.LpProblem(data, extensions=[rt])
     res = powergama.Results(data, dbfile, replace=True)
     lp.solve(res, solver="appsi_highs", solve_args={})
     return lp, res
@@ -182,8 +184,7 @@ def test_rt_tracks_dispatch_target_when_deviations_are_expensive(tmp_path, testc
 
     lp = powergama.LpProblem(
         data,
-        is_rt=True,
-        rt_balancing_fee_eur_per_mwh=100,
+        extensions=[RtExtension(balancing_fee_eur_per_mwh=100)],
     )
     res = powergama.Results(data, tmp_path / "test_rt.sqlite")
     lp.solve(res, solver="appsi_highs", solve_args={})
@@ -211,8 +212,7 @@ def test_rt_target_can_be_violated_if_economic(tmp_path, testcase_9bus_data):
 
     lp = powergama.LpProblem(
         data,
-        is_rt=True,
-        rt_balancing_fee_eur_per_mwh=1,
+        extensions=[RtExtension(balancing_fee_eur_per_mwh=1)],
     )
     res = powergama.Results(data, tmp_path / "test_rt.sqlite")
     lp.solve(res, solver="appsi_highs", solve_args={})
@@ -225,15 +225,14 @@ def test_rt_target_can_be_violated_if_economic(tmp_path, testcase_9bus_data):
 
 
 @pytest.mark.parametrize("mode", ["single_period", "multi_period"])
-def test_non_rt_run_ignores_rt_inputs(tmp_path, mode):
-    """Without is_rt, RT targets and DA locks are neither built nor applied.
+def test_run_without_rt_extension_ignores_rt_inputs(tmp_path, mode):
+    """Without RtExtension, RT targets and DA locks are neither built nor applied.
 
-    The day-ahead locks are inputs to the RT step only. A grid carrying them in a
-    normal run gets a warning, and the same results as without them.
+    The day-ahead locks and targets are inputs to the RT step only. A grid carrying
+    them in a normal run gets the same results as one without them.
     """
     data, _ = build_rt_case(tmp_path)
-    with pytest.warns(UserWarning, match="ignored"):
-        lp = powergama.LpProblem(data, objective_mode=mode)
+    lp = powergama.LpProblem(data, objective_mode=mode)
     res = powergama.Results(data, tmp_path / "with_locks.sqlite", replace=True)
     lp.solve(res, solver="appsi_highs", solve_args={})
 

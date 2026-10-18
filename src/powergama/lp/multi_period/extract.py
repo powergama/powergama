@@ -12,7 +12,6 @@ import pyomo.environ as pyo
 
 from ... import constants as const
 from ...timestep_result import TimestepResult, aggregate_to_nodes
-from ..rt import diagnostics as rt_diagnostics
 
 
 def extract_and_store(lp, m, wd, results, duals, commit_hours=None):
@@ -147,8 +146,6 @@ def extract_and_store(lp, m, wd, results, duals, commit_hours=None):
             # Fault scenarios run the single-period path only -- see LpFaultProblem.__init__.
             fault_start=None,
         ).store(results)
-
-        rt_diagnostics.append_multi_period_debug(lp, m, hi, grid.timerange[0] + ts)
 
         # Update gen_prev for context at day boundary
         for gi, i in enumerate(gen_list):

@@ -18,7 +18,6 @@ import pyomo.environ as pyo
 
 from ... import constants as const
 from .. import storage_value
-from ..rt import data as rt_data
 
 
 def update_timestep(lp, timestep):
@@ -87,14 +86,10 @@ def update_timestep(lp, timestep):
             ramp_dn = lp._ramp_down_pu[i] if lp._ramp_down_pu is not None else np.nan
             pmax_now = pyo.value(lp.model.p_gen_pmax[i])
             pmin_now = pyo.value(lp.model.p_gen_pmin[i])
-            # In RT, skip ramp constraints for fully pinned generators (pmin ≈ pmax),
-            # e.g. nuclear pinned by pmin_ref/pmax_ref profiles. The profile already uniquely
-            # defines the feasible output; applying the ramp on top clips pmax below pmin and
-            # the guard silently lowers pmin, causing gas backoff and spurious load shedding.
-            # DA-locked generators are pinned later, by rt_data.apply_da_locks, which
-            # overwrites whatever is computed here.
-            # In DA, generators are never pinned this way so this branch is never taken.
-            if lp._is_rt and pmax_now - pmin_now < 1e-6:
+            # An extension may exempt fully pinned generators (pmin ≈ pmax) from the
+            # ramp: clipping pmax below pmin makes the guard below lower pmin, moving the
+            # generator off its pinned output. See ModelExtension.exempt_pinned_from_ramp.
+            if lp._exempt_pinned_from_ramp and pmax_now - pmin_now < 1e-6:
                 continue
             if not np.isnan(ramp_up):
                 pmax_now = min(pmax_now, prev + float(ramp_up) * float(lp._ramp_cap_mw[i]))
@@ -153,15 +148,10 @@ def update_timestep(lp, timestep):
             lp._grid, i, lp._storage_flexload[i], timestep
         )
 
-    # 4. Real-time: day-ahead locks override the limits and demand set above,
-    #    then this timestep's targets and deviation prices. Branch flows carry no
-    #    variable bounds outside RT; the rating is enforced by cMaxFlowAc/cMaxFlowDc.
-    if lp._is_rt:
-        rt_data.apply_da_locks(lp, timestep)
-        rt_data.update_generator_targets(lp, timestep, P_max)
-        rt_data.update_flexload_and_storage_targets(lp, timestep)
-        rt_data.update_deviation_prices(lp, timestep)
-        rt_data.update_border_flow_targets(lp, timestep)
+    # 4. Extensions, which may override what is set above. The core sets no
+    #    branch-flow variable bounds: the rating is enforced by cMaxFlowAc/cMaxFlowDc.
+    for ext in lp._extensions:
+        ext.update_timestep(lp, timestep)
 
     return
 
