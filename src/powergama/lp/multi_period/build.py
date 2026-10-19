@@ -4,10 +4,9 @@ Every coefficient is a constant computed by :mod:`.data` before the model is
 built, so there are no mutable Params here at all -- the opposite of the
 single-period model, which is built once and mutated each timestep.
 
-A window of length 1 ought to be the single-period problem. Storage is now
-modelled the same way in both, but ramp limits bind differently for
-energy-limited generators, and flexible load is hard-bounded here but unbounded
-there. See userguide/model_formulations.md.
+A window of length 1 is the single-period problem: storage, flexible load and
+the first hour's ramp guard are modelled the same way in both. See
+userguide/model_formulations.md.
 """
 
 import numpy as np
@@ -47,12 +46,28 @@ def build_window_model(lp, wd):
     # Reservoir level, in MWh. Reals, not NonNegativeReals: the floor is a
     # constraint rather than a domain because it has to be skipped for a consumer
     # whose per-hour charge limit cannot keep up with its drain -- see
-    # cFlexStorFloor. The single-period path has no floor at all; it lets the level go
-    # negative and prices that at flexload_outside_cost.
+    # cFlexStorFloor.
     m.varFlexStorage = pyo.Var(m.s_load_flex, m.s_h, within=pyo.Reals)
     m.varAcBranchFlow = pyo.Var(m.s_branch_ac, m.s_h, within=pyo.Reals)
     m.varDcBranchFlow = pyo.Var(m.s_branch_dc, m.s_h, within=pyo.Reals)
     m.varVoltageAngle = pyo.Var(m.s_node, m.s_h, within=pyo.Reals, initialize=0.0)
+    # Shortfall below the ramp-down limit, after the window's first hour. The first
+    # hour applies the single-period guard instead (see _first_hour_ceiling); later
+    # hours' availability depends on the solve, so the limit is softened with a
+    # slack priced like load shedding and the window can never be infeasible.
+    m.s_ramp_slack = pyo.Set(
+        dimen=2,
+        ordered=True,
+        initialize=[
+            (i, h)
+            for i in ctx.gen_ids
+            if lp._ramp_down_pu is not None
+            and not lp._disable_nuclear_ramp_profile_conflict[int(i)]
+            and not np.isnan(float(lp._ramp_down_pu[i]))
+            for h in range(1, wd.H)
+        ],
+    )
+    m.varRampSlack = pyo.Var(m.s_ramp_slack, within=pyo.NonNegativeReals)
 
     # ── objective: costs over all hours, less the value of storage at the end ─
     # Units as in the single-period objective (single_period.build.objective_terms):
@@ -70,6 +85,7 @@ def build_window_model(lp, wd):
             cost += sum(m.varDumpLoad[j, h] * const.loadshedcost for j in m.s_load)
             cost += sum(m.varStorageOverflow[i, h] * const.loadshedcost for i in m.s_gen_storage)
             cost += sum(m.varSpill[i, h] * const.spillcost for i in m.s_gen_storage)
+        cost += sum(m.varRampSlack[i, h] * const.loadshedcost for (i, h) in m.s_ramp_slack)
         cost -= sum(wd.terminal_storval.get(i, 0.0) * m.varStorage[i, wd.H - 1] for i in m.s_gen_storage) / wd.dt
         return cost
 
@@ -205,7 +221,10 @@ def build_window_model(lp, wd):
                     return pyo.Constraint.Skip
                 floor = min(prev - float(ramp_pu) * float(lp._ramp_cap_mw[i]), _first_hour_ceiling(i))
                 return m.varGeneration[i, 0] >= floor
-            return m.varGeneration[i, h] >= m.varGeneration[i, h - 1] - float(ramp_pu) * float(lp._ramp_cap_mw[i])
+            return (
+                m.varGeneration[i, h]
+                >= m.varGeneration[i, h - 1] - float(ramp_pu) * float(lp._ramp_cap_mw[i]) - m.varRampSlack[i, h]
+            )
 
         m.cRampDn = pyo.Constraint(m.s_gen, m.s_h, rule=_ramp_dn_rule)
 

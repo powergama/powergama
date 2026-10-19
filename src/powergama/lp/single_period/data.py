@@ -156,8 +156,10 @@ def update_timestep(lp, timestep):
             storage_value.generator_storage_values(grid, stores, storage[stores], timestep),
         )
 
-    # 3b. flexible load (storage value)
+    # 3b. flexible load: reservoir level at the start of the timestep, and the
+    #     value of the energy delivered to it
     for i in lp._idx_consumersWithFlexLoad:
+        lp.model.p_flex_storage_prev[i] = lp._ctx.flex_storage_seed(i, float(lp._storage_flexload[i]))
         lp.model.p_loadflex_cost[i] = storage_value.flexload_storage_value(
             lp._grid, i, lp._storage_flexload[i], timestep
         )

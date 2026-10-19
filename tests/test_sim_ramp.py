@@ -165,3 +165,32 @@ def test_daily_reset_releases_ramp_constraint(tmp_path, testcase_9bus_data):
             # no violation allowed
             assert max(ramp_jump_up.values()) <= TOL, "ramp up exceeding max value"
             assert min(ramp_jump_down.values()) >= -TOL, "ramp down exceeding max value"
+
+
+def test_ramp_down_slack_keeps_window_feasible(tmp_path, testcase_9bus_data):
+    """A ramp-down limit that cannot be kept after a window's first hour costs, but does not fail.
+
+    The CSP plant starts at 600 MW with 100 MWh left and no sun. Hour 0 applies the
+    single-period guard and generates the 100 MWh; from hour 1 the storage is empty, yet
+    the ramp-down limit (30 MW/h) asks for at least 70 MW. Without the slack the window
+    is infeasible.
+    """
+    data = testcase_9bus_data
+    (csp,) = data.getIdxGeneratorsWithStorage()
+    data.generator["ramp_down_pu"] = float("nan")
+    data.generator.loc[csp, "ramp_down_pu"] = 0.05
+    data.profiles = data.profiles.iloc[:4]
+    data.timerange = range(4)
+    assert data.profiles.loc[:3, data.generator.loc[csp, "inflow_ref"]].max() == 0, "fixture needs a night"
+
+    lp = powergama.LpProblem(data, objective_mode="multi_period", horizon_hours=4, commit_hours=4)
+    storage = lp.storage.copy()
+    storage[csp] = 100.0
+    lp.set_storage_state(storage=storage)
+    lp._gen_prev[csp] = 600.0
+    res = powergama.Results(data, tmp_path / "ramp_slack.sqlite")
+    lp.solve(res, solver="appsi_highs", solve_args={})
+
+    output = [res.db.getResultGeneratorPowerAll(t)[csp] for t in range(4)]
+    assert output[0] == pytest.approx(100.0)
+    assert output[1:] == pytest.approx([0.0, 0.0, 0.0], abs=1e-6)

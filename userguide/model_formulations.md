@@ -20,8 +20,7 @@ them, which is the intended direction of travel.
 | supports losses | yes (`lossmethod` 0/1/2) | no — rejected at construction |
 | supports real-time | yes (`RtExtension`) | no — rejected at construction |
 
-A window of length 1 is the single-period problem, except for flexible load.
-See **Where they disagree**.
+A window of length 1 is the single-period problem. See **Where they disagree**.
 
 ## Index sets
 
@@ -51,7 +50,8 @@ depends on the other having been built.
 | generator storage level | `varStorage` | `varStorage` |
 | inflow spilled | `varSpill` | `varSpill` |
 | storage overflow (penalised slack) | `varStorageOverflow` | `varStorageOverflow` |
-| flexible-load reservoir | *not a variable* — state on the `LpProblem` | `varFlexStorage` |
+| flexible-load reservoir | `varFlexStorage` | `varFlexStorage` |
+| ramp-down shortfall after a window's first hour | — | `varRampSlack` |
 | directional flow and losses | `varAcBranchFlow12/21`, `varLossAc12/21`, and the DC pair | — (no losses) |
 | RT deviations | the `varRt*` family | — (no RT) |
 
@@ -72,7 +72,7 @@ the same physics under different names, or genuinely only exist on one side.
 | flexible load | `cFlexload` | `cFlexUb` |
 | ramp limits | **no constraint** — variable bounds tightened each timestep | `cRampUp`, `cRampDn` |
 | storage continuity | `cStorCont`; capacity and spill limits as variable bounds | the same |
-| flexible-load reservoir | **no constraint** — level tracked outside the LP | `cFlexStorCont`, `cFlexStorCap`, `cFlexStorFloor` |
+| flexible-load reservoir | `cFlexStorCont`; capacity and floor as variable bounds | `cFlexStorCont`, `cFlexStorCap`, `cFlexStorFloor` |
 | losses | `cFlowAc`/`cFlowDc`, `cLossAc12/21`, `cLossDc12/21` | — |
 | RT target tracking | `cRtTargetTracking` and three siblings | — |
 
@@ -97,30 +97,26 @@ over `h`.
 
 ## Where they disagree
 
-A window of 1 is the single-period problem for everything but flexible load:
-`tests/test_sim_single_period_rolling_equiv.py` checks that dispatch, storage,
-flows and prices agree on `data_9bus` and on `two_area` without its flexible load.
-Storage used to be the main exception — multi-period priced it twice, per MWh
-generated and through the terminal value (issue #40).
+Nowhere, for a window of 1: `tests/test_sim_single_period_rolling_equiv.py`
+checks that dispatch, storage, flexible-load storage, flows and prices agree on
+`data_9bus` and on `two_area` (pumping, ramp limits, flexible load, HVDC, a
+binding NTC). The last differences were settled before merging the two (#42):
 
-**1. Ramp limits bind differently for energy-limited generators, after the first
-hour of a window.** The single-period path applies `pmin_now = min(pmin_now,
-pmax_now)`, which drops the ramp-down floor whenever the availability bound is
-tighter — a CSP plant that empties ramps down past its limit rather than making
-the timestep infeasible. Multi-period applies the same guard to the first hour of
-each window, whose availability is known before the solve, but not to later
-hours, where it depends on the solve. A window can therefore still be infeasible
-where single-period steps would not be.
-
-**2. Flexible load is bounded in multi-period, unbounded in single-period.**
-`varFlexStorage` carries the reservoir with a continuity equality and hard
-`[0, capacity]` bounds, so it cannot leave range. The single-period path has no
-bounds at all: it lets the level overshoot and prices that at
-`constants.flexload_outside_cost` on the *next* timestep, which means it can
-report a filling level above capacity. The multi-period floor is skipped where
-`flex_on_off > 1`, since the per-hour charge limit is then below the drain and no
-schedule could hold the level non-negative. Pinned as a strict xfail in
-`tests/test_sim_single_period_rolling_equiv.py`.
+- **Storage** was priced twice in multi-period, per MWh generated and through
+  the terminal value (#40). Both now value it only at the end of the LP.
+- **Ramp limits for energy-limited generators.** Single-period applies
+  `pmin_now = min(pmin_now, pmax_now)`, which drops the ramp-down floor when the
+  availability bound is tighter — a CSP plant that empties ramps down past its
+  limit rather than making the timestep infeasible. Multi-period applies the same
+  guard to the first hour of each window, whose availability is known before the
+  solve. Later hours' availability depends on the solve, so there the ramp-down
+  limit has a slack, `varRampSlack`, priced like load shedding: a window is never
+  infeasible, and the slack is zero whenever the limit can be kept.
+- **Flexible load** is a bounded reservoir in both: `varFlexStorage` with a
+  continuity equality and `[0, capacity]` bounds, valued per MWh consumed. The
+  floor is skipped where `flex_on_off > 1`, since the per-timestep charge limit is
+  then below the drain and no schedule could hold the level non-negative; only
+  there does `constants.flexload_outside_cost` still come into play.
 
 ## Features the multi-period path silently ignores
 

@@ -2,8 +2,10 @@
 A multi-period window of one timestep is the single-period problem.
 
 Both formulations value storage the same way: no cost per MWh drawn, and the
-energy left in storage at the end valued at the storage value (issue #40). So with
-horizon_hours=1 they must give the same dispatch, flows and prices.
+energy left in storage at the end valued at the storage value (issue #40). Both
+keep a flexible-load reservoir within its bounds, and both apply the same ramp
+guard to a window's first timestep (issue #42). So with horizon_hours=1 they must
+give the same dispatch, storage, flows and prices.
 """
 
 from pathlib import Path
@@ -34,6 +36,9 @@ def _assert_equal(res_single, res_multi, data):
         assert res_single.db.getResultStorageFillingAll(t) == pytest.approx(
             res_multi.db.getResultStorageFillingAll(t), abs=1e-6
         ), f"storage differs at t={t}"
+        assert res_single.db.getResultFlexloadStorageFillingAll(t) == pytest.approx(
+            res_multi.db.getResultFlexloadStorageFillingAll(t), abs=1e-6
+        ), f"flexible-load storage differs at t={t}"
     for flows_single, flows_multi in zip(res_single.getAverageBranchFlows(), res_multi.getAverageBranchFlows()):
         assert flows_single == pytest.approx(flows_multi, abs=1e-6)
     for n in range(len(data.node)):
@@ -67,30 +72,12 @@ def _two_area():
 
 
 def test_single_period_equals_multi_period_horizon_1_two_area(tmp_path):
-    """The same on two_area, which has pumping, ramp limits, an HVDC link and a binding NTC.
-
-    Its flexible load is removed: that is formulated differently in the two modes, and
-    is pinned separately below.
-    """
+    """The same on two_area, which has pumping, ramp limits, flexible load, an HVDC link
+    and a binding NTC."""
     data = _two_area()
-    data.consumer["flex_fraction"] = 0.0
     assert len(data.getIdxGeneratorsWithPumping()) > 0
+    assert len(data.getIdxConsumersWithFlexibleLoad()) > 0
     assert not pd.isna(data.generator["ramp_up_pu"]).all()
     assert not pd.isna(data.inter_area_ntc["ntc_forward"]).all()
 
-    _assert_equal(*_solve_both(data, tmp_path), data)
-
-
-@pytest.mark.xfail(
-    reason=(
-        "Flexible load is bounded in multi_period mode and unbounded in single_period mode "
-        "(disagreement 3 in userguide/model_formulations.md), so horizon_hours=1 does not "
-        "reproduce single-period with flexible load. To be settled when the formulations "
-        "are merged (issue #42)."
-    ),
-    strict=True,
-)
-def test_single_period_equals_multi_period_horizon_1_flexible_load(tmp_path):
-    data = _two_area()
-    assert len(data.getIdxConsumersWithFlexibleLoad()) > 0
     _assert_equal(*_solve_both(data, tmp_path), data)

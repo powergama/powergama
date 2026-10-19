@@ -125,8 +125,9 @@ The mode was called `"hourly"` until the rename; a timestep need not be an hour.
 raises, with no alias.
 
 **The two formulations are independent** — neither reads the other's model — but they model
-storage identically, and at `horizon_hours=1` give the same results except with flexible load
-(`test_sim_single_period_rolling_equiv.py`). Changes to constraints usually need making in both.
+storage, flexible load and ramp limits identically, and at `horizon_hours=1` give the same
+results (`test_sim_single_period_rolling_equiv.py`). Changes to constraints usually need making in
+both.
 [model_formulations.md](userguide/model_formulations.md) maps them onto each other component by
 component and records where they disagree. In short:
 
@@ -134,13 +135,12 @@ component and records where they disagree. In short:
   `−v·S_end/dt` in the objective, `v` from `storage_value.generator_storage_values` at the
   filling level the LP starts from. Single-period re-prices every timestep; `multi_period`
   freezes `v` for the window, so it does not respond to the level within a window.
-- **Flexible load is a bounded variable in `multi_period`, an unbounded state in single-period**,
-  which can report a filling level above capacity. One valuation function,
-  `lp/storage_value.py`, serves both. This is the remaining blocker on merging the two (#42).
-- **Ramp limits bind differently for energy-limited generators, after a window's first hour.**
-  Single-period applies `pmin_now = min(pmin_now, pmax_now)`, dropping the ramp-down floor when
-  the availability bound is tighter; `multi_period` does the same in hour 0 of each window but
-  not later. Scope ramp tests to energy-unlimited generators.
+- **Flexible load is a bounded reservoir in both**, `varFlexStorage` in `[0, capacity]` (no floor
+  where `flex_on_off > 1`), valued per MWh consumed by `lp/storage_value.py`.
+- **Ramp limits for energy-limited generators.** Single-period applies `pmin_now = min(pmin_now,
+  pmax_now)`, dropping the ramp-down floor when the availability bound is tighter; `multi_period`
+  does the same in hour 0 of each window, and gives later hours a ramp-down slack priced at
+  `loadshedcost` (`varRampSlack`). Scope ramp tests to energy-unlimited generators.
 
 ### Conventions
 
@@ -216,8 +216,7 @@ Write outputs to pytest's `tmp_path`, not the repo root. Skip the heavy cases wi
 
 ### Known defects pinned by tests
 
-- **`horizon_hours=1` differs from single-period with flexible load**, which is bounded in one and
-  not the other. Pinned in `test_sim_single_period_rolling_equiv.py`.
+None at present. Pin the next one as a strict xfail.
 
 **Don't repeat a constraint row as a variable bound.** If a limit is both a row whose dual is read
 and an identical `setlb`/`setub` on the variable, the solver prices it on the bound (reduced cost)
