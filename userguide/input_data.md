@@ -120,7 +120,7 @@ out if the pumping capacity is non-zero.
   "pump_deadband"         | Pumping price dead-band (OPT)                       |  float |   €/MWh
   "gen_lat"               | Latitude (OPT)                                      |  float | degrees
   "gen_lon"               | Longitude (OPT)                                     |  float | degrees
-  "spill_cap_frac"        | Fraction of capacity allowed to curtail (OPT) [MP]  |  float |   1
+  "spill_cap_frac"        | Max spilled power, fraction of pmax (OPT)           |  float |   1
   "ramp_up_pu"            | Ramp up limit (OPT) [MP]                            |  float | pu/timestep
   "ramp_down_pu"          | Ramp down limit (OPT) [MP]                          |  float | pu/timestep
   "ramp_daily_reset"      | Whether to reset at midtnight (OPT) [MP]            |  bool  | 
@@ -132,10 +132,17 @@ connected. There may be any number of generators per node. `pmax` is the
 maximum power production, i.e. the generator capacity. `pmin` is the
 minimum power production. This is normally zero, but may be nonzero for
 certain generator types such as nuclear power generators. `fuelcost` is
-the cost of generation. For generators without storage, the marginal
-cost is set equal to this value. `storage_price` is the base
+the cost of generation, per MWh produced. For generators without storage,
+the marginal cost is set equal to this value. For generators with
+storage, it is an operating cost that does not depend on the filling
+level, and the storage value comes on top of it; it is usually zero.
+`storage_price` is the base
 value for storage generator's storage values. It sets the absolute scale
-in the storage value calculation. `storage_capacity` is the capacity of
+in the storage value calculation. `pump_efficiency` is the fraction of
+pumped energy that reaches the storage, and `pump_deadband` is a cost per
+MWh pumped, so pumping pays when the price is below the storage value
+times the efficiency, less the dead-band. `spill_cap_frac` limits the
+power a storage generator can spill, as a fraction of `pmax`. `storage_capacity` is the capacity of
 the storage system. This is usually relevant only for hydro power and
 solar CSP. `storagevalue_ref` is the string identifier of the associated
 storage value table to be used for this generator/storage system

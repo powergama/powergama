@@ -68,6 +68,12 @@ class GridContext:
     idx_consumersWithFlexLoad: list = field(default_factory=list)
     idx_branchesWithConstraints: list = field(default_factory=list)
 
+    # --- storage ------------------------------------------------------------
+    # Upper bound on spilled inflow per storage generator, in MW: spill_cap_frac
+    # of installed capacity. Above it, energy that fits neither in the reservoir
+    # nor through the generator goes to a penalised overflow slack.
+    spill_cap_mw: dict = field(default_factory=dict)
+
     # --- optional profile references for time-varying bounds ---------------
     pmax_ref: object = None
     pmin_ref: object = None
@@ -95,6 +101,7 @@ class GridContext:
         ctx = cls(Bbus=Bbus, DA=DA, refnodes=refnodes)
         ctx._build_node_maps(grid)
         ctx._build_index_sets(grid)
+        ctx._build_storage(grid)
         ctx._build_profile_refs(grid)
         ctx._build_ramping(grid)
         ctx._build_flow_bounds(grid)
@@ -135,6 +142,14 @@ class GridContext:
         self.idx_generatorsWithStorage = grid.getIdxGeneratorsWithStorage()
         self.idx_consumersWithFlexLoad = grid.getIdxConsumersWithFlexibleLoad()
         self.idx_branchesWithConstraints = grid.getIdxBranchesWithFlowConstraints()
+
+    def _build_storage(self, grid):
+        if "spill_cap_frac" in grid.generator.columns:
+            frac = pd.to_numeric(grid.generator["spill_cap_frac"], errors="coerce").fillna(1.0).clip(0.0, 1.0)
+        else:
+            frac = pd.Series(1.0, index=grid.generator.index)
+        pmax = pd.to_numeric(grid.generator["pmax"], errors="coerce").fillna(0.0).clip(lower=0.0)
+        self.spill_cap_mw = {i: float(frac[i] * pmax[i]) for i in self.idx_generatorsWithStorage}
 
     def _build_profile_refs(self, grid):
         # Optional profile references for time-varying dispatch bounds.

@@ -23,14 +23,17 @@ from ... import constants as const
 
 
 def build_model(model, grid, ctx, cfg, extensions=()):
-    """Construct the whole single-period model, in declaration order."""
+    """Construct the whole single-period model, in declaration order.
+
+    Returns the names of the objective's terms, after the extensions have edited them.
+    """
     create_sets_and_parameters(model, grid, ctx, cfg)
     for ext in extensions:
         ext.add_parameters(model, grid, ctx)
     create_variables(model, grid, ctx, cfg)
     for ext in extensions:
         ext.add_variables(model, grid, ctx)
-    create_objective(model, grid, ctx, cfg, extensions)
+    objective_term_names = create_objective(model, grid, ctx, cfg, extensions)
     powerbalance_rhs = get_powerbalance_rhs(model, ctx)
     create_constraint_powerflow_limit(model, grid, ctx, cfg)
     create_constraint_inter_area_ntc(model, grid, ctx, cfg)
@@ -38,10 +41,12 @@ def build_model(model, grid, ctx, cfg, extensions=()):
     create_constraint_generator_output(model, grid, ctx, cfg)
     create_constraint_generator_pump(model, grid, ctx, cfg)
     create_constraint_load_flex(model, grid, ctx, cfg)
+    create_constraint_storage(model, grid, ctx, cfg)
     create_constraint_powerbalance(model, grid, ctx, cfg, powerbalance_rhs)
     create_constraint_powerflow_equation(model, grid, ctx, cfg)
     for ext in extensions:
         ext.add_constraints(model, grid, ctx)
+    return objective_term_names
 
 
 def create_sets_and_parameters(model, grid, ctx, cfg):
@@ -72,6 +77,9 @@ def create_sets_and_parameters(model, grid, ctx, cfg):
         mutable=True,
         initialize=grid.generator["pmax"].values,
     )
+    # Per-MWh operating cost of every generator, storage generators included, and
+    # per-MWh cost of pumping. Neither depends on the storage level: the value of
+    # stored energy enters only through the terminal storage value, p_storage_value.
     model.p_gen_cost = pyo.Param(
         model.s_gen,
         within=pyo.Reals,
@@ -79,7 +87,18 @@ def create_sets_and_parameters(model, grid, ctx, cfg):
         mutable=True,
         initialize=grid.generator["fuelcost"].values,
     )
-    model.p_genpump_cost = pyo.Param(model.s_gen, within=pyo.Reals, default=0, mutable=True)
+    model.p_genpump_cost = pyo.Param(
+        model.s_gen,
+        within=pyo.Reals,
+        default=0,
+        mutable=True,
+        initialize={g: grid.generator.loc[g, "pump_deadband"] for g in model.s_gen_pump},
+    )
+    # Storage level at the start of the timestep (MWh), inflow during it (MW), and
+    # the value of energy left in storage at its end (EUR/MWh).
+    model.p_storage_prev = pyo.Param(model.s_gen_storage, within=pyo.Reals, default=0, mutable=True)
+    model.p_storage_inflow = pyo.Param(model.s_gen_storage, within=pyo.Reals, default=0, mutable=True)
+    model.p_storage_value = pyo.Param(model.s_gen_storage, within=pyo.Reals, default=0, mutable=True)
     model.p_pump_pmax = pyo.Param(
         model.s_gen_pump,
         within=pyo.NonNegativeReals,
@@ -137,6 +156,13 @@ def create_variables(model, grid, ctx, cfg):
     model.varFlexLoad = pyo.Var(model.s_load_flex, within=pyo.NonNegativeReals)
     model.varLoadShed = pyo.Var(model.s_load, within=pyo.NonNegativeReals)
     model.varDumpLoad = pyo.Var(model.s_load, within=pyo.NonNegativeReals)
+    model.varStorage = pyo.Var(
+        model.s_gen_storage, within=pyo.NonNegativeReals, bounds=lambda m, i: (0, grid.generator.loc[i, "storage_cap"])
+    )
+    model.varSpill = pyo.Var(
+        model.s_gen_storage, within=pyo.NonNegativeReals, bounds=lambda m, i: (0, ctx.spill_cap_mw[i])
+    )
+    model.varStorageOverflow = pyo.Var(model.s_gen_storage, within=pyo.NonNegativeReals)
     model.varVoltageAngle = pyo.Var(model.s_node, within=pyo.Reals, initialize=0.0)
 
 
@@ -349,6 +375,32 @@ def create_constraint_load_flex(model, grid, ctx, cfg):
     model.cFlexload = pyo.Constraint(model.s_load_flex, rule=flexload_rule)
 
 
+def create_constraint_storage(model, grid, ctx, cfg):
+    """Constraint: storage continuity over the timestep.
+
+    level = level_prev + (inflow - output + pumped*efficiency - spill - overflow) * dt
+
+    The level is bounded to [0, storage_cap] and spill to spill_cap_frac of installed
+    capacity. Overflow is what fits in neither, priced like load shedding so the
+    timestep stays feasible.
+    """
+    dt = grid.timeDelta
+
+    def storage_rule(model, i):
+        pumped = 0
+        if i in model.s_gen_pump:
+            pumped = model.varPump[i] * grid.generator.loc[i, "pump_efficiency"]
+        return model.varStorage[i] == model.p_storage_prev[i] + dt * (
+            model.p_storage_inflow[i]
+            - model.varGeneration[i]
+            + pumped
+            - model.varSpill[i]
+            - model.varStorageOverflow[i]
+        )
+
+    model.cStorCont = pyo.Constraint(model.s_gen_storage, rule=storage_rule)
+
+
 def create_constraint_powerbalance(model, grid, ctx, cfg, powerbalance_rhs):
     """ConstraintPower balance (power flow equation)  (Pnode = B theta)"""
     lossmethod = cfg.lossmethod
@@ -443,35 +495,50 @@ def create_constraint_powerflow_equation(model, grid, ctx, cfg):
     model.cReferenceNode = pyo.Constraint(model.s_node, rule=referenceNode_rule)
 
 
-def objective_terms(model):
+def objective_terms(model, dt):
     """The core objective, as named terms that an extension may add to, drop or replace.
 
     The objective is their sum, in insertion order.
+
+    Units: every term is a cost rate in EUR/h (MW times EUR/MWh), whatever the
+    timestep length *dt*, so that the duals are prices in EUR/MWh. The value of the
+    energy left in storage is an amount in EUR, which is why it is divided by dt.
     """
     terms = {}
-    # Cost of generation, less the value of pumping and of serving flexible load.
+    # Cost of generation and pumping, less the value of serving flexible load.
     terms["operating_cost"] = (
         sum(model.varGeneration[i] * model.p_gen_cost[i] for i in model.s_gen)
-        - sum(model.varPump[i] * model.p_genpump_cost[i] for i in model.s_gen_pump)
+        + sum(model.varPump[i] * model.p_genpump_cost[i] for i in model.s_gen_pump)
         - sum(model.varFlexLoad[i] * model.p_loadflex_cost[i] for i in model.s_load_flex)
     )
+    # Value of the energy in storage at the end of the timestep. This is the only
+    # place storage is valued: drawing 1 MWh from storage costs its storage value
+    # here and nothing per MWh generated, and spilling costs the same.
+    terms["storage_value"] = -sum(model.p_storage_value[i] * model.varStorage[i] for i in model.s_gen_storage) / dt
     # Penalty slack: keeps every timestep feasible.
-    terms["load_shedding"] = sum(model.varLoadShed[i] * const.loadshedcost for i in model.s_load) + sum(
-        model.varDumpLoad[i] * const.loadshedcost for i in model.s_load
+    terms["load_shedding"] = (
+        sum(model.varLoadShed[i] * const.loadshedcost for i in model.s_load)
+        + sum(model.varDumpLoad[i] * const.loadshedcost for i in model.s_load)
+        + sum(model.varStorageOverflow[i] * const.loadshedcost for i in model.s_gen_storage)
     )
+    # Spill only when the reservoir is full, even where the storage value is zero.
+    terms["spill"] = sum(model.varSpill[i] * const.spillcost for i in model.s_gen_storage)
     return terms
 
 
 def create_objective(model, grid, ctx, cfg, extensions=()):
-    """Create pyomo model objective function"""
+    """Create pyomo model objective function, and return the names of its terms."""
+    names = []
 
     def cost_rule(model):
-        terms = objective_terms(model)
+        terms = objective_terms(model, grid.timeDelta)
         for ext in extensions:
             ext.edit_objective_terms(model, terms)
+        names.extend(terms)
         return sum(terms.values())
 
     model.OBJ = pyo.Objective(rule=cost_rule, sense=pyo.minimize)
+    return tuple(names)
 
 
 def get_powerbalance_rhs(model, ctx):

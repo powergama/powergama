@@ -125,12 +125,13 @@ def add_border_flow_target_tracking(model, grid, ctx, rt):
 def edit_objective_terms(model, rt, terms):
     """Turn the cost-minimising objective into a deviation-minimising one.
 
-    RT drops the operating cost -- the day-ahead run already settled it -- and
-    prices deviations from the day-ahead schedule instead. Load shedding stays:
-    otherwise the solver could bypass the tracked balancing channels by dropping
-    demand instead of redispatching generation, storage or flexible load.
+    RT drops the operating cost and the storage value -- the day-ahead run already
+    settled both -- and prices deviations from the day-ahead schedule instead. Load
+    shedding stays: otherwise the solver could bypass the tracked balancing channels
+    by dropping demand instead of redispatching generation, storage or flexible load.
     """
     del terms["operating_cost"]
+    del terms["storage_value"]
     terms["rt_deviation"] = deviation_cost(model, rt)
 
 

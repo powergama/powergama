@@ -6,16 +6,15 @@ model's Params in place each timestep; this one computes a snapshot that gets
 baked into a model rebuilt for the window, because the whole window is one LP
 and every coefficient in it has to be constant.
 
-That is why storage is priced once per window here, from the filling level the
-window starts at, while the single-period path re-prices before every timestep.
+That is why the storage value is fixed once per window here, from the filling
+level the window starts at, while the single-period path re-prices before every
+timestep.
 
 WindowData is the explicit interface between this module and :mod:`.build`:
 30 values used to cross that boundary as locals of one 550-line method.
 """
 
 from dataclasses import dataclass, field
-
-import pandas as pd
 
 from .. import storage_value
 
@@ -90,57 +89,30 @@ def prepare_window(lp, day_timesteps):
     # ── pre-compute storage capacity and pump parameters ──────────
     storage_ini = {int(i): float(lp._storage[i]) for i in lp._idx_generatorsWithStorage}
     storage_cap = {int(i): max(0.0, float(grid.generator.loc[i, "storage_cap"])) for i in lp._idx_generatorsWithStorage}
-    spill_frac_series = pd.to_numeric(grid.generator.get("spill_cap_frac", 1.0), errors="coerce")
-    if not isinstance(spill_frac_series, pd.Series):
-        spill_frac_series = pd.Series(spill_frac_series, index=grid.generator.index)
-    spill_cap_mw = {}
-    for i in lp._idx_generatorsWithStorage:
-        raw_frac = spill_frac_series.loc[i] if i in spill_frac_series.index else 1.0
-        frac = 1.0 if pd.isna(raw_frac) else float(raw_frac)
-        frac = max(0.0, min(1.0, frac))
-        pmax_i = max(0.0, float(grid.generator.loc[i, "pmax"]))
-        spill_cap_mw[int(i)] = frac * pmax_i
+    spill_cap_mw = {int(i): cap for i, cap in ctx.spill_cap_mw.items()}
     pump_eff_g = {int(i): float(grid.generator.loc[i, "pump_efficiency"]) for i in lp._idx_generatorsWithPumping}
     pump_cap_raw = {int(i): float(grid.generator.loc[i, "pump_cap"]) for i in lp._idx_generatorsWithPumping}
 
-    # ── pre-compute storval for each storage gen (BOD filling level) ─
-    gen_cost_h: dict = {}  # (h, i) → total cost including storval
-    pump_cost_h: dict = {}  # (h, i) → pump credit
-    # Terminal storval: opportunity cost of 1 MWh left in storage at end of day.
-    # Evaluated at end-of-day time reference so the solver values conservation of
-    # stored energy and won't drain storage just because the day is ending.
-    terminal_storval: dict = {}  # i → €/MWh
-
-    for i in lp._idx_generatorsWithStorage:
-        filling_ref = grid.generator.loc[i, "storval_filling_ref"]
-        time_ref = grid.generator.loc[i, "storval_time_ref"]
-        cap_i = storage_cap[i]
-        fill_frac = (storage_ini[i] / cap_i) if cap_i > 0 else 0.0
-        fill_frac = max(0.0, min(1.0, fill_frac))
-        fill_col = int(round(fill_frac * 100))
-        for hi, ts in enumerate(day_timesteps):
-            storval = (
-                float(grid.generator.loc[i, "storage_price"])
-                * float(grid.storagevalue_filling.loc[fill_col, filling_ref])
-                * float(grid.storagevalue_time.loc[ts, time_ref])
-            )
-            gen_cost_h[(hi, i)] = storval
-            if i in gen_pump_set:
-                gen_cost_h[(hi, i)] = storval  # same, so gen is expensive when full
-                pump_cost_h[(hi, i)] = storval - float(grid.generator.loc[i, "pump_deadband"])
-        # Terminal value = storval at end-of-day timestep (last hour of the day)
-        terminal_storval[i] = (
-            float(grid.generator.loc[i, "storage_price"])
-            * float(grid.storagevalue_filling.loc[fill_col, filling_ref])
-            * float(grid.storagevalue_time.loc[day_timesteps[-1], time_ref])
-        )
-
-    # Non-storage generators: fuelcost is constant within the day.
+    # ── costs, and the value of energy left in storage ─────────────
+    # Per-MWh costs of generating and pumping do not depend on the storage level,
+    # storage generators included. Stored energy is valued once, at the end of the
+    # window, from the filling level at its start and the time factor at its last
+    # timestep -- the single-period path does the same with a window of one.
+    gen_cost_h: dict = {}  # (h, i) → €/MWh
+    pump_cost_h: dict = {}  # (h, i) → €/MWh pumped
     for i in ctx.gen_ids:
-        if i not in gen_storage_set:
-            base_cost = float(grid.generator["fuelcost"].loc[i])
-            for hi in range(H):
-                gen_cost_h[(hi, i)] = base_cost
+        base_cost = float(grid.generator["fuelcost"].loc[i])
+        for hi in range(H):
+            gen_cost_h[(hi, i)] = base_cost
+    for i in gen_pump_set:
+        deadband = float(grid.generator.loc[i, "pump_deadband"])
+        for hi in range(H):
+            pump_cost_h[(hi, i)] = deadband
+    storage_gens = list(lp._idx_generatorsWithStorage)
+    values = storage_value.generator_storage_values(
+        grid, storage_gens, [storage_ini[i] for i in storage_gens], day_timesteps[-1]
+    )
+    terminal_storval = {i: float(v) for i, v in zip(storage_gens, values)}
 
     # ── pre-compute inflow / pmax / pmin per (hour, gen) ─────────
     P_max_base = grid.generator["pmax"]

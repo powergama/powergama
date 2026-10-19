@@ -115,6 +115,15 @@ def update_flexload_and_storage_targets(lp, rt, timestep):
                 lp.model.p_rt_storage_target[i] = 0.0
 
 
+def marginal_cost(lp, i):
+    """Marginal cost of generator *i*, in EUR/MWh: its operating cost, plus the
+    storage value for a generator that draws from storage."""
+    cost = float(pyo.value(lp.model.p_gen_cost[i]))
+    if i in lp.model.s_gen_storage:
+        cost += float(pyo.value(lp.model.p_storage_value[i]))
+    return cost
+
+
 def update_deviation_prices(lp, rt, timestep):
     """Price this timestep's deviation variables from current marginal costs."""
     # In deviation objective mode, all generation technologies use the same
@@ -144,7 +153,7 @@ def update_deviation_prices(lp, rt, timestep):
 
     for i in lp.model.s_gen:
         if int(i) in rt.ctx.target_gen_indices:
-            _gen_cost = float(pyo.value(lp.model.p_gen_cost[i]))
+            _gen_cost = marginal_cost(lp, i)
             _is_res = int(i) in rt.ctx.idx_wind or int(i) in rt.ctx.idx_solar or int(i) in rt.ctx.idx_hydro_ror
             if _is_res:
                 # RES: reward upward and penalize curtailment with a tunable factor.
@@ -179,10 +188,10 @@ def update_deviation_prices(lp, rt, timestep):
         if int(i) in rt.ctx.storage_target_indices:
             # Storage DA-marginal pricing: c+ = c0 + c_DA, c- = c0 - c_DA
             # c_DA is the DA marginal storage value (from da_storage_marginalprice parquet),
-            # falling back to current storagevalue (p_gen_cost[i]) if not available.
+            # falling back to the current storage value if not available.
             _c_da_storage = rt.locks.da_storage_marginalprice.get((int(timestep), int(i)), None)
             if _c_da_storage is None:
-                _c_da_storage = float(pyo.value(lp.model.p_gen_cost[i]))
+                _c_da_storage = float(pyo.value(lp.model.p_storage_value[i]))
             else:
                 _c_da_storage = float(_c_da_storage)
             c_pos = _fee + _c_da_storage

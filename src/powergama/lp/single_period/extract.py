@@ -12,34 +12,38 @@ extraction code.
 """
 
 import numpy as np
+from pyomo.environ import value as pyo_value
 
 from ... import constants as const
 from ...timestep_result import TimestepResult, aggregate_to_nodes
+from . import data as sp_data
 
 
 def store_results_and_update_storage(lp, timestep, results):
     """Store timestep results in local arrays, and update storage"""
 
-    # 1. Update generator storage:
-    inflow_profile_refs = lp._grid.generator["inflow_ref"]
-    inflow_factor = lp._grid.generator["inflow_fac"]
-    capacity = lp._grid.generator["pmax"]
-    pumpedIn = np.zeros(len(capacity))
-    energyIn = np.zeros(len(capacity))
-    energyOut = np.zeros(len(capacity))
-    for i in lp.model.s_gen:
-        genInflow = capacity[i] * inflow_factor[i] * lp._grid.profiles[inflow_profile_refs[i]][timestep]
-        energyIn[i] = genInflow * lp.timeDelta
-        energyOut[i] = lp.model.varGeneration[i].value * lp.timeDelta
-
-    for i in lp._idx_generatorsWithPumping:
-        Ppump = lp.model.varPump[i].value
-        pumpedIn[i] = Ppump * lp._grid.generator["pump_efficiency"][i] * lp.timeDelta
-    energyStorable = lp._storage + energyIn + pumpedIn - energyOut
-    storagecapacity = lp._grid.generator["storage_cap"]
-    # Keep storage state inside physical bounds for the next timestep.
-    lp._storage = np.clip(energyStorable, 0.0, storagecapacity)
+    # 1. Update generator storage. Its level is an LP variable, so the next
+    #    timestep starts from the solved level, and spilled energy is the solved
+    #    spill (plus overflow). Generators without storage report the inflow they
+    #    did not use, e.g. curtailed wind, as spilled.
+    gen = lp._grid.generator
+    Pgen = [lp.model.varGeneration[i].value for i in lp.model.s_gen]
+    genInflow = (
+        gen["pmax"].to_numpy(float)
+        * gen["inflow_fac"].to_numpy(float)
+        * sp_data._profile_values(lp._grid.profiles, timestep, gen["inflow_ref"])
+    )
+    energyIn = genInflow * lp.timeDelta
+    energyOut = np.asarray(Pgen, dtype=float) * lp.timeDelta
+    storage_prev = lp._storage.copy()
+    # Without storage (zero capacity) everything not generated is spilled; with
+    # infinite capacity, nothing is.
+    energyStorable = lp._storage + energyIn - energyOut
+    lp._storage = np.clip(energyStorable, 0.0, lp._grid.generator["storage_cap"])
     lp._energyspilled = energyStorable - lp._storage
+    for i in lp._idx_generatorsWithStorage:
+        lp._storage[i] = lp.model.varStorage[i].value
+        lp._energyspilled[i] = (lp.model.varSpill[i].value + lp.model.varStorageOverflow[i].value) * lp.timeDelta
 
     # 2. Update flexible load storage
     for i in lp._idx_consumersWithFlexLoad:
@@ -48,13 +52,23 @@ def store_results_and_update_storage(lp, timestep, results):
         lp._storage_flexload[i] += energyIn_flexload - energyOut_flexload
 
     # 1c. Record this timestep's dispatch for ramp constraints in next timestep.
-    for i in lp.model.s_gen:
-        v = lp.model.varGeneration[i].value
-        lp._gen_prev[i] = v if v is not None else 0.0
+    lp._gen_prev[:] = [v if v is not None else 0.0 for v in Pgen]
 
     # 3. Collect variable values from optimisation result
-    F = lp.model.OBJ()
-    Pgen = [lp.model.varGeneration[i].value for i in lp.model.s_gen]
+    F = lp._objective_value
+    if "storage_value" in lp._objective_term_names:
+        # Report the value of the energy taken from storage in place of the value
+        # of the energy left in it, so that the objective is an operating cost
+        # comparable across timesteps rather than dominated by a large negative
+        # constant. Both are rates, EUR/h: see single_period.build.objective_terms.
+        F += (
+            sum(
+                pyo_value(lp.model.p_storage_value[i])
+                * (storage_prev[i] + pyo_value(lp.model.p_storage_inflow[i]) * lp.timeDelta)
+                for i in lp._idx_generatorsWithStorage
+            )
+            / lp.timeDelta
+        )
     Ppump = [lp.model.varPump[i].value for i in lp.model.s_gen_pump]
     Pflexload = [lp.model.varFlexLoad[i].value for i in lp.model.s_load_flex]
     Pb = [lp.model.varAcBranchFlow[i].value for i in lp.model.s_branch_ac]
@@ -94,7 +108,7 @@ def store_results_and_update_storage(lp, timestep, results):
     # energyspilled[indx] = energyStorable[indx]-lp._storage[indx]
     energyspilled = lp._energyspilled
     storagelevel = lp._storage[lp._idx_generatorsWithStorage]
-    storageprice = [lp.model.p_gen_cost[i].value for i in lp._idx_generatorsWithStorage]
+    storageprice = [lp.model.p_storage_value[i].value for i in lp._idx_generatorsWithStorage]
     flexload_storagelevel = lp._storage_flexload[lp._idx_consumersWithFlexLoad]
     flexload_marginalprice = [lp.model.p_loadflex_cost[i].value for i in lp._idx_consumersWithFlexLoad]
 
