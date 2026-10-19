@@ -53,6 +53,7 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+xfail_strict = true
 markers = [
     "slow: long-running integration test; skip locally with -m 'not slow'",
 ]

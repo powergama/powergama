@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 import powergama
 
@@ -9,7 +10,14 @@ TOL = 1e-6
 
 
 def test_generator_ramp_limit(tmp_path, testcase_9bus_data):
-    """Check that ramp rates are observed in daily optimisation mode."""
+    """Check that ramp rates are observed in daily optimisation mode.
+
+    Ramp-up limits always hold. A ramp-down limit gives way only where the generator
+    runs out of energy: the first hour of each window applies the single-period guard,
+    so a storage plant that empties (here the CSP plant, at timestep 7) generates what
+    it has left rather than making the window infeasible. Any breach must therefore
+    be at the generator's availability.
+    """
     data = testcase_9bus_data
 
     # set ramp rate limits (change in pu from one timestep to the next)
@@ -23,14 +31,24 @@ def test_generator_ramp_limit(tmp_path, testcase_9bus_data):
     lp.solve(res, solver="appsi_highs", solve_args={})
 
     n_hours = data.profiles.shape[0]
+    storage_gens = data.getIdxGeneratorsWithStorage()
     p_now = res.db.getResultGeneratorPowerAll(0)
+    breaches = 0
 
     for t in range(1, n_hours):
         p_prev = p_now
         p_now = res.db.getResultGeneratorPowerAll(t)
+        storage_prev = dict(zip(storage_gens, res.db.getResultStorageFillingAll(timestep=t - 1)))
         for i, gen in data.generator.iterrows():
             assert p_now[i] - p_prev[i] - gen["ramp_up_pu"] * gen["pmax"] <= TOL
-            assert p_now[i] - p_prev[i] + gen["ramp_down_pu"] * gen["pmax"] >= -TOL
+            if p_now[i] - p_prev[i] + gen["ramp_down_pu"] * gen["pmax"] < -TOL:
+                breaches += 1
+                available = gen["pmax"] * gen["inflow_fac"] * data.profiles.loc[t, gen["inflow_ref"]]
+                available += storage_prev.get(i, 0.0) / data.timeDelta
+                assert p_now[i] == pytest.approx(available, abs=1e-4), (
+                    f"generator {i} broke its ramp-down limit at t={t} without running out of energy"
+                )
+    assert breaches > 0, "fixture no longer exercises the energy-limited case"
 
 
 def test_generator_ramp_limit_single_period(tmp_path, testcase_9bus_data):
@@ -135,11 +153,14 @@ def test_daily_reset_releases_ramp_constraint(tmp_path, testcase_9bus_data):
         print(df)
 
         if tstep % 24 == 0:
-            # Violation _IS_ allowed, and must actually occur: a genuine breach of the
-            # down-ramp limit at the reset boundary is what proves the reset released the
+            # Violation _IS_ allowed, and must actually occur: a genuine breach of a
+            # ramp limit at the reset boundary is what proves the reset released the
             # constraint. A merely-negative value would also hold for any ramp-feasible
             # dispatch, which is why this previously passed with no ramp constraints built.
-            assert min(ramp_jump_down.values()) < -TOL, "expected the daily reset to permit a ramp breach"
+            # Which direction breaches depends on the dispatch, so accept either.
+            assert max(ramp_jump_up.values()) > TOL or min(ramp_jump_down.values()) < -TOL, (
+                "expected the daily reset to permit a ramp breach"
+            )
         else:
             # no violation allowed
             assert max(ramp_jump_up.values()) <= TOL, "ramp up exceeding max value"

@@ -1,6 +1,38 @@
 # Changes
 
 ## unpublished
+2026-10-19
+- **behaviour change:** storage is modelled the same way in both modes, and multi-period mode no
+  longer prices storage draw twice (#40). The objective no longer charges the storage value per
+  MWh generated; it values the energy left in storage at the end of the LP (the timestep, or the
+  window) at the storage value, with the storage level an LP variable in both modes. A
+  multi-period window of one timestep now gives the single-period results, except with
+  flexible load. Effects on results:
+  - multi-period: storage was charged its storage value per MWh generated *and* through the
+    terminal value, so it was held back and prices were set at about twice the storage value.
+    Expect storage to be used more and prices to change
+  - both modes: pumping is worth the storage value times `pump_efficiency`, less
+    `pump_deadband`, instead of the storage value less `pump_deadband`. Pumping losses were
+    ignored before. If `pump_deadband` was set to stand in for them, they now count twice
+  - both modes: `fuelcost` applies to generators with storage too, as a cost per MWh on top of
+    the storage value. It used to be ignored for them
+  - single-period: spilled inflow loses its storage value, and spilled power is limited to
+    `spill_cap_frac` × `pmax` (default 1), as it already was in multi-period. Energy that fits
+    neither in the storage nor through the generator nor in the spill limit is penalised like
+    load shedding, which can set a price of ±1000 at the generator's node. Multi-period runs that
+    were infeasible in that situation now solve
+  - multi-period: the first hour of each window applies the single-period ramp guard, so a
+    generator that runs out of energy breaks its ramp-down limit instead of making the window
+    infeasible
+  - multi-period: inflow not used by generators without storage (e.g. curtailed wind) is now
+    reported as spilled, as in single-period
+- the objective is a cost rate in EUR/h in both modes, whatever `timeDelta` is, so nodal prices
+  are in EUR/MWh at any timestep length. `Res_ObjFunc` stays a cost rate, with the value of the
+  energy left in storage replaced by the value of the energy taken from it
+- single-period runs are faster: the per-timestep update is vectorised and writes the model
+  parameters in bulk, and the objective is evaluated once per timestep instead of twice. On the
+  Europe 2014 case this more than offsets the larger LP
+- pytest now treats every `xfail` as strict
 2026-10-18
 - fix `continue_from_last` with `lossmethod` 1 or 2 not reproducing an uninterrupted run (#41).
   Losses are linearised around the preceding timestep's flows; a resumed run pre-solved its first

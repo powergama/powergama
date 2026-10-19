@@ -74,7 +74,6 @@ def aggregate_to_nodes(grid, loads, value_of) -> pd.Series:
     value_of : callable
         ``value_of(j)`` returns the MW value for consumer ``j``.
     """
-    out = pd.Series(index=grid.node.id, data=0.0, dtype=float)
-    for j in loads:
-        out[grid.consumer["node"][j]] += value_of(j)
-    return out
+    loads = list(loads)
+    values = pd.Series([value_of(j) for j in loads], index=grid.consumer["node"].loc[loads].to_numpy(), dtype=float)
+    return values.groupby(level=0, sort=False).sum().reindex(grid.node.id, fill_value=0.0)

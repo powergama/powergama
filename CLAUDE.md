@@ -67,6 +67,9 @@ A simulation is a pipeline of four objects:
   than the model rebuilt. Storage filling level lives in `self._storage` / `self._storage_flexload`
   (seed them with the public `set_storage_state()`) and is what makes the problem sequential.
   `self._gen_prev` carries previous-timestep output for ramp constraints.
+  `single_period.data.update_timestep` is vectorised and writes Params with
+  `store_values(check=False)`: it runs every timestep, and per-element pandas lookups and Param
+  writes used to cost more than the solve on the Europe case. Keep it column-wise.
 
   Four things to know:
   - `__getattr__` resolves names against `_cfg`, then `_ctx`, then the model — so `lp._lossmethod`,
@@ -121,22 +124,23 @@ Selected via `LpProblem` constructor arguments (see [usage.md](userguide/usage.m
 The mode was called `"hourly"` until the rename; a timestep need not be an hour. The old spelling
 raises, with no alias.
 
-**The two formulations are independent** — neither reads the other's model — but they are *not*
-equivalent at `horizon_hours=1`, and changes to constraints usually need making in both.
+**The two formulations are independent** — neither reads the other's model — but they model
+storage identically, and at `horizon_hours=1` give the same results except with flexible load
+(`test_sim_single_period_rolling_equiv.py`). Changes to constraints usually need making in both.
 [model_formulations.md](userguide/model_formulations.md) maps them onto each other component by
 component and records where they disagree. In short:
 
-- **Storage values are frozen per window in `multi_period`**, because the whole window is one LP
-  and the value has to be a constant coefficient. Single-period re-prices every timestep.
-- **Storage draw is priced twice in `multi_period`** — see the known defects below. This is the
-  blocker on merging the two.
+- **Storage is valued only at the end of the LP** (issue #40): no cost per MWh drawn, and
+  `−v·S_end/dt` in the objective, `v` from `storage_value.generator_storage_values` at the
+  filling level the LP starts from. Single-period re-prices every timestep; `multi_period`
+  freezes `v` for the window, so it does not respond to the level within a window.
 - **Flexible load is a bounded variable in `multi_period`, an unbounded state in single-period**,
   which can report a filling level above capacity. One valuation function,
-  `lp/storage_value.py`, serves both.
-- **Ramp limits bind differently for energy-limited generators.** Single-period applies
-  `pmin_now = min(pmin_now, pmax_now)`, dropping the ramp-down floor when the availability bound
-  is tighter; `multi_period` has no such escape hatch. Scope single-period ramp tests to
-  energy-unlimited generators.
+  `lp/storage_value.py`, serves both. This is the remaining blocker on merging the two (#42).
+- **Ramp limits bind differently for energy-limited generators, after a window's first hour.**
+  Single-period applies `pmin_now = min(pmin_now, pmax_now)`, dropping the ramp-down floor when
+  the availability bound is tighter; `multi_period` does the same in hour 0 of each window but
+  not later. Scope ramp tests to energy-unlimited generators.
 
 ### Conventions
 
@@ -144,8 +148,14 @@ component and records where they disagree. In short:
   `constants.baseS` = 100 MVA. Conversions via `const.baseMVA` are applied at the constraint level
   (`single_period.build.create_constraint_powerflow_equation` and `…_powerbalance`).
 - Marginal cost for generators with storage comes from the storage-value curves
-  (filling-level × time), not `fuelcost` — this is the core modelling idea, described in
-  [model_description.md](userguide/model_description.md).
+  (filling-level × time) — this is the core modelling idea, described in
+  [model_description.md](userguide/model_description.md). It enters as the value of the energy
+  left in storage, and `fuelcost` applies on top as a level-independent cost. Pumping is worth
+  `v·pump_efficiency`, less `pump_deadband`.
+- **Every objective term is a cost rate in EUR/h** (MW × EUR/MWh), whatever `timeDelta` is, so
+  duals are prices in EUR/MWh with no `dt` correction. Amounts in EUR (the terminal storage
+  value) are divided by `dt`. Keep it that way: the user wants results readable the same at
+  1 h and 15 min.
 - Load shedding and dump load are priced at `constants.loadshedcost` (1000/MWh), so they act as
   penalty slack and keep every timestep feasible.
 - `lossmethod` on `LpProblem`: `0` = lossless (default), `1` = piecewise-linearised losses (needs a
@@ -196,8 +206,7 @@ Three kinds of test, and the distinction matters when changing the model:
   an AST check that constraint rules read Pyomo components off their `model` argument and
   everything else off `self`. Run it after touching any rule; it takes no measurable time.
 - **Numeric regression tests** with hard-coded flows/prices. If a modelling change moves these, the
-  change needs justifying, not the expectations silently updating. For `multi_period` these record
-  *current* behaviour, which is not the same as correct — see the storage double-count below.
+  change needs justifying, not the expectations silently updating.
 - **Strict xfails** (`xfail(strict=True)`) assert behaviour we *want* for known defects, so a fix
   flips them green and an accidental fix fails loudly as XPASS. Never pin a golden number over a
   known defect.
@@ -207,10 +216,8 @@ Write outputs to pytest's `tmp_path`, not the repo root. Skip the heavy cases wi
 
 ### Known defects pinned by tests
 
-- **Storage draw is priced twice in `multi_period` mode** — the objective charges the storage value
-  per MWh generated *and* subtracts a terminal storage value, which the continuity equality links,
-  giving an effective cost of `storval[h] + storval[last]*dt`. Affects every horizon, not just
-  `horizon_hours=1`. Pinned by `test_sim_single_period_rolling_equiv.py`.
+- **`horizon_hours=1` differs from single-period with flexible load**, which is bounded in one and
+  not the other. Pinned in `test_sim_single_period_rolling_equiv.py`.
 
 **Don't repeat a constraint row as a variable bound.** If a limit is both a row whose dual is read
 and an identical `setlb`/`setub` on the variable, the solver prices it on the bound (reduced cost)

@@ -33,6 +33,7 @@ import pandas as pd
 import pyomo.environ as pyo
 
 from ... import constants as const
+from . import data as rt_data
 
 
 def append_payload(rt, payload, *, warning_context=""):
@@ -164,8 +165,14 @@ def append_hourly_debug(lp, rt, timestep):
             "pump_mw": (_val(lp.model.varPump[i]) or 0.0) if int(i) in lp.model.s_gen_pump else 0.0,
             "gen_target_mw": _val(lp.model.p_rt_target[i]) or 0.0,
             "pump_target_mw": 0.0,
-            "gen_cost_mwh": _val(lp.model.p_gen_cost[i]) or 0.0,
-            "pump_cost_mwh": (_val(lp.model.p_genpump_cost[i]) or 0.0) if int(i) in lp.model.s_gen_pump else 0.0,
+            "gen_cost_mwh": rt_data.marginal_cost(lp, i),
+            # Net value of pumping 1 MWh: the storage value of what reaches storage,
+            # less the pumping cost.
+            "pump_cost_mwh": (
+                (_val(lp.model.p_storage_value[i]) or 0.0) * eff - (_val(lp.model.p_genpump_cost[i]) or 0.0)
+                if int(i) in lp.model.s_gen_pump
+                else 0.0
+            ),
             "rt_storage_target_ref": str(ref_target) if isinstance(ref_target, str) else "",
             "soc_da_target_profile": float(soc_da_target) if soc_da_target is not None else None,
             "da_ref_storage_balance_lhs_mwh": float(lhs_da_mwh),

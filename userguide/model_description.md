@@ -26,6 +26,15 @@ is higher than the storage value at any given time. This is identical to
 saying that a generator with storage will produce power if the nodal
 price is higher than the storage value.
 
+In the optimisation, the storage value is the value of the energy left
+in the storage at the end of the time step (or, in multi-period mode, at
+the end of the optimisation window). Drawing 1 MWh from the storage
+therefore costs its storage value, through the storage balance, and
+`fuelcost` comes on top as an operating cost that does not depend on the
+filling level (zero for most storage plants). Energy that is spilled
+loses its storage value in the same way, so inflow is spilled only when
+the storage is full.
+
 Storage value curves are given as input, as functions of storage
 filling level and time. If the storage is nearly full, the storage value
 is low, since adding to the storage may lead to energy spillage. If the
@@ -178,22 +187,29 @@ The implementation of pumping is illustrated in
 produce power, reducing the storage filling level. If the price is below
 the storage value the generator will be idle, allowing the storage to
 fill up (due to inflow). If the price is also lower than the storage
-value minus a certain dead-band value, the pump will add energy to the
-storage, increasing the filling level.
+value times the pumping efficiency, minus a certain dead-band value, the
+pump will add energy to the storage, increasing the filling level.
 
-The dead-band ensures that the generator-pumping system doesn't
-continuously alternate between generating and pumping, and indirectly
-takes into account the losses associated with pumping.
+Pumping 1 MWh puts $\eta_\text{pump}$ MWh into the storage, so it is worth
+the storage value times the efficiency; the pumping losses are accounted
+for by the efficiency. The dead-band is a cost per MWh pumped on top of
+that, which ensures that the generator-pumping system doesn't
+continuously alternate between generating and pumping.
 
 ### Storage dynamics
 
 The energy in the storage $E$ is given by the differential equation
 $$\frac{dE}{dt} = P_\text{inflow} - P_\text{output} + \eta_\text{pump}P_\text{pump}, 
     \quad 0 \le E \le E_\text{max},$$ where $E_\text{max}$ is the
-maximum capacity of the storage. Discretised, this equation is written
-$$E(t+\Delta t) = \max[\min[E(t) 
-    + \Delta t (P_\text{inflow} - P_\text{output} + P_\text{pump}), 
-    E_\text{max}],0]$$
+maximum capacity of the storage. Discretised, and including energy
+that is spilled, this equation is written
+$$E(t+\Delta t) = E(t)
+    + \Delta t (P_\text{inflow} - P_\text{output} + \eta_\text{pump}P_\text{pump}
+    - P_\text{spill}), \quad 0 \le E(t+\Delta t) \le E_\text{max}.$$
+It is part of the optimisation problem, with the storage level and the
+spilled power as variables. Spilled power is limited to `spill_cap_frac`
+times the generator capacity; beyond that, energy that fits neither in
+the storage nor through the generator is penalised like load shedding.
 
 ## Power consumption
 
@@ -459,25 +475,41 @@ $n\in \mathcal{N}$, the set of nodes; $j\in \mathcal{B}$, the set of AC
 and DC branches.
 
 The objective of the optimisation is expressed in terms of an objective
-function, which in our case is 
+function, which in our case is
 
-$$\begin{split} 
+$$\begin{split}
    F = & \sum_{g\in \mathcal{G}} c_g^\text{gen} P_g^\text{gen}
-       - \sum_{p\in \mathcal{P}} c_p^\text{pump} P_p^\text{pump}
+       + \sum_{p\in \mathcal{P}} c_p^\text{pump} P_p^\text{pump}
        \\\\ &
        - \sum_{f\in \mathcal{F}} c_f^\text{flex} P_c^\text{flex}
-       + \sum_{n\in \mathcal{N}} c^\text{shed} P_n^\text{shed},
-\end{split} %\label{eq:objectivefunction} $$ 
+       + \sum_{n\in \mathcal{N}} c^\text{shed} P_n^\text{shed}
+       - \sum_{s\in \mathcal{S}} \frac{v_s E_s}{\Delta t},
+\end{split} %\label{eq:objectivefunction} $$
 
-where $c_g$ is the cost of generator $g$,
-$c_p^\text{pump}$ is the cost of pump $p$, $c_f^\text{flex}$ is the cost
-of flexible load $p$, and $c^\text{shed}$ is the fixed cost of load
-shedding. As discussed in
-the [\[section on generator input data\]](./input_data.md#generators),
-these cost parameters are determined by the fuel price for generators 
-without storage, and by storage values in the other cases.
-The negative sign in front of pumping and flexible load
-means that increasing their value reduces the objective function.
+where $c_g$ is the cost of generator $g$ (`fuelcost`, for generators
+with and without storage), $c_p^\text{pump}$ is the cost of pumping
+(`pump_deadband`), $c_f^\text{flex}$ is the value of flexible load $f$,
+and $c^\text{shed}$ is the fixed cost of load shedding. The last term is
+the value of the energy $E_s$ left in storage $s$ at the end of the time
+step, with $v_s$ its storage value, and $\mathcal{S}$ the set of
+generators with storage. It is the only place stored energy is valued:
+through the storage balance (see above), generating from storage,
+spilling, and pumping all change $E_s$ and so are priced at the storage
+value. A small cost on spilled power, and the load-shedding cost on
+energy that overflows the storage, are left out of $F$ here for brevity.
+
+Every term in $F$ is a cost rate in €/h (MW times €/MWh), whatever the
+length $\Delta t$ of the time step. The storage value term is an amount of
+money, so it is divided by $\Delta t$ to make it a rate too. This keeps
+the nodal prices, which are the sensitivities of $F$ to demand, in €/MWh
+for any time step length, and the objective value stored with the
+results is a cost rate in €/h. In that stored value, the value of the
+energy left in storage is replaced by the value of the energy taken from
+it during the time step, so that it is comparable from one time step to
+the next.
+
+The negative sign in front of flexible load
+means that increasing it reduces the objective function.
 However, the energy balance constraint (see below) implies that power
 for pumping or flexible load must be compensated by generation
 elsewhere. So whether it is beneficial therefore depends on the cost of
@@ -486,7 +518,7 @@ that alternative generation.
 The [\[variables\]](#eq_variables) are not free, but constrained through upper
 and lower bounds, and through equations expressing relationships between
 them. Referring to these constraints as $C_m$, the optimisation problem
-is formulated in the standard Linear Programming (LP) form 
+is formulated in the standard Linear Programming (LP) form
 
 $$ \min F = \min \sum c_i X_i \quad \text{such that} \quad  
 \\{C_1,\dots,C_7\\}. %\label{eq:optimisation}

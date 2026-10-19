@@ -59,25 +59,42 @@ def extract_and_store(lp, m, wd, results, duals, commit_hours=None):
         Ploadshed = aggregate_to_nodes(grid, ctx.load_ids, lambda j: float(pyo.value(m.varLoadShed[j, hi]) or 0.0))
         Pdumpload = aggregate_to_nodes(grid, ctx.load_ids, lambda j: float(pyo.value(m.varDumpLoad[j, hi]) or 0.0))
 
-        # Per-hour objective (cost for this timestep only)
+        # Storage levels, at the start and end of this hour
+        stor_levels = [float(pyo.value(m.varStorage[i, hi]) or 0.0) for i in storage_gen_list]
+        if hi == 0:
+            stor_prev = [wd.storage_ini[i] for i in storage_gen_list]
+        else:
+            stor_prev = [float(pyo.value(m.varStorage[i, hi - 1]) or 0.0) for i in storage_gen_list]
+        spill = [float(pyo.value(m.varSpill[i, hi]) or 0.0) for i in storage_gen_list]
+        overflow = [float(pyo.value(m.varStorageOverflow[i, hi]) or 0.0) for i in storage_gen_list]
+
+        # Per-hour objective (cost rate for this timestep only), defined as the
+        # single-period extractor does: the value of the energy taken from storage
+        # this hour stands in for the terminal value of the energy left in it.
         obj_h = (
             sum(Pgen[gi] * wd.gen_cost_h.get((hi, gen_list[gi]), 0.0) for gi in range(len(gen_list)))
-            - sum(Ppump[pi] * wd.pump_cost_h.get((hi, gen_pump_list[pi]), 0.0) for pi in range(len(gen_pump_list)))
+            + sum(Ppump[pi] * wd.pump_cost_h.get((hi, gen_pump_list[pi]), 0.0) for pi in range(len(gen_pump_list)))
             - sum(Pflexload[fi] * wd.flexload_cost_h.get((hi, flex_list[fi]), 0.0) for fi in range(len(flex_list)))
             + sum(float(pyo.value(m.varLoadShed[j, hi]) or 0.0) * const.loadshedcost for j in ctx.load_ids)
             + sum(float(pyo.value(m.varDumpLoad[j, hi]) or 0.0) * const.loadshedcost for j in ctx.load_ids)
+            + sum(overflow) * const.loadshedcost
+            + sum(spill) * const.spillcost
+            + sum(
+                wd.terminal_storval.get(i, 0.0) * (stor_prev[k] + wd.inflow_h.get((hi, i), 0.0) * dt - stor_levels[k])
+                for k, i in enumerate(storage_gen_list)
+            )
+            / dt
         )
 
-        # Storage levels and spilled energy
-        stor_levels = []
-        for i in storage_gen_list:
-            stor_levels.append(float(pyo.value(m.varStorage[i, hi]) or 0.0))
-
-        # Spilled energy per generator (all generators, not just storage)
+        # Spilled energy per generator. As in the single-period path, a generator
+        # with zero storage capacity spills whatever inflow it does not use (e.g.
+        # curtailed wind), and one with infinite capacity spills nothing.
         energy_spilled = np.zeros(len(gen_list))
-        for i in storage_gen_list:
-            spill_val = float(pyo.value(m.varSpill[i, hi]) or 0.0)
-            energy_spilled[gen_position[i]] = spill_val * dt
+        for gi, i in enumerate(gen_list):
+            if i not in wd.gen_storage_set and grid.generator.loc[i, "storage_cap"] == 0:
+                energy_spilled[gi] = (wd.inflow_h.get((hi, i), 0.0) - Pgen[gi]) * dt
+        for k, i in enumerate(storage_gen_list):
+            energy_spilled[gen_position[i]] = (spill[k] + overflow[k]) * dt
 
         # Branch capacity sensitivity (dual of capacity constraint).
         # NOTE: cAcFlowUb/cAcFlowLb/cDcFlowUb are declared as
@@ -117,7 +134,7 @@ def extract_and_store(lp, m, wd, results, duals, commit_hours=None):
                     d = 0.0
             senseN.append(abs(d / const.baseMVA))
 
-        storageprice = [wd.gen_cost_h.get((hi, i), 0.0) for i in storage_gen_list]
+        storageprice = [wd.terminal_storval.get(i, 0.0) for i in storage_gen_list]
         flexload_storagelevel = [float(pyo.value(m.varFlexStorage[j, hi]) or 0.0) for j in flex_list]
         flexload_marginalprice = [wd.flexload_cost_h.get((hi, j), 0.0) for j in flex_list]
 

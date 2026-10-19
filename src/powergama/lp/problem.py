@@ -182,7 +182,9 @@ class LpProblem:
             ext.prepare(self, grid)
 
         # 4. Build the Pyomo model. Order is load-bearing -- see single_period.build.
-        sp_build.build_model(self.model, grid, self._ctx, self._cfg, self._extensions)
+        #    The term names tell result extraction whether an extension removed the
+        #    storage value from the objective.
+        self._objective_term_names = sp_build.build_model(self.model, grid, self._ctx, self._cfg, self._extensions)
 
     def __getattr__(self, name):
         """Fall through to the config, then the grid context, then the Pyomo model.
@@ -384,8 +386,9 @@ class LpProblem:
         # (seems not)
 
         # 1. p_gen_pmin, p_gen_pmax => gen maxmin
+        #    p_pump_pmax => cPump; p_storage_prev, p_storage_inflow => cStorCont
         # 2. p_demand, p_branch_ac_power_loss, p_branch_dc_power_loss => powerbalance
-        # 3. p_gen_cost, p_genpump_cost, p_loadflex_cost => OBJ
+        # 3. p_storage_value, p_loadflex_cost => OBJ
 
         # 1.
         for c in self.model.cGenMaxLimit.values():
@@ -399,6 +402,10 @@ class LpProblem:
             opt.add_constraint(c)
         for c in self.model.cGenMinLimit.values():
             opt.add_constraint(c)
+        for con in (self.model.cPump, self.model.cStorCont):
+            for c in con.values():
+                opt.remove_constraint(c)
+                opt.add_constraint(c)
 
         # 2.
         for c in self.model.cPowerbalance.values():
@@ -648,9 +655,11 @@ class LpProblem:
             # This call is required for fault scenario simulation. Does nothing here.
             self._update_progress(timestep, len(timesteps_to_solve))
 
+            # Evaluated once: on a large grid the objective expression is slow to evaluate.
+            self._objective_value = float(self.model.OBJ())
             if int(timestep) in self._timestep_day_hour:
                 day_idx, hour_in_day = self._timestep_day_hour[int(timestep)]
-                obj_value = float(self.model.OBJ())
+                obj_value = self._objective_value
                 self._daily_objective_trace[day_idx] = self._daily_objective_trace.get(day_idx, 0.0) + obj_value
                 self._hourly_objective_trace.append((int(timestep), int(day_idx), int(hour_in_day), obj_value))
 

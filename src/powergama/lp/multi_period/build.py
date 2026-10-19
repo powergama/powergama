@@ -4,11 +4,10 @@ Every coefficient is a constant computed by :mod:`.data` before the model is
 built, so there are no mutable Params here at all -- the opposite of the
 single-period model, which is built once and mutated each timestep.
 
-A window of length 1 ought to be the single-period problem. It is not, today:
-storage draw is priced twice here (per MWh generated *and* through a terminal
-storage value that the continuity equality links), ramp limits bind differently
-for energy-limited generators, and flexible load is hard-bounded here but
-unbounded there. See userguide/model_formulations.md.
+A window of length 1 ought to be the single-period problem. Storage is now
+modelled the same way in both, but ramp limits bind differently for
+energy-limited generators, and flexible load is hard-bounded here but unbounded
+there. See userguide/model_formulations.md.
 """
 
 import numpy as np
@@ -35,8 +34,13 @@ def build_window_model(lp, wd):
     # ── variables ─────────────────────────────────────────────────
     m.varGeneration = pyo.Var(m.s_gen, m.s_h, within=pyo.NonNegativeReals)
     m.varPump = pyo.Var(m.s_gen_pump, m.s_h, within=pyo.NonNegativeReals)
-    m.varStorage = pyo.Var(m.s_gen_storage, m.s_h, within=pyo.NonNegativeReals)
-    m.varSpill = pyo.Var(m.s_gen_storage, m.s_h, within=pyo.NonNegativeReals)
+    m.varStorage = pyo.Var(
+        m.s_gen_storage, m.s_h, within=pyo.NonNegativeReals, bounds=lambda m, i, h: (0, wd.storage_cap[i])
+    )
+    m.varSpill = pyo.Var(
+        m.s_gen_storage, m.s_h, within=pyo.NonNegativeReals, bounds=lambda m, i, h: (0, wd.spill_cap_mw[i])
+    )
+    m.varStorageOverflow = pyo.Var(m.s_gen_storage, m.s_h, within=pyo.NonNegativeReals)
     m.varLoadShed = pyo.Var(m.s_load, m.s_h, within=pyo.NonNegativeReals)
     m.varDumpLoad = pyo.Var(m.s_load, m.s_h, within=pyo.NonNegativeReals)
     m.varFlexLoad = pyo.Var(m.s_load_flex, m.s_h, within=pyo.NonNegativeReals)
@@ -50,23 +54,50 @@ def build_window_model(lp, wd):
     m.varDcBranchFlow = pyo.Var(m.s_branch_dc, m.s_h, within=pyo.Reals)
     m.varVoltageAngle = pyo.Var(m.s_node, m.s_h, within=pyo.Reals, initialize=0.0)
 
-    # ── objective: sum over all hours + end-of-day terminal storage value ─
+    # ── objective: costs over all hours, less the value of storage at the end ─
+    # Units as in the single-period objective (single_period.build.objective_terms):
+    # every per-hour term is a cost rate in EUR/h, so the duals are prices in
+    # EUR/MWh, and the terminal storage value, an amount in EUR, is divided by dt.
+    # Storage is valued only there: drawing 1 MWh from storage costs its storage
+    # value through the continuity equality, and nothing per MWh generated.
     def _obj_rule(m):
         cost = 0
         for h in range(wd.H):
             cost += sum(m.varGeneration[i, h] * wd.gen_cost_h.get((h, i), 0.0) for i in m.s_gen)
-            cost -= sum(m.varPump[i, h] * wd.pump_cost_h.get((h, i), 0.0) for i in m.s_gen_pump)
+            cost += sum(m.varPump[i, h] * wd.pump_cost_h.get((h, i), 0.0) for i in m.s_gen_pump)
             cost -= sum(m.varFlexLoad[j, h] * wd.flexload_cost_h.get((h, j), 0.0) for j in m.s_load_flex)
             cost += sum(m.varLoadShed[j, h] * const.loadshedcost for j in m.s_load)
             cost += sum(m.varDumpLoad[j, h] * const.loadshedcost for j in m.s_load)
-        # Terminal storage value: reward conservation of stored energy at end of day.
-        # Without this, the solver has no incentive to leave storage full at day-end,
-        # which would drain it to zero every day and destroy inter-day continuity.
-        # Subtracting here (minimisation) means higher end storage → lower effective cost.
-        cost -= sum(wd.terminal_storval.get(i, 0.0) * m.varStorage[i, wd.H - 1] for i in m.s_gen_storage)
+            cost += sum(m.varStorageOverflow[i, h] * const.loadshedcost for i in m.s_gen_storage)
+            cost += sum(m.varSpill[i, h] * const.spillcost for i in m.s_gen_storage)
+        cost -= sum(wd.terminal_storval.get(i, 0.0) * m.varStorage[i, wd.H - 1] for i in m.s_gen_storage) / wd.dt
         return cost
 
     m.OBJ = pyo.Objective(rule=_obj_rule, sense=pyo.minimize)
+
+    # ── ramp limits on the first hour, as the single-period path applies them ─
+    # The first hour's availability is known before the solve, so the
+    # single-period guard can be reproduced exactly: the ramp-up limit caps the
+    # availability, and where that cap is below the ramp-down floor or the pmin
+    # floor, the floor gives way rather than making the window infeasible -- an
+    # energy-limited generator that runs out cannot keep to its ramp-down limit.
+    # Later hours have no such guard; their availability depends on the solve.
+    def _ramp_pu(ramp, i):
+        if ramp is None or lp._disable_nuclear_ramp_profile_conflict[int(i)] or np.isnan(lp._gen_prev[i]):
+            return np.nan
+        return float(ramp[i])
+
+    def _first_hour_ceiling(i):
+        """Upper limit on generation in hour 0: availability, then the ramp-up limit."""
+        infl = wd.inflow_h.get((0, i), 0.0)
+        if i in wd.gen_storage_set:
+            ceiling = min(max(0.0, infl + wd.storage_ini[i] / wd.dt), wd.capacity_h.get((0, i), 0.0))
+        else:
+            ceiling = infl
+        ramp_up = _ramp_pu(lp._ramp_up_pu, i)
+        if not np.isnan(ramp_up):
+            ceiling = min(ceiling, lp._gen_prev[i] + ramp_up * float(lp._ramp_cap_mw[i]))
+        return max(ceiling, 0.0)
 
     # ── generation bounds (non-storage) ───────────────────────────
     def _gen_ub_ns_rule(m, i, h):
@@ -81,7 +112,10 @@ def build_window_model(lp, wd):
             return pyo.Constraint.Skip
         infl = wd.inflow_h.get((h, i), 0.0)
         pmin = wd.pmin_h.get((h, i), 0.0)
-        return m.varGeneration[i, h] >= max(0.0, min(infl, pmin))
+        floor = max(0.0, min(infl, pmin))
+        if h == 0:
+            floor = min(floor, _first_hour_ceiling(i))
+        return m.varGeneration[i, h] >= floor
 
     m.cGenLbNs = pyo.Constraint(m.s_gen, m.s_h, rule=_gen_lb_ns_rule)
 
@@ -102,32 +136,27 @@ def build_window_model(lp, wd):
     def _gen_lb_stor_rule(m, i, h):
         infl = wd.inflow_h.get((h, i), 0.0)
         pmin = wd.pmin_h.get((h, i), 0.0)
-        return m.varGeneration[i, h] >= max(0.0, min(infl, pmin))
+        floor = max(0.0, min(infl, pmin))
+        if h == 0:
+            floor = min(floor, _first_hour_ceiling(i))
+        return m.varGeneration[i, h] >= floor
 
     m.cGenLbStor = pyo.Constraint(m.s_gen_storage, m.s_h, rule=_gen_lb_stor_rule)
 
-    # ── storage capacity upper bound ───────────────────────────────
-    def _stor_cap_rule(m, i, h):
-        return m.varStorage[i, h] <= wd.storage_cap[i]
-
-    m.cStorCap = pyo.Constraint(m.s_gen_storage, m.s_h, rule=_stor_cap_rule)
-
     # ── KEY: storage continuity (equality with explicit spill) ─────
-    # storage[h] = storage_prev + (inflow - gen + pump*eff - spill) * wd.dt
+    # storage[h] = storage_prev + (inflow - gen + pump*eff - spill - overflow) * wd.dt
+    # Storage is bounded to [0, capacity] and spill to spill_cap_frac of installed
+    # capacity, as variable bounds; overflow is the penalised remainder.
     def _stor_cont_rule(m, i, h):
         prev_s = wd.storage_ini[i] if h == 0 else m.varStorage[i, h - 1]
         infl = wd.inflow_h.get((h, i), 0.0)
         eff = wd.pump_eff_g.get(i, 1.0) if i in wd.gen_pump_set else 1.0
         pump_term = m.varPump[i, h] * eff if i in wd.gen_pump_set else 0
-        return m.varStorage[i, h] == (prev_s + (infl - m.varGeneration[i, h] + pump_term - m.varSpill[i, h]) * wd.dt)
+        return m.varStorage[i, h] == (
+            prev_s + (infl - m.varGeneration[i, h] + pump_term - m.varSpill[i, h] - m.varStorageOverflow[i, h]) * wd.dt
+        )
 
     m.cStorCont = pyo.Constraint(m.s_gen_storage, m.s_h, rule=_stor_cont_rule)
-
-    # Limit spill power by per-generator fraction of installed generator capacity.
-    def _spill_cap_rule(m, i, h):
-        return m.varSpill[i, h] <= wd.spill_cap_mw.get(i, 0.0)
-
-    m.cSpillCap = pyo.Constraint(m.s_gen_storage, m.s_h, rule=_spill_cap_rule)
 
     # ── pump bounds ────────────────────────────────────────────────
     # pump[i,h]*eff*wd.dt + storage_prev <= wd.storage_cap  (no spurious pump credit)
@@ -174,7 +203,8 @@ def build_window_model(lp, wd):
                 prev = lp._gen_prev[i]
                 if np.isnan(prev):
                     return pyo.Constraint.Skip
-                return m.varGeneration[i, 0] >= prev - float(ramp_pu) * float(lp._ramp_cap_mw[i])
+                floor = min(prev - float(ramp_pu) * float(lp._ramp_cap_mw[i]), _first_hour_ceiling(i))
+                return m.varGeneration[i, 0] >= floor
             return m.varGeneration[i, h] >= m.varGeneration[i, h - 1] - float(ramp_pu) * float(lp._ramp_cap_mw[i])
 
         m.cRampDn = pyo.Constraint(m.s_gen, m.s_h, rule=_ramp_dn_rule)
