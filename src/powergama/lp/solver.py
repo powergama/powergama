@@ -1,10 +1,10 @@
-"""Solver construction for the two solve paths.
+"""Solver construction.
 
 Nothing here knows anything about the power system model beyond needing a
 ``ConcreteModel`` to hand to a persistent solver, so it is the one piece of
 ``LpProblem`` that genuinely stands alone.
 
-Both paths apply the same ``POWERGAMA_HIGHS_*`` environment variables to HiGHS,
+HiGHS takes its options from the ``POWERGAMA_HIGHS_*`` environment variables,
 through `_highs_env_options`:
 
 ======================================  ============================================
@@ -52,7 +52,7 @@ def _highs_env_options(opt):
 
 
 def create_solver(solver, model, solver_path=None, solve_args=None):
-    """Build the solver for the single-period timestep loop.
+    """Build the solver for the window loop: one per model.
 
     `solve_args` is mutated for gurobi_persistent, which consumes
     symbolic_solver_labels once at set_instance time rather than per solve.
@@ -112,6 +112,21 @@ def create_solver(solver, model, solver_path=None, solve_args=None):
     return opt
 
 
+def discard_warm_start(opt):
+    """Make the next solve start from scratch rather than from the last solution.
+
+    A persistent HiGHS solver starts each solve from the previous one's basis, which
+    also means it skips presolve. That pays off between consecutive timesteps, which
+    differ little, but not between multi-period windows a whole window apart: on the
+    Europe 2014 case a warm-started 24-hour window took about five times as long as
+    a fresh, presolved one. Other solvers are left alone.
+    """
+    if isinstance(opt, appsi.solvers.highs.Highs):
+        highs = getattr(opt, "_solver_model", None)
+        if highs is not None:
+            highs.clearSolver()
+
+
 def create_dual_handle(opt, model):
     """Return the mapping that result extraction reads duals from.
 
@@ -129,22 +144,3 @@ def create_dual_handle(opt, model):
         return {}
     model.dual = pyo.Suffix(direction=pyo.Suffix.IMPORT)
     return model.dual
-
-
-def create_window_solver(solver_name):
-    """Build the APPSI HiGHS solver for one multi-period window.
-
-    A fresh instance per window: the model is rebuilt each time, so there is
-    nothing for a persistent solver to hold on to.
-    """
-    # Only APPSI HiGHS supports dual extraction here.
-    if solver_name != "appsi_highs":
-        warnings.warn(
-            f"multi_period mode with solver='{solver_name}': only 'appsi_highs' supports "
-            "dual extraction for nodal prices. Proceeding but prices may be zero.",
-            UserWarning,
-        )
-
-    day_opt = appsi.solvers.highs.Highs()
-    _highs_env_options(day_opt)
-    return day_opt

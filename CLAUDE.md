@@ -38,22 +38,21 @@ A simulation is a pipeline of four objects:
   `storval_filling_ref`, and the optional `pmax_ref`/`pmin_ref`/`rt_target_ref`), so a string in a
   grid-data column must match a column in `data.profiles`.
 
-- **[lp/](src/powergama/lp/)** is the optimisation package (`powergama.LpProblem`). It is organised
-  **by formulation**, so the two ways of posing the problem sit side by side and can be read
-  against each other — merging them is the intended direction of travel. The old
+- **[lp/](src/powergama/lp/)** is the optimisation package (`powergama.LpProblem`). Both
+  simulation modes solve **one formulation**, an LP over a window of `H` timesteps
+  (`lp/formulation/`): single-period is `H=1`, multi-period is `H=horizon_hours`. The old
   `LpProblemPyomo` module is gone; import `LpProblem` from `powergama` or `powergama.lp`.
 
   | module | holds |
   |---|---|
   | [lp/problem.py](src/powergama/lp/problem.py) | the `LpProblem` class: construction order, `solve()`, mutable state, the subclass seams |
-  | [lp/config.py](src/powergama/lp/config.py) | `LpConfig` — validated constructor arguments, and the mode guards |
+  | [lp/config.py](src/powergama/lp/config.py) | `LpConfig` — validated constructor arguments, the window (`window_hours`, `window_commit`) and the guards |
   | [lp/context.py](src/powergama/lp/context.py) | `GridContext` — everything derived once from `GridData` |
   | [lp/solver.py](src/powergama/lp/solver.py) | solver construction, HiGHS env vars, the dual handle |
-  | [lp/storage_value.py](src/powergama/lp/storage_value.py) | flexible-load valuation, used by both formulations |
-  | [lp/extension.py](src/powergama/lp/extension.py) | `ModelExtension` — the hooks an optional addition to the single-period model plugs into |
+  | [lp/storage_value.py](src/powergama/lp/storage_value.py) | storage and flexible-load valuation |
+  | [lp/extension.py](src/powergama/lp/extension.py) | `ModelExtension` — the hooks an optional addition to the model plugs into |
   | [lp/objective_trace.py](src/powergama/lp/objective_trace.py) | optional per-timestep objective CSV (`POWERGAMA_OBJECTIVE_TRACE_CSV`) |
-  | `lp/single_period/{build,data,extract}.py` | one LP per timestep |
-  | `lp/multi_period/{build,data,extract}.py` | a joint LP per window |
+  | `lp/formulation/{build,data,extract}.py` | the LP over a window: the model, the data written into it for each window, and the results read out |
   | `lp/rt/{extension,context,build,data,locks,diagnostics}.py` | `RtExtension`, the balancing extension, and everything only it uses |
 
   **`cfg` and `ctx` are what make the builders plain functions.** Construction code reads nothing
@@ -62,14 +61,18 @@ A simulation is a pipeline of four objects:
   eight-argument signature there would be a longer way of spelling `self`. That asymmetry is
   deliberate.
 
-  **The model is built once in `__init__` and then mutated in place** by `_updateLpProblem(timestep)`
-  on every iteration — parameters for inflow, demand, storage values and bounds are rewritten rather
-  than the model rebuilt. Storage filling level lives in `self._storage` / `self._storage_flexload`
-  (seed them with the public `set_storage_state()`) and is what makes the problem sequential.
-  `self._gen_prev` carries previous-timestep output for ramp constraints.
-  `single_period.data.update_timestep` is vectorised and writes Params with
-  `store_values(check=False)`: it runs every timestep, and per-element pandas lookups and Param
-  writes used to cost more than the solve on the Europe case. Keep it column-wise.
+  **The model is built once in `__init__` and then mutated in place** by
+  `_updateLpProblem(timesteps)` for every window — parameters for inflow, demand, storage values
+  and bounds are rewritten rather than the model rebuilt. Only a multi-period window cut short at
+  the end of the run gets a second model, for its length (`_use_window_model`). Every component
+  is indexed by hour in the window, `[·, h]`; single-period is `h = 0`. The window's first hour
+  takes the simulation state through Params; later hours are coupled to the hour before through
+  constraints that only exist for `h ≥ 1`, so `H=1` is exactly the old single-period LP. Storage
+  filling level lives in `self._storage` / `self._storage_flexload` (seed them with the public
+  `set_storage_state()`) and is what makes the problem sequential. `self._gen_prev` carries
+  previous-timestep output for ramp constraints. `formulation.data.update_window` is vectorised
+  and writes Params with `store_values(check=False)`: per-element pandas lookups and Param writes
+  used to cost more than the solve on the Europe case. Keep it column-wise.
 
   Four things to know:
   - `__getattr__` resolves names against `_cfg`, then `_ctx`, then the model — so `lp._lossmethod`,
@@ -80,16 +83,22 @@ A simulation is a pipeline of four objects:
   - Inside a constraint rule, Pyomo components come off the rule's `model` argument and everything
     else off `ctx`/`cfg`/`grid`. `tests/test_model_invariants.py` enforces both directions across
     the whole package.
-  - `self.model`'s object identity must survive the whole of `solve()`: APPSI's incremental update
-    and `gurobi_persistent.set_instance` key off it.
+  - Between multi-period windows the HiGHS solver's state is cleared
+    (`solver.discard_warm_start`): warm-starting a 24-hour window from the previous day's basis
+    skips presolve and was about 5× slower than a fresh solve on the Europe case. Single-period
+    keeps the warm start, which pays off between consecutive timesteps.
+  - A solver must only ever be handed the model it was created for: APPSI's incremental update
+    and `gurobi_persistent.set_instance` key off the object. Each window length keeps its own
+    model and solver in `self._window_models`; `self.model` is the active one.
   - **Declaration order is load-bearing.** Pyomo writes LP columns in the order components are
-    added, so `single_period.build.build_model()`'s sequence is not arbitrary. Extensions declare
-    theirs after the core's, in each phase.
+    added, so `formulation.build.build_model()`'s sequence is not arbitrary: it is what keeps
+    single-period results bit-identical to before the merge. Components only windows of `H > 1`
+    have are declared after the per-hour ones, and extensions declare theirs after the core's, in
+    each phase.
 
 - **[timestep_result.py](src/powergama/timestep_result.py)** holds `TimestepResult`, the dataclass
-  that names the 21-field LP→database contract. Both solve paths build one and call `.store(res)`,
-  so `Results.addResultsFromTimestep` has a single caller-side definition. The extraction *bodies*
-  stay per-mode — they read from different objects — so this shares the contract, not the code.
+  that names the 21-field LP→database contract. `formulation.extract.store_window` builds one per
+  committed timestep and calls `.store(res)`.
 
 - **[Results.py](src/powergama/Results.py)** is a thin analysis/plotting layer over the database.
   `ResultsBaseClass` is the write path (no plotting, importable without heavy plot deps); `Results`
@@ -107,16 +116,17 @@ A simulation is a pipeline of four objects:
 Selected via `LpProblem` constructor arguments (see [usage.md](userguide/usage.md)):
 
 1. **Single-period** (`objective_mode="single_period"`, default) — one LP per timestep, solved
-   sequentially, storage state passed forward. Built by `lp/single_period/`.
-2. **Multi-period** (`objective_mode="multi_period"`) — a joint LP over `horizon_hours`, of which
-   only the first `commit_hours` are committed (rolling horizon). Built by `lp/multi_period/`.
+   sequentially, storage state passed forward: windows of one timestep, committing one.
+2. **Multi-period** (`objective_mode="multi_period"`) — an LP over `horizon_hours`, of which
+   only the first `commit_hours` are committed (rolling horizon). Losses and extensions need
+   `horizon_hours=1`.
 3. **Balancing / real-time** (`extensions=[RtExtension(...)]`, from `powergama.lp.rt`) — a
    single-period solve with penalties on deviation from a day-ahead schedule supplied through
    `rt_target_ref` / `rt_storage_target_ref` profile columns and the DA lock parquets
    (`lp/rt/locks.py`). It is the second step after a day-ahead run, and not a third formulation:
-   `RtExtension` plugs into the single-period one through the `ModelExtension` hooks
-   (`lp/extension.py`), including editing the objective's named terms. Rejected in multi-period
-   mode, which has no hooks. **The core never names RT** — RT settings, state, locks and
+   `RtExtension` plugs into the model through the `ModelExtension` hooks
+   (`lp/extension.py`), including editing the objective's named terms of each hour. Windows of
+   one timestep only (`supports_multi_period=False`). **The core never names RT** — RT settings, state, locks and
    components all live on the extension, and `tests/test_rt_isolation.py` fails on any RT
    reference in `lp/` outside `lp/rt/`. A new RT feature goes behind a hook; if no hook fits, add
    a general one to `ModelExtension` rather than an RT special case in the core.
@@ -124,29 +134,29 @@ Selected via `LpProblem` constructor arguments (see [usage.md](userguide/usage.m
 The mode was called `"hourly"` until the rename; a timestep need not be an hour. The old spelling
 raises, with no alias.
 
-**The two formulations are independent** — neither reads the other's model — but they model
-storage, flexible load and ramp limits identically, and at `horizon_hours=1` give the same
-results (`test_sim_single_period_rolling_equiv.py`). Changes to constraints usually need making in
-both.
-[model_formulations.md](userguide/model_formulations.md) maps them onto each other component by
-component and records where they disagree. In short:
+**There is one formulation** (#42), described component by component in
+[model_formulations.md](userguide/model_formulations.md). In short:
 
-- **Storage is valued only at the end of the LP** (issue #40): no cost per MWh drawn, and
+- **Storage is valued only at the end of the window** (issue #40): no cost per MWh drawn, and
   `−v·S_end/dt` in the objective, `v` from `storage_value.generator_storage_values` at the
-  filling level the LP starts from. Single-period re-prices every timestep; `multi_period`
+  filling level the window starts from. Single-period re-prices every timestep; `multi_period`
   freezes `v` for the window, so it does not respond to the level within a window.
-- **Flexible load is a bounded reservoir in both**, `varFlexStorage` in `[0, capacity]` (no floor
-  where `flex_on_off > 1`), valued per MWh consumed by `lp/storage_value.py`.
-- **Ramp limits for energy-limited generators.** Single-period applies `pmin_now = min(pmin_now,
-  pmax_now)`, dropping the ramp-down floor when the availability bound is tighter; `multi_period`
-  does the same in hour 0 of each window, and gives later hours a ramp-down slack priced at
-  `loadshedcost` (`varRampSlack`). Scope ramp tests to energy-unlimited generators.
+- **Flexible load is a bounded reservoir**, `varFlexStorage` in `[0, capacity]` (no floor where
+  `flex_on_off > 1`), valued per MWh consumed by `lp/storage_value.py`.
+- **Ramp limits for energy-limited generators.** The first hour of a window applies
+  `pmin_now = min(pmin_now, pmax_now)`, dropping the ramp-down floor when the availability bound
+  is tighter; later hours have a ramp-down slack priced at `loadshedcost` (`varRampSlack`). Scope
+  ramp tests to energy-unlimited generators. `ramp_daily_reset` releases at absolute midnight in
+  both modes, whatever `commit_hours` is.
+- **Multi-period results are only unique up to ties.** A window LP often has several equally
+  cheap dispatches, and adding or reordering columns changes which one the solver returns. Pin
+  window objectives and prices in multi-period tests, not flows.
 
 ### Conventions
 
 - The **external interface is in MW and EUR/MWh**; the DC power flow equations work in per-unit with
   `constants.baseS` = 100 MVA. Conversions via `const.baseMVA` are applied at the constraint level
-  (`single_period.build.create_constraint_powerflow_equation` and `…_powerbalance`).
+  (`formulation.build.create_constraint_powerflow_equation` and `…_powerbalance`).
 - Marginal cost for generators with storage comes from the storage-value curves
   (filling-level × time) — this is the core modelling idea, described in
   [model_description.md](userguide/model_description.md). It enters as the value of the energy
@@ -176,7 +186,9 @@ timesteps starting from a baseline results database, via `LpFaultProblem` — se
 [fault_scenario_analysis.md](userguide/fault_scenario_analysis.md). It subclasses `LpProblem` and
 overrides six methods, so `_updateLpProblem`, `_get_fault_start`, `_update_progress`,
 `_relax_and_retry` and `_get_timesteps_to_solve` are **extension seams**, not merely long methods:
-they stay on the class and delegate to the formulation packages.
+they stay on the class and delegate to `lp/formulation/`. The seams take a window:
+`_updateLpProblem(timesteps)`, `_storeResultsAndUpdateStorage(timesteps, commit, objective_values,
+results)`; fault simulation runs in windows of one timestep.
 
 ## Tests
 

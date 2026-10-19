@@ -1,4 +1,4 @@
-"""POWERGAMA_HIGHS_* environment variables are applied the same way on both solve paths (issue #45)."""
+"""POWERGAMA_HIGHS_* environment variables are applied to HiGHS (issue #45)."""
 
 import pyomo.environ as pyo
 import pytest
@@ -6,15 +6,11 @@ import pytest
 from powergama.lp import solver as solver_mod
 
 
-def _single_period_solver():
+def _solver():
     return solver_mod.create_solver("appsi_highs", pyo.ConcreteModel())
 
 
-def _window_solver():
-    return solver_mod.create_window_solver("appsi_highs")
-
-
-BUILDERS = pytest.mark.parametrize("build", [_single_period_solver, _window_solver], ids=["single", "window"])
+BUILDERS = pytest.mark.parametrize("build", [_solver], ids=["appsi_highs"])
 
 
 @BUILDERS

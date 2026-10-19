@@ -161,8 +161,8 @@ def append_hourly_debug(lp, rt, timestep):
             "storage_dev_neg_mwh": _val(lp.model.varRtStorageTargetDevNeg[i]) or 0.0,
             "coef_storage_pos": _val(lp.model.p_rt_deviation_price_storage_pos[i]) or 0.0,
             "coef_storage_neg": _val(lp.model.p_rt_deviation_price_storage_neg[i]) or 0.0,
-            "gen_mw": _val(lp.model.varGeneration[i]) or 0.0,
-            "pump_mw": (_val(lp.model.varPump[i]) or 0.0) if int(i) in lp.model.s_gen_pump else 0.0,
+            "gen_mw": _val(lp.model.varGeneration[i, 0]) or 0.0,
+            "pump_mw": (_val(lp.model.varPump[i, 0]) or 0.0) if int(i) in lp.model.s_gen_pump else 0.0,
             "gen_target_mw": _val(lp.model.p_rt_target[i]) or 0.0,
             "pump_target_mw": 0.0,
             "gen_cost_mwh": rt_data.marginal_cost(lp, i),
@@ -188,8 +188,8 @@ def append_hourly_debug(lp, rt, timestep):
     for i in sorted(
         int(ii) for ii in rt.ctx.target_gen_indices if int(ii) in (rt.ctx.idx_normal_gas | rt.ctx.idx_peak_gen)
     ):
-        pmin_now = _val(lp.model.p_gen_pmin[i])
-        pmax_now = _val(lp.model.p_gen_pmax[i])
+        pmin_now = _val(lp.model.p_gen_pmin[i, 0])
+        pmax_now = _val(lp.model.p_gen_pmax[i, 0])
         target_now = _val(lp.model.p_rt_target[i]) or 0.0
         target_clipped = max(
             pmin_now if pmin_now is not None else 0.0,
@@ -219,7 +219,7 @@ def append_hourly_debug(lp, rt, timestep):
                 "node": str(lp._grid.generator.loc[i, "node"]),
                 "desc": str(lp._grid.generator.loc[i, "desc"]),
                 "is_peak_rt_block": bool(int(i) in rt.ctx.idx_peak_gen),
-                "gen_mw": _val(lp.model.varGeneration[i]) or 0.0,
+                "gen_mw": _val(lp.model.varGeneration[i, 0]) or 0.0,
                 "gen_target_mw": _val(lp.model.p_rt_target[i]) or 0.0,
                 "gen_dev_pos_mw": _val(lp.model.varRtTargetDevPos[i]) or 0.0,
                 "gen_dev_neg_mw": _val(lp.model.varRtTargetDevNeg[i]) or 0.0,
@@ -258,28 +258,28 @@ def append_hourly_debug(lp, rt, timestep):
 
     be_balancing_dev = (
         _sum_expr(
-            lp.model.varGeneration[i] - lp.model.p_rt_target[i]
+            lp.model.varGeneration[i, 0] - lp.model.p_rt_target[i]
             for i in lp.model.s_gen
             if int(i) in rt.ctx.target_gen_indices
         )
-        + _sum_expr(lp.model.varLoadShed[j] for j in lp.model.s_load)
-        - _sum_expr(lp.model.varDumpLoad[j] for j in lp.model.s_load)
+        + _sum_expr(lp.model.varLoadShed[j, 0] for j in lp.model.s_load)
+        - _sum_expr(lp.model.varDumpLoad[j, 0] for j in lp.model.s_load)
         - _sum_expr(
-            lp.model.varFlexLoad[j] - lp.model.p_rt_flexload_target[j]
+            lp.model.varFlexLoad[j, 0] - lp.model.p_rt_flexload_target[j]
             for j in lp.model.s_load_flex
             if int(j) in rt.ctx.consumer_target_indices
         )
         + _sum_expr(
             rt.ctx.border_ac_sign.get(int(b), 0.0)
             * (_val(lp.model.p_rt_io_target_active_ac[b]) or 0.0)
-            * ((_val(lp.model.varAcBranchFlow[b]) or 0.0) - (_val(lp.model.p_rt_io_target_ac[b]) or 0.0))
+            * ((_val(lp.model.varAcBranchFlow[b, 0]) or 0.0) - (_val(lp.model.p_rt_io_target_ac[b]) or 0.0))
             for b in lp.model.s_branch_ac
             if int(b) in rt.ctx.idx_border_ac
         )
         + _sum_expr(
             rt.ctx.border_dc_sign.get(int(b), 0.0)
             * (_val(lp.model.p_rt_io_target_active_dc[b]) or 0.0)
-            * ((_val(lp.model.varDcBranchFlow[b]) or 0.0) - (_val(lp.model.p_rt_io_target_dc[b]) or 0.0))
+            * ((_val(lp.model.varDcBranchFlow[b, 0]) or 0.0) - (_val(lp.model.p_rt_io_target_dc[b]) or 0.0))
             for b in lp.model.s_branch_dc
             if int(b) in rt.ctx.idx_border_dc
         )
@@ -386,8 +386,8 @@ def append_hourly_debug(lp, rt, timestep):
             "rt_balancing_deviation_mw": float(be_balancing_dev),
         },
         "term_breakdown": {
-            "loadshed": _sum_expr(const.loadshedcost * lp.model.varLoadShed[j] for j in lp.model.s_load),
-            "dumpload": _sum_expr(const.loadshedcost * lp.model.varDumpLoad[j] for j in lp.model.s_load),
+            "loadshed": _sum_expr(const.loadshedcost * lp.model.varLoadShed[j, 0] for j in lp.model.s_load),
+            "dumpload": _sum_expr(const.loadshedcost * lp.model.varDumpLoad[j, 0] for j in lp.model.s_load),
             "gen_dev": _sum_expr(
                 lp.model.p_rt_deviation_price_gen_pos[i] * lp.model.varRtTargetDevPos[i]
                 + lp.model.p_rt_deviation_price_gen_neg[i] * lp.model.varRtTargetDevNeg[i]

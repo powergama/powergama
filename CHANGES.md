@@ -2,6 +2,29 @@
 
 ## unpublished
 2026-10-20
+- the single-period and multi-period formulations are merged into one, `powergama.lp.formulation`:
+  an LP over a window of timesteps, built once per window length and rewritten for every window
+  (#42). Single-period is a window of one timestep; its results are unchanged
+- **breaking:** model components are indexed by hour in the window, `[·, h]`; in single-period
+  mode `h` is 0. `lp.model.varGeneration[i]` becomes `lp.model.varGeneration[i, 0]`, likewise
+  `p_gen_pmin`, `p_demand`, `varAcBranchFlow`, the loss variables and the rest. Parameters that
+  do not vary by hour (`p_gen_cost`, `p_genpump_cost`, `p_storage_prev`, `p_storage_value`,
+  `p_flex_storage_prev`) keep their index
+- **breaking:** for extensions, the hook is `edit_objective_terms(model, terms, h)`, called once
+  per hour of the window; `LpProblem._updateLpProblem` takes the window's timesteps, and
+  `_storeResultsAndUpdateStorage` takes the window, the number of committed timesteps and their
+  objective values. `powergama.lp.single_period` and `powergama.lp.multi_period` are gone
+- multi-period mode is no longer rebuilt for every window, which with HiGHS's state cleared
+  between windows makes it 50-60% faster on the Europe 2014 case, and gains what the
+  single-period solve loop had: any solver (it used to build its own HiGHS solver, and gave zero prices with any
+  other), `warmstart`, `savefiles`, `_relax_and_retry`, progress reporting, and losses and
+  extensions with `horizon_hours=1`
+- `ramp_daily_reset` releases the ramp limit at midnight in both modes, whatever `commit_hours`
+  is; multi-period mode no longer requires `commit_hours=24` with it
+- multi-period results can differ from before between equally cheap dispatches: the window
+  objectives, prices and storage values are the same, the tie between them is broken differently
+- `solve(solver="appsi_highs")` without `solve_args` works: the default arguments are for the
+  SolverFactory solvers, which the APPSI interface does not accept
 - **behaviour change:** flexible load is a bounded reservoir in single-period mode too, as in
   multi-period (#42). Its level is an LP variable kept within `[0, capacity]` (no floor where
   `flex_on_off > 1`), instead of a state that could overshoot and was pushed back by

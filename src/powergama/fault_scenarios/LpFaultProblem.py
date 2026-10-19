@@ -72,7 +72,9 @@ class LpFaultProblem(powergama.LpProblem):
 
             self.set_storage_state(storage=storage_init, storage_flexload=flexload_init)
 
-    def _updateLpProblem(self, timestep):
+    def _updateLpProblem(self, timesteps):
+        # Windows of one timestep: fault simulation runs in single-period mode.
+        (timestep,) = timesteps
         end_ts = self._grid.timerange[-1]
         if (self._prev_ts is None) or (self._dur_counter == self._fault_duration):
             reverting = True
@@ -87,7 +89,7 @@ class LpFaultProblem(powergama.LpProblem):
         if reverting:
             self.reset_from_ts(timestep, self._storage_base, self._flexload_base)
             self._dur_counter = 0
-        super()._updateLpProblem(timestep)
+        super()._updateLpProblem(timesteps)
 
     def _update_progress(self, cur_step, num_steps):
         self._dur_counter += 1
@@ -102,7 +104,7 @@ class LpFaultProblem(powergama.LpProblem):
         self._grid.generator["pmin"] = np.zeros(N_gen)
         old_p_gen_pmin = copy.deepcopy(self.model.p_gen_pmin)
         for i in range(N_gen):
-            self.model.p_gen_pmin[i] = 0
+            self.model.p_gen_pmin[i, 0] = 0
 
         warmstart_now = warmstart and (count > 0)
         if warmstart_now:
@@ -119,7 +121,7 @@ class LpFaultProblem(powergama.LpProblem):
         # Reset settings
         self._grid.generator["pmin"] = old_pmin
         for i in range(N_gen):
-            self.model.p_gen_pmin[i] = old_p_gen_pmin[i]
+            self.model.p_gen_pmin[i, 0] = old_p_gen_pmin[i, 0]
 
 
 class FaultDatabase(powergama.database.DatabaseBaseClass):

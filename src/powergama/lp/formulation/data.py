@@ -1,10 +1,13 @@
-"""Per-timestep data for the single-period formulation.
+"""Per-window data: rewrite the model's mutable Params for the window about to be solved.
 
-The counterpart of :mod:`..multi_period.data`, and the one place the two
-formulations are shaped differently. Here the model was built once and this
-rewrites its mutable Params and variable bounds *in place*; there, the
-equivalent module returns a snapshot that is baked into a model rebuilt for each
-window. Collapsing that difference is what merging the formulations would mean.
+The model was built once for its window length (:mod:`.build`); this writes the
+time-varying data into it *in place* before every solve, rather than rebuilding.
+
+The window's first hour is computed from the simulation state -- storage levels,
+the flexible-load reservoirs, the previous dispatch the ramp limits use -- exactly
+as the single-period model always did, so a window of one timestep is that model.
+Later hours only need the input data; their coupling to the state is through the
+LP's own variables.
 
 These take the LpProblem rather than explicit arguments. Unlike the builders,
 which read nothing mutable and so get real signatures, the updater reads and
@@ -45,23 +48,15 @@ def _store(param, index, values):
     param.store_values(dict(zip(index, np.asarray(values, dtype=float).tolist())), check=False)
 
 
-def update_timestep(lp, timestep):
-    """
-    Function that updates LP problem for a given timestep, due to changed
-    power demand, power inflow and marginal generator costs
+def _by_hour(index, hours):
+    """Keys (i, h) for every *i* in *index* and every *h* in *hours*, hour by hour."""
+    return [(i, h) for h in hours for i in index]
 
-    Computed column-wise with numpy rather than generator by generator: this runs
-    every timestep, and on a large grid the per-element pandas lookups used to cost
-    more than solving the LP.
-    """
+
+def _generator_limits(lp, timestep):
+    """Installed capacity available, inflow and minimum output at *timestep*, in MW."""
     grid = lp._grid
     gen = grid.generator
-    storage = np.asarray(lp._storage, dtype=float)
-    is_storage = np.zeros(len(gen), dtype=bool)
-    is_storage[lp._idx_generatorsWithStorage] = True
-
-    # 1. Generator output limits:
-    #    -> power output constraints
     P_max = gen["pmax"].to_numpy(float)
     P_min = gen["pmin"].to_numpy(float)
 
@@ -80,6 +75,32 @@ def update_timestep(lp, timestep):
     if lp._pmin_ref is not None:
         fraction = _profile_values(grid.profiles, timestep, lp._pmin_ref, required=False)
         pmin_now = np.where(np.isnan(fraction), P_min, np.maximum(0, P_max * fraction))
+    return capacity_now, P_inflow, pmin_now
+
+
+def update_window(lp, timesteps):
+    """
+    Update the LP problem for the window of *timesteps*, due to changed
+    power demand, power inflow and marginal generator costs
+
+    Computed column-wise with numpy rather than generator by generator: this runs
+    every window, and on a large grid the per-element pandas lookups used to cost
+    more than solving the LP.
+    """
+    model = lp.model
+    grid = lp._grid
+    gen = grid.generator
+    H = len(timesteps)
+    timestep = timesteps[0]
+    storage = np.asarray(lp._storage, dtype=float)
+    is_storage = np.zeros(len(gen), dtype=bool)
+    is_storage[lp._idx_generatorsWithStorage] = True
+
+    # 1. Generator output limits:
+    #    -> power output constraints
+    # The first hour's availability from storage is known: what is stored now.
+    capacity_now, P_inflow, pmin_now = _generator_limits(lp, timestep)
+    inflow = [P_inflow]
 
     # Don't let P_max limit the output of generators without storage (e.g. solar PV).
     # This won't affect fuel based generators with zero storage, since these should
@@ -117,15 +138,28 @@ def update_timestep(lp, timestep):
         pmin_ramped = np.minimum(pmin_ramped, pmax_ramped)
         pmax = np.where(ramped, np.maximum(pmax_ramped, 0), pmax)
         pmin = np.where(ramped, np.maximum(pmin_ramped, 0), pmin)
+    pmax_all, pmin_all = [pmax], [pmin]
 
-    _store(lp.model.p_gen_pmax, lp.model.s_gen, pmax)
-    _store(lp.model.p_gen_pmin, lp.model.s_gen, pmin)
+    # Later hours: availability from storage is a constraint on the hour before
+    # (cGenUbStorAvail), and ramp limits are constraints between the hours (cRampUp,
+    # cRampDn), so the bounds are installed capacity and inflow only.
+    for ts in timesteps[1:]:
+        capacity_now, P_inflow, pmin_now = _generator_limits(lp, ts)
+        inflow.append(P_inflow)
+        pmax_all.append(np.where(is_storage, capacity_now, P_inflow))
+        pmin_all.append(np.maximum(np.minimum(P_inflow, pmin_now), 0))
+
+    hours = range(H)
+    _store(model.p_gen_pmax, _by_hour(model.s_gen, hours), np.concatenate(pmax_all))
+    _store(model.p_gen_pmin, _by_hour(model.s_gen, hours), np.concatenate(pmin_all))
+    _update_ramp_limits(lp, timesteps)
 
     # 2. Update demand
     #    -> power balance constraint
     cons = grid.consumer
     average = cons["demand_avg"].to_numpy(float) * (1 - cons["flex_fraction"].to_numpy(float))
-    _store(lp.model.p_demand, lp.model.s_load, _profile_values(grid.profiles, timestep, cons["demand_ref"]) * average)
+    demand = [_profile_values(grid.profiles, ts, cons["demand_ref"]) * average for ts in timesteps]
+    _store(model.p_demand, _by_hour(model.s_load, hours), np.concatenate(demand))
 
     # 3. Cost parameters
     #    -> update objective function
@@ -134,42 +168,70 @@ def update_timestep(lp, timestep):
     #     Prevents the LP from scheduling pump output beyond storage_cap,
     #     which would otherwise cause silent energy spill while still earning
     #     the full pump cost credit (degeneracy when reservoir is full).
+    #     Later hours are limited by the room the hour before leaves (cPumpRoom).
     pumps = lp._idx_generatorsWithPumping
     if pumps:
         pump_eff = gen["pump_efficiency"].to_numpy(float)[pumps]
+        pump_cap = gen["pump_cap"].to_numpy(float)[pumps]
         remaining_mwh = np.maximum(0.0, gen["storage_cap"].to_numpy(float)[pumps] - storage[pumps])
         with np.errstate(divide="ignore", invalid="ignore"):
             max_pump_by_room = np.where(pump_eff > 0, remaining_mwh / (pump_eff * lp.timeDelta), 0.0)
-        _store(lp.model.p_pump_pmax, pumps, np.minimum(gen["pump_cap"].to_numpy(float)[pumps], max_pump_by_room))
+        pump_pmax = [np.minimum(pump_cap, max_pump_by_room)] + [pump_cap] * (H - 1)
+        _store(model.p_pump_pmax, _by_hour(pumps, hours), np.concatenate(pump_pmax))
 
-    # 3a. generators with storage: level at the start of the timestep, inflow during
-    #     it, and the value of the energy left at its end. The per-MWh costs of
-    #     generating and pumping (p_gen_cost, p_genpump_cost) do not depend on the
-    #     level and are set once, when the model is built.
+    # 3a. generators with storage: level at the start of the window, inflow during
+    #     each hour, and the value of the energy left at the window's end. The
+    #     per-MWh costs of generating and pumping (p_gen_cost, p_genpump_cost) do not
+    #     depend on the level and are set once, when the model is built.
     stores = lp._idx_generatorsWithStorage
     if stores:
-        _store(lp.model.p_storage_prev, stores, storage[stores])
-        _store(lp.model.p_storage_inflow, stores, P_inflow[stores])
+        _store(model.p_storage_prev, stores, storage[stores])
+        _store(model.p_storage_inflow, _by_hour(stores, hours), np.concatenate([q[stores] for q in inflow]))
         _store(
-            lp.model.p_storage_value,
+            model.p_storage_value,
             stores,
-            storage_value.generator_storage_values(grid, stores, storage[stores], timestep),
+            storage_value.generator_storage_values(grid, stores, storage[stores], timesteps[-1]),
         )
 
-    # 3b. flexible load: reservoir level at the start of the timestep, and the
-    #     value of the energy delivered to it
+    # 3b. flexible load: reservoir level at the start of the window, and the value of
+    #     the energy delivered to it, from that level, for each hour
     for i in lp._idx_consumersWithFlexLoad:
-        lp.model.p_flex_storage_prev[i] = lp._ctx.flex_storage_seed(i, float(lp._storage_flexload[i]))
-        lp.model.p_loadflex_cost[i] = storage_value.flexload_storage_value(
-            lp._grid, i, lp._storage_flexload[i], timestep
-        )
+        model.p_flex_storage_prev[i] = lp._ctx.flex_storage_seed(i, float(lp._storage_flexload[i]))
+        for h, ts in enumerate(timesteps):
+            model.p_loadflex_cost[i, h] = storage_value.flexload_storage_value(lp._grid, i, lp._storage_flexload[i], ts)
 
-    # 4. Extensions, which may override what is set above. The core sets no
-    #    branch-flow variable bounds: the rating is enforced by cMaxFlowAc/cMaxFlowDc.
+    # 4. Extensions, which may override what is set above. They only run in windows
+    #    of one timestep. The core sets no branch-flow variable bounds: the rating is
+    #    enforced by cMaxFlowAc/cMaxFlowDc.
     for ext in lp._extensions:
         ext.update_timestep(lp, timestep)
 
     return
+
+
+def _update_ramp_limits(lp, timesteps):
+    """Write the ramp limits between consecutive hours of the window, in MW.
+
+    A generator with a daily reset is free to change its output at midnight, so its
+    limit into a midnight hour is lifted to twice its installed capacity -- more than
+    it could ever change by.
+    """
+    model = lp.model
+    cap = lp._ramp_cap_mw.astype(float)
+    reset_hours = [h for h, ts in enumerate(timesteps) if ts % 24 == 0]
+    for param, keys, ramp in (
+        (model.p_ramp_up_mw, list(model.s_ramp_up), lp._ramp_up_pu),
+        (model.p_ramp_dn_mw, list(model.s_ramp_dn), lp._ramp_down_pu),
+    ):
+        if not keys:
+            continue
+        gens = np.array([i for i, _ in keys])
+        hours = np.array([h for _, h in keys])
+        limit = ramp.astype(float)[gens] * cap[gens]
+        if lp._ramp_daily_reset is not None and reset_hours:
+            released = lp._ramp_daily_reset[gens] & np.isin(hours, reset_hours)
+            limit = np.where(released, 2 * cap[gens], limit)
+        _store(param, keys, limit)
 
 
 def update_loss_parameters(lp, aclossmultiplier=1, dclossmultiplier=1):
@@ -178,8 +240,10 @@ def update_loss_parameters(lp, aclossmultiplier=1, dclossmultiplier=1):
     The losses for the coming timestep are linearised around the flows of the one
     just solved, read from varAcBranchFlow / varDcBranchFlow. Both methods use the
     net flow only, which is also what the results database stores, so a resumed run
-    can seed the same operating point (seed_loss_operating_point).
+    can seed the same operating point (seed_loss_operating_point). Losses are only
+    modelled in windows of one timestep, hence hour 0 throughout.
     """
+    m = lp.model
     if lp._lossmethod == 1:
         # store power flows for next timestep (used for loss calculation)
         # Github issue https://github.com/powergama/powergama/issues/29
@@ -188,28 +252,28 @@ def update_loss_parameters(lp, aclossmultiplier=1, dclossmultiplier=1):
         # is beneficial) since there is no constraint forbidding simultaneous flow in
         # both direction (only an indirect cost via generation costs). That holds for DC
         # branches as much as AC: nothing physical prevents it there either (issue #41).
-        for b in lp.model.s_branch_ac:
-            flow = lp.model.varAcBranchFlow[b].value
-            lp.model.p_branch_ac_powerflow12[b] = max(flow, 0)
-            lp.model.p_branch_ac_powerflow21[b] = max(-flow, 0)
-        for b in lp.model.s_branch_dc:
-            flow = lp.model.varDcBranchFlow[b].value
-            lp.model.p_branch_dc_powerflow12[b] = max(flow, 0)
-            lp.model.p_branch_dc_powerflow21[b] = max(-flow, 0)
+        for b in m.s_branch_ac:
+            flow = m.varAcBranchFlow[b, 0].value
+            m.p_branch_ac_powerflow12[b, 0] = max(flow, 0)
+            m.p_branch_ac_powerflow21[b, 0] = max(-flow, 0)
+        for b in m.s_branch_dc:
+            flow = m.varDcBranchFlow[b, 0].value
+            m.p_branch_dc_powerflow12[b, 0] = max(flow, 0)
+            m.p_branch_dc_powerflow21[b, 0] = max(-flow, 0)
     elif lp._lossmethod == 2:
         # compute power losses and store for next timestep
-        for b in lp.model.s_branch_ac:
+        for b in m.s_branch_ac:
             r = lp._grid.branch.loc[b, "resistance"]
-            lossMVA = r * lp.model.varAcBranchFlow[b] ** 2 / const.baseMVA
+            lossMVA = r * m.varAcBranchFlow[b, 0] ** 2 / const.baseMVA
             # A multiplication factor to account for reactive current losses
             lossMVA = lossMVA * aclossmultiplier
-            lp.model.p_branch_ac_power_loss[b] = lossMVA
-        for b in lp.model.s_branch_dc:
+            m.p_branch_ac_power_loss[b, 0] = lossMVA
+        for b in m.s_branch_dc:
             r_pu = lp._grid.dcbranch.loc[b, "resistance"]
-            p_pu = lp.model.varDcBranchFlow[b] / const.baseMVA
+            p_pu = m.varDcBranchFlow[b, 0] / const.baseMVA
             loss_pu = r_pu * p_pu**2
             lossMVA = loss_pu * const.baseMVA * dclossmultiplier
-            lp.model.p_branch_dc_power_loss[b] = lossMVA
+            m.p_branch_dc_power_loss[b, 0] = lossMVA
 
 
 def seed_loss_operating_point(lp, ac_flows, dc_flows):
@@ -220,6 +284,6 @@ def seed_loss_operating_point(lp, ac_flows, dc_flows):
     timestep's solution then exists only in the database, not in Var.value.
     """
     for b in lp.model.s_branch_ac:
-        lp.model.varAcBranchFlow[b].value = ac_flows[b]
+        lp.model.varAcBranchFlow[b, 0].value = ac_flows[b]
     for b in lp.model.s_branch_dc:
-        lp.model.varDcBranchFlow[b].value = dc_flows[b]
+        lp.model.varDcBranchFlow[b, 0].value = dc_flows[b]
