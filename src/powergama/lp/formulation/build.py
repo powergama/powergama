@@ -213,10 +213,7 @@ def create_variables(model, grid, ctx, cfg):
         within=pyo.NonNegativeReals,
         bounds=lambda m, i, h: (0, grid.generator.loc[i, "storage_cap"]),
     )
-    model.varSpill = pyo.Var(
-        model.s_gen_storage, model.s_h, within=pyo.NonNegativeReals, bounds=lambda m, i, h: (0, ctx.spill_cap_mw[i])
-    )
-    model.varStorageOverflow = pyo.Var(model.s_gen_storage, model.s_h, within=pyo.NonNegativeReals)
+    model.varSpill = pyo.Var(model.s_gen_storage, model.s_h, within=pyo.NonNegativeReals)
     # Reservoir level at the end of the hour. Reals, not NonNegativeReals: the floor
     # is skipped for a consumer whose charge limit cannot keep up with its drain.
     model.varFlexStorage = pyo.Var(
@@ -440,11 +437,13 @@ def create_constraint_load_flex(model, grid, ctx, cfg):
 def create_constraint_storage(model, grid, ctx, cfg):
     """Constraint: storage continuity over each hour.
 
-    level = level_prev + (inflow - output + pumped*efficiency - spill - overflow) * dt
+    level = level_prev + (inflow - output + pumped*efficiency - spill) * dt
 
-    The level is bounded to [0, storage_cap] and spill to spill_cap_frac of installed
-    capacity. Overflow is what fits in neither, priced like load shedding so the
-    window stays feasible.
+    The level is bounded to [0, storage_cap], and spill to the inflow (#33): what is
+    spilled is inflow that cannot be stored, never stored or pumped energy, so storage
+    without inflow (batteries, pure pumped storage) cannot spill at all. Spilling all
+    the inflow keeps a full storage full, so with level_prev in [0, storage_cap] (see
+    LpProblem.set_storage_state) the window needs no overflow slack.
     """
     dt = grid.timeDelta
 
@@ -454,14 +453,15 @@ def create_constraint_storage(model, grid, ctx, cfg):
             pumped = model.varPump[i, h] * grid.generator.loc[i, "pump_efficiency"]
         prev = model.p_storage_prev[i] if h == 0 else model.varStorage[i, h - 1]
         return model.varStorage[i, h] == prev + dt * (
-            model.p_storage_inflow[i, h]
-            - model.varGeneration[i, h]
-            + pumped
-            - model.varSpill[i, h]
-            - model.varStorageOverflow[i, h]
+            model.p_storage_inflow[i, h] - model.varGeneration[i, h] + pumped - model.varSpill[i, h]
         )
 
     model.cStorCont = pyo.Constraint(model.s_gen_storage, model.s_h, rule=storage_rule)
+
+    def spill_rule(model, i, h):
+        return model.varSpill[i, h] <= model.p_storage_inflow[i, h]
+
+    model.cSpillInflow = pyo.Constraint(model.s_gen_storage, model.s_h, rule=spill_rule)
 
 
 def create_constraint_powerbalance(model, grid, ctx, cfg, powerbalance_rhs):
@@ -626,10 +626,8 @@ def objective_terms(model, dt, h, last):
             -sum(model.p_storage_value[i] * model.varStorage[i, h] for i in model.s_gen_storage) / dt
         )
     # Penalty slack: keeps every window feasible.
-    terms["load_shedding"] = (
-        sum(model.varLoadShed[i, h] * const.loadshedcost for i in model.s_load)
-        + sum(model.varDumpLoad[i, h] * const.loadshedcost for i in model.s_load)
-        + sum(model.varStorageOverflow[i, h] * const.loadshedcost for i in model.s_gen_storage)
+    terms["load_shedding"] = sum(model.varLoadShed[i, h] * const.loadshedcost for i in model.s_load) + sum(
+        model.varDumpLoad[i, h] * const.loadshedcost for i in model.s_load
     )
     # Spill only when the reservoir is full, even where the storage value is zero.
     terms["spill"] = sum(model.varSpill[i, h] * const.spillcost for i in model.s_gen_storage)

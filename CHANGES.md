@@ -2,6 +2,14 @@
 
 ## unpublished
 2026-10-20
+- **behaviour change:** spilled power is limited to the inflow, so only inflow that cannot be
+  stored is spilled, never stored or pumped energy (#33). Storage without inflow, such as
+  batteries and pure pumped storage, can no longer spill, and in a surplus can no longer pump
+  in power and spill it as a free sink in place of dump load. This replaces the
+  `spill_cap_frac` generator column, which is now ignored with a warning, and removes the
+  storage overflow slack (`varStorageOverflow`), which spill bounded by inflow makes
+  unnecessary. The initial storage level is clipped into `[0, storage_cap]`, as
+  `set_storage_state` already did
 - the single-period and multi-period formulations are merged into one, `powergama.lp.formulation`:
   an LP over a window of timesteps, built once per window length and rewritten for every window
   (#42). Single-period is a window of one timestep; its results are unchanged

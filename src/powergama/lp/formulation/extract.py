@@ -31,8 +31,8 @@ def store_window(lp, timesteps, commit, objective_values, results):
 
     for h, timestep in enumerate(timesteps[:commit]):
         # 1. Update generator storage. Its level is an LP variable, so the next hour
-        #    starts from the solved level, and spilled energy is the solved spill (plus
-        #    overflow). Generators without storage report the inflow they did not use,
+        #    starts from the solved level, and spilled energy is the solved spill.
+        #    Generators without storage report the inflow they did not use,
         #    e.g. curtailed wind, as spilled.
         Pgen = [m.varGeneration[i, h].value for i in m.s_gen]
         genInflow = pmax_inflow * window_data._profile_values(lp._grid.profiles, timestep, gen["inflow_ref"])
@@ -46,7 +46,7 @@ def store_window(lp, timesteps, commit, objective_values, results):
         lp._energyspilled = energyStorable - lp._storage
         for i in stores:
             lp._storage[i] = m.varStorage[i, h].value
-            lp._energyspilled[i] = (m.varSpill[i, h].value + m.varStorageOverflow[i, h].value) * dt
+            lp._energyspilled[i] = m.varSpill[i, h].value * dt
 
         # 2. Update flexible load storage, an LP variable like generator storage
         for i in lp._idx_consumersWithFlexLoad:

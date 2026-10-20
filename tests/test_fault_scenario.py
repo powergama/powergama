@@ -87,12 +87,14 @@ def test_faultsimulation(testcase_9bus_data, testcase_9bus_res, tmp_path):
 
     loadshedding_sums = loadshedding_all.sum()
 
-    # Was 815.8665322112945 until storage valuation was reworked (issue #40). The
-    # difference is one tie: in fault case failure_3 at timestep 14 the CSP storage
-    # value is exactly 10 EUR/MWh, the coal plant's fuel cost, so either can serve the
-    # load at the same cost (the objective is the same both ways). The model gained
-    # columns and the solver now takes coal, which leaves 190 MWh more in storage and
-    # 41 MW less load shed at timestep 16. The value pinned here is an outcome of a tie.
-    assert loadshedding_sums[1] == pytest.approx(774.7239251121798)
+    # The value pinned here is an outcome of a tie: in fault case failure_3 at timestep
+    # 14 the CSP storage value is exactly 10 EUR/MWh, the coal plant's fuel cost, so
+    # either can serve the load at the same cost (the objective is 4550 both ways).
+    # Taking coal leaves 190 MWh more in storage and 41 MW less load shed at timestep
+    # 16, for a sum of 774.72; taking storage gives 815.87. Which one the solver returns
+    # follows the model's columns: 815.87 before storage valuation was reworked (#40),
+    # 774.72 after it added columns, and 815.87 again since the storage overflow slack
+    # was removed (#33).
+    assert loadshedding_sums[1] == pytest.approx(815.8665322112895)
 
     print("Done.")

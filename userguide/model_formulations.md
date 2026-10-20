@@ -50,7 +50,7 @@ holds.
 | load shed, dump load | `varLoadShed`, `varDumpLoad` |
 | AC/DC flow, voltage angle | `varAcBranchFlow`, `varDcBranchFlow`, `varVoltageAngle` |
 | generator storage level, at the end of each hour | `varStorage` |
-| inflow spilled, and storage overflow (penalised slack) | `varSpill`, `varStorageOverflow` |
+| inflow spilled | `varSpill` |
 | flexible-load reservoir level | `varFlexStorage` |
 | ramp-down shortfall, hours ≥ 1 | `varRampSlack` |
 | directional flow and losses (`lossmethod=1`) | `varAcBranchFlow12/21`, `varLossAc12/21`, and the DC pair |
@@ -67,7 +67,7 @@ holds.
 | generator output limits | `cGenMaxLimit`/`cGenMinLimit`, against `p_gen_pmax`/`p_gen_pmin` |
 | pumping | `cPump`, against `p_pump_pmax` |
 | flexible load | `cFlexload`; reservoir `cFlexStorCont`, with capacity and floor as variable bounds |
-| storage continuity | `cStorCont`, with capacity and spill limits as variable bounds |
+| storage continuity | `cStorCont`, with capacity as a variable bound; spill limited to inflow by `cSpillInflow` |
 | losses (`lossmethod=1`) | `cFlowAc`/`cFlowDc`, `cLossAc12/21`, `cLossDc12/21` |
 | between consecutive hours (hours ≥ 1) | `cGenUbStorAvail`, `cPumpRoom`, `cRampUp`, `cRampDn` |
 | RT target tracking (`RtExtension`) | `cRtTargetTracking` and four siblings |

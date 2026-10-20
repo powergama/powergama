@@ -207,9 +207,10 @@ $$E(t+\Delta t) = E(t)
     + \Delta t (P_\text{inflow} - P_\text{output} + \eta_\text{pump}P_\text{pump}
     - P_\text{spill}), \quad 0 \le E(t+\Delta t) \le E_\text{max}.$$
 It is part of the optimisation problem, with the storage level and the
-spilled power as variables. Spilled power is limited to `spill_cap_frac`
-times the generator capacity; beyond that, energy that fits neither in
-the storage nor through the generator is penalised like load shedding.
+spilled power as variables. Spilled power is limited to the inflow,
+$0 \le P_\text{spill} \le P_\text{inflow}$: what is spilled is inflow
+that cannot be stored, never energy already in the storage or pumped into
+it. A storage without inflow, such as a battery, therefore cannot spill.
 
 ## Power consumption
 
@@ -495,8 +496,9 @@ step, with $v_s$ its storage value, and $\mathcal{S}$ the set of
 generators with storage. It is the only place stored energy is valued:
 through the storage balance (see above), generating from storage,
 spilling, and pumping all change $E_s$ and so are priced at the storage
-value. A small cost on spilled power, and the load-shedding cost on
-energy that overflows the storage, are left out of $F$ here for brevity.
+value. A small cost on spilled power, which makes the optimisation store
+inflow rather than spill it where the storage value is zero, is left out
+of $F$ here for brevity.
 
 Every term in $F$ is a cost rate in €/h (MW times €/MWh), whatever the
 length $\Delta t$ of the time step. The storage value term is an amount of
