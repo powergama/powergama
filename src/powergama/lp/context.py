@@ -74,6 +74,16 @@ class GridContext:
     # nor through the generator goes to a penalised overflow slack.
     spill_cap_mw: dict = field(default_factory=dict)
 
+    # --- flexible-load reservoirs ------------------------------------------
+    # Per consumer with flexible load: the constant flexible demand the reservoir
+    # serves (MW), its size (MWh), and whether its level can be held at or above
+    # zero. The per-timestep charge limit is demand_avg * flex_fraction / flex_on_off,
+    # so the drain can be met timestep by timestep exactly when flex_on_off <= 1;
+    # where it cannot, no floor can be imposed without making the LP infeasible.
+    flex_drain_mw: dict = field(default_factory=dict)
+    flex_storage_cap: dict = field(default_factory=dict)
+    flex_has_floor: dict = field(default_factory=dict)
+
     # --- optional profile references for time-varying bounds ---------------
     pmax_ref: object = None
     pmin_ref: object = None
@@ -150,6 +160,22 @@ class GridContext:
             frac = pd.Series(1.0, index=grid.generator.index)
         pmax = pd.to_numeric(grid.generator["pmax"], errors="coerce").fillna(0.0).clip(lower=0.0)
         self.spill_cap_mw = {i: float(frac[i] * pmax[i]) for i in self.idx_generatorsWithStorage}
+
+        for j in self.idx_consumersWithFlexLoad:
+            drain = float(grid.consumer.loc[j, "flex_fraction"]) * float(grid.consumer.loc[j, "demand_avg"])
+            on_off = float(grid.consumer.loc[j, "flex_on_off"])
+            self.flex_drain_mw[j] = drain
+            self.flex_storage_cap[j] = float(grid.consumer.loc[j, "flex_storage"]) * drain
+            self.flex_has_floor[j] = 0.0 < on_off <= 1.0
+
+    def flex_storage_seed(self, j, level):
+        """The reservoir level an LP starts from: *level*, moved inside the bounds it enforces.
+
+        Keeps the first timestep feasible on a level that came from input data
+        (flex_storagelevel_init outside [0, 1]) or from a consumer without a floor.
+        """
+        cap = self.flex_storage_cap[j]
+        return min(max(level, 0.0), cap) if self.flex_has_floor[j] else min(level, cap)
 
     def _build_profile_refs(self, grid):
         # Optional profile references for time-varying dispatch bounds.

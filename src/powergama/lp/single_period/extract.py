@@ -45,11 +45,9 @@ def store_results_and_update_storage(lp, timestep, results):
         lp._storage[i] = lp.model.varStorage[i].value
         lp._energyspilled[i] = (lp.model.varSpill[i].value + lp.model.varStorageOverflow[i].value) * lp.timeDelta
 
-    # 2. Update flexible load storage
+    # 2. Update flexible load storage, an LP variable like generator storage
     for i in lp._idx_consumersWithFlexLoad:
-        energyIn_flexload = lp.model.varFlexLoad[i].value * lp.timeDelta
-        energyOut_flexload = lp._grid.consumer["flex_fraction"][i] * lp._grid.consumer["demand_avg"][i] * lp.timeDelta
-        lp._storage_flexload[i] += energyIn_flexload - energyOut_flexload
+        lp._storage_flexload[i] = lp.model.varFlexStorage[i].value
 
     # 1c. Record this timestep's dispatch for ramp constraints in next timestep.
     lp._gen_prev[:] = [v if v is not None else 0.0 for v in Pgen]

@@ -161,21 +161,10 @@ def prepare_window(lp, day_timesteps):
     flex_drain_mw: dict = {}  # j → the constant flexible demand it serves, MW
     flex_has_floor: dict = {}  # j → whether the level can be held at or above zero
     for j in flex_set:
-        drain = float(grid.consumer.loc[j, "flex_fraction"]) * float(grid.consumer.loc[j, "demand_avg"])
-        cap = float(grid.consumer.loc[j, "flex_storage"]) * drain
-        # The per-hour charge cap is demand_avg * flex_fraction / flex_on_off, so the
-        # drain can be met hour by hour exactly when flex_on_off <= 1. Where it cannot,
-        # no floor can be imposed without making the window infeasible.
-        on_off = float(grid.consumer.loc[j, "flex_on_off"])
-        has_floor = 0.0 < on_off <= 1.0
-        flex_drain_mw[int(j)] = drain
-        flex_storage_cap[int(j)] = cap
-        flex_has_floor[int(j)] = has_floor
-        # Seed inside the bounds the window will enforce, so hour 0 cannot be
-        # infeasible on a level that came from input data (flex_storagelevel_init
-        # outside [0, 1]) or from an earlier window solved without a floor.
-        ini = float(lp._storage_flexload[j])
-        flex_storage_ini[int(j)] = min(max(ini, 0.0), cap) if has_floor else min(ini, cap)
+        flex_drain_mw[int(j)] = ctx.flex_drain_mw[j]
+        flex_storage_cap[int(j)] = ctx.flex_storage_cap[j]
+        flex_has_floor[int(j)] = ctx.flex_has_floor[j]
+        flex_storage_ini[int(j)] = ctx.flex_storage_seed(j, float(lp._storage_flexload[j]))
         for hi, ts in enumerate(day_timesteps):
             flexload_cost_h[(hi, j)] = float(
                 storage_value.flexload_storage_value(lp._grid, j, lp._storage_flexload[j], ts)

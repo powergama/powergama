@@ -1,6 +1,18 @@
 # Changes
 
 ## unpublished
+2026-10-20
+- **behaviour change:** flexible load is a bounded reservoir in single-period mode too, as in
+  multi-period (#42). Its level is an LP variable kept within `[0, capacity]` (no floor where
+  `flex_on_off > 1`), instead of a state that could overshoot and was pushed back by
+  `flexload_outside_cost` on the next timestep. Results change where the level used to leave
+  that range
+- **behaviour change:** in multi-period mode, a ramp-down limit that cannot be kept after a
+  window's first hour (an energy-limited generator running out) no longer makes the window
+  infeasible: the shortfall is penalised like load shedding. Where the limit can be kept,
+  results differ at most between equally cheap schedules
+- a multi-period window of one timestep now gives the single-period results in every respect,
+  including flexible load
 2026-10-19
 - **behaviour change:** storage is modelled the same way in both modes, and multi-period mode no
   longer prices storage draw twice (#40). The objective no longer charges the storage value per

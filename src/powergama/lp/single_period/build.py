@@ -110,6 +110,8 @@ def create_sets_and_parameters(model, grid, ctx, cfg):
     # the single-period path uses it; the multi-period path prices flexible load per
     # window in _build_day_joint_model instead.
     model.p_loadflex_cost = pyo.Param(model.s_load_flex, within=pyo.Reals, default=0, mutable=True)
+    # Flexible-load reservoir level at the start of the timestep (MWh).
+    model.p_flex_storage_prev = pyo.Param(model.s_load_flex, within=pyo.Reals, default=0, mutable=True)
     if cfg.lossmethod == 2:
         # for storing power losses until next timestep
         model.p_branch_ac_power_loss = pyo.Param(model.s_branch_ac, within=pyo.Reals, default=0, mutable=True)
@@ -163,6 +165,13 @@ def create_variables(model, grid, ctx, cfg):
         model.s_gen_storage, within=pyo.NonNegativeReals, bounds=lambda m, i: (0, ctx.spill_cap_mw[i])
     )
     model.varStorageOverflow = pyo.Var(model.s_gen_storage, within=pyo.NonNegativeReals)
+    # Reservoir level at the end of the timestep. Reals, not NonNegativeReals: the
+    # floor is skipped for a consumer whose charge limit cannot keep up with its drain.
+    model.varFlexStorage = pyo.Var(
+        model.s_load_flex,
+        within=pyo.Reals,
+        bounds=lambda m, j: (0.0 if ctx.flex_has_floor[j] else None, ctx.flex_storage_cap[j]),
+    )
     model.varVoltageAngle = pyo.Var(model.s_node, within=pyo.Reals, initialize=0.0)
 
 
@@ -373,6 +382,15 @@ def create_constraint_load_flex(model, grid, ctx, cfg):
         return expr
 
     model.cFlexload = pyo.Constraint(model.s_load_flex, rule=flexload_rule)
+
+    # Reservoir continuity: level = level_prev + (charge - constant drain) * dt,
+    # with the level bounded to [0, capacity] by the variable's bounds.
+    def flexstorage_rule(model, i):
+        return model.varFlexStorage[i] == model.p_flex_storage_prev[i] + grid.timeDelta * (
+            model.varFlexLoad[i] - ctx.flex_drain_mw[i]
+        )
+
+    model.cFlexStorCont = pyo.Constraint(model.s_load_flex, rule=flexstorage_rule)
 
 
 def create_constraint_storage(model, grid, ctx, cfg):

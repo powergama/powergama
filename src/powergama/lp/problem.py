@@ -251,8 +251,8 @@ class LpProblem:
         A Series argument is aligned on its index; an array is taken positionally.
 
         Generator storage is clipped into `[0, storage_cap]`. Flexible-load levels are
-        taken as given, because the single-period path lets them leave their range on purpose
-        and prices that through `constants.flexload_outside_cost`.
+        taken as given; the LP starts from them moved inside the reservoir's bounds (see
+        `GridContext.flex_storage_seed`).
         """
         if storage is not None:
             values = pd.Series(storage, index=self._grid.generator.index, dtype=float)

@@ -78,6 +78,7 @@ def extract_and_store(lp, m, wd, results, duals, commit_hours=None):
             + sum(float(pyo.value(m.varLoadShed[j, hi]) or 0.0) * const.loadshedcost for j in ctx.load_ids)
             + sum(float(pyo.value(m.varDumpLoad[j, hi]) or 0.0) * const.loadshedcost for j in ctx.load_ids)
             + sum(overflow) * const.loadshedcost
+            + sum(float(pyo.value(m.varRampSlack[i, h])) for (i, h) in m.s_ramp_slack if h == hi) * const.loadshedcost
             + sum(spill) * const.spillcost
             + sum(
                 wd.terminal_storval.get(i, 0.0) * (stor_prev[k] + wd.inflow_h.get((hi, i), 0.0) * dt - stor_levels[k])

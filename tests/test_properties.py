@@ -214,16 +214,16 @@ def test_flexible_load_storage_evolves_multi_period(tmp_path, testcase_9bus_data
     assert flex["value"].abs().max() > TOL, "flexible load was never priced"
 
 
-def test_flexible_load_reservoir_obeys_continuity_multi_period(tmp_path, testcase_9bus_data):
+@pytest.mark.parametrize("mode", ["single_period", "multi_period"])
+def test_flexible_load_reservoir_obeys_continuity(tmp_path, testcase_9bus_data, mode):
     """The reservoir must follow level[t] = level[t-1] + (charge - drain) * dt.
 
-    In this mode the level is an LP variable over the window with a hard capacity,
-    rather than a state clipped after each solve, so it must also stay at or below
-    capacity -- including across the window boundary, where it is carried forward
-    through self._storage_flexload.
+    In both modes the level is an LP variable bounded to [0, capacity] (issue #42),
+    so it must also stay within them -- including across timestep and window
+    boundaries, where it is carried forward through self._storage_flexload.
     """
     data = _with_flexible_load(testcase_9bus_data)
-    res = _solve(data, tmp_path / "flex_continuity.sqlite", mode="multi_period")
+    res = _solve(data, tmp_path / "flex_continuity.sqlite", mode=mode)
     flex = _tables(res)["Res_FlexibleLoad"]
 
     for indx, rows in flex.groupby("indx"):
@@ -232,6 +232,7 @@ def test_flexible_load_reservoir_obeys_continuity_multi_period(tmp_path, testcas
         capacity = data.consumer.loc[indx, "flex_storage"] * drain
 
         assert rows["storage"].max() <= capacity + TOL, f"consumer {indx}: reservoir exceeded capacity"
+        assert rows["storage"].min() >= -TOL, f"consumer {indx}: reservoir went below zero"
         step = rows["storage"].diff().iloc[1:]
         expected = (rows["demand"] - drain).iloc[1:]
         assert (step - expected).abs().max() < 1e-6, f"consumer {indx}: reservoir continuity broken"
