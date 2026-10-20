@@ -161,13 +161,15 @@ class LpProblem:
         _fill_scale = pd.Series(1.0, index=grid.generator.index, dtype=float)
         _fill_scale.loc[_eligible_scaled_fill] = _ini_fill_scale
         _storage_ini = pd.to_numeric(grid.generator.get("storage_ini", 0.0), errors="coerce").fillna(0.0)
-        self._storage = (_fill_scale * _storage_ini * _storage_cap).fillna(0)
-        self._storage_flexload = (
-            grid.consumer["flex_storagelevel_init"]
-            * grid.consumer["flex_storage"]
-            * grid.consumer["flex_fraction"]
-            * grid.consumer["demand_avg"]
-        ).fillna(0)
+        self.set_storage_state(
+            storage=(_fill_scale * _storage_ini * _storage_cap).fillna(0),
+            storage_flexload=(
+                grid.consumer["flex_storagelevel_init"]
+                * grid.consumer["flex_storage"]
+                * grid.consumer["flex_fraction"]
+                * grid.consumer["demand_avg"]
+            ).fillna(0),
+        )
         self._energyspilled = grid.generator["storage_cap"].copy(deep=True)
         self._energyspilled[:] = 0
 
@@ -362,6 +364,7 @@ class LpProblem:
             "cGenMinLimit",  # p_gen_pmin
             "cPump",  # p_pump_pmax
             "cStorCont",  # p_storage_prev, p_storage_inflow
+            "cSpillInflow",  # p_storage_inflow
             "cFlexStorCont",  # p_flex_storage_prev
             "cPowerbalance",  # p_demand, p_branch_*_power_loss
             "cLossAc12",  # p_branch_ac_powerflow12/21

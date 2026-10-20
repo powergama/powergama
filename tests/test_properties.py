@@ -11,6 +11,7 @@ import sqlite3
 
 import pandas as pd
 import pytest
+from rt_case import two_area_data
 
 import powergama
 
@@ -141,6 +142,41 @@ def test_storage_continuity(solved_case):
             assert storage[(t, i)] == pytest.approx(expected, abs=1e-4), (
                 f"storage continuity violated for generator {i} at timestep {t}"
             )
+
+
+def test_spill_within_inflow(solved_case):
+    """Only inflow can be spilled, never stored or pumped energy (#33)."""
+    _mode, data, res = solved_case
+    gen = _tables(res)["Res_Generators"].set_index(["timestep", "indx"])
+    dt = res.grid.timeDelta
+
+    for i in data.getIdxGeneratorsWithStorage():
+        row = data.generator.loc[i]
+        inflow = data.profiles[row["inflow_ref"]] * row["inflow_fac"] * row["pmax"]
+        for t in res.timerange:
+            assert gen.loc[(t, i), "inflow_spilled"] <= inflow[t] * dt + TOL, (
+                f"generator {i} spilled more than its inflow at timestep {t}"
+            )
+
+
+@pytest.mark.parametrize("mode", ["single_period", "multi_period"])
+def test_storage_without_inflow_never_spills(tmp_path, mode):
+    """A full battery in a surplus cannot be used as a free sink by pumping and spilling (#33).
+
+    Must-run generation exceeds demand, so the system has to get rid of power. Before
+    spill was bounded by inflow, the full storage pumped the surplus in and spilled it
+    for next to nothing instead of dump load.
+    """
+    data = two_area_data()
+    gens = data.generator
+    gens.loc[gens["desc"].isin(["gas_a", "coal_b"]), "pmin"] = gens["pmax"]
+    gens.loc[gens["desc"] == "hydro_pump", ["inflow_fac", "storage_ini"]] = [0.0, 1.0]
+    i = gens.index[gens["desc"] == "hydro_pump"][0]
+
+    res = _solve(data, tmp_path / "battery.sqlite", mode=mode)
+    gen = _tables(res)["Res_Generators"]
+    spilled = gen.loc[gen["indx"] == i, "inflow_spilled"]
+    assert (spilled.abs() <= TOL).all(), f"storage without inflow spilled {spilled.sum():.1f} MWh"
 
 
 def test_objective_is_finite(solved_case):

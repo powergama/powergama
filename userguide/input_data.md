@@ -120,7 +120,6 @@ out if the pumping capacity is non-zero.
   "pump_deadband"         | Pumping price dead-band (OPT)                       |  float |   €/MWh
   "gen_lat"               | Latitude (OPT)                                      |  float | degrees
   "gen_lon"               | Longitude (OPT)                                     |  float | degrees
-  "spill_cap_frac"        | Max spilled power, fraction of pmax (OPT)           |  float |   1
   "ramp_up_pu"            | Ramp up limit (OPT) [MP]                            |  float | pu/timestep
   "ramp_down_pu"          | Ramp down limit (OPT) [MP]                          |  float | pu/timestep
   "ramp_daily_reset"      | Whether to reset at midtnight (OPT) [MP]            |  bool  | 
@@ -141,8 +140,7 @@ value for storage generator's storage values. It sets the absolute scale
 in the storage value calculation. `pump_efficiency` is the fraction of
 pumped energy that reaches the storage, and `pump_deadband` is a cost per
 MWh pumped, so pumping pays when the price is below the storage value
-times the efficiency, less the dead-band. `spill_cap_frac` limits the
-power a storage generator can spill, as a fraction of `pmax`. `storage_capacity` is the capacity of
+times the efficiency, less the dead-band. `storage_capacity` is the capacity of
 the storage system. This is usually relevant only for hydro power and
 solar CSP. `storagevalue_ref` is the string identifier of the associated
 storage value table to be used for this generator/storage system
