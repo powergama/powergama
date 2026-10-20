@@ -59,7 +59,9 @@ def add_target_tracking(model, grid, ctx, rt):
     def rt_target_rule(model, i):
         if int(i) not in rt.ctx.target_gen_indices:
             return pyo.Constraint.Skip
-        return model.varGeneration[i] - model.p_rt_target[i] == model.varRtTargetDevPos[i] - model.varRtTargetDevNeg[i]
+        return (
+            model.varGeneration[i, 0] - model.p_rt_target[i] == model.varRtTargetDevPos[i] - model.varRtTargetDevNeg[i]
+        )
 
     model.cRtTargetTracking = pyo.Constraint(model.s_gen, rule=rt_target_rule)
 
@@ -75,7 +77,7 @@ def add_flexload_target_tracking(model, grid, ctx, rt):
         if int(j) not in rt.ctx.consumer_target_indices:
             return pyo.Constraint.Skip
         return (
-            model.varFlexLoad[j] - model.p_rt_flexload_target[j]
+            model.varFlexLoad[j, 0] - model.p_rt_flexload_target[j]
             == model.varRtFlexLoadTargetDevPos[j] - model.varRtFlexLoadTargetDevNeg[j]
         )
 
@@ -88,10 +90,10 @@ def add_storage_target_tracking(model, grid, ctx, rt):
     def rt_storage_target_rule(model, i):
         if int(i) not in rt.ctx.storage_target_indices:
             return pyo.Constraint.Skip
-        lhs = model.p_rt_storage_balance_rhs[i] - (grid.timeDelta * model.varGeneration[i])
+        lhs = model.p_rt_storage_balance_rhs[i] - (grid.timeDelta * model.varGeneration[i, 0])
         if int(i) in model.s_gen_pump:
             pump_eff = float(grid.generator.loc[i, "pump_efficiency"])
-            lhs += grid.timeDelta * pump_eff * model.varPump[i]
+            lhs += grid.timeDelta * pump_eff * model.varPump[i, 0]
         return (
             lhs - model.p_rt_storage_target[i] == model.varRtStorageTargetDevPos[i] - model.varRtStorageTargetDevNeg[i]
         )
@@ -106,7 +108,7 @@ def add_border_flow_target_tracking(model, grid, ctx, rt):
         if int(b) not in rt.ctx.idx_border_ac:
             return pyo.Constraint.Skip
         return (
-            model.p_rt_io_target_active_ac[b] * (model.varAcBranchFlow[b] - model.p_rt_io_target_ac[b])
+            model.p_rt_io_target_active_ac[b] * (model.varAcBranchFlow[b, 0] - model.p_rt_io_target_ac[b])
             == model.varRtIoTargetDevPosAc[b] - model.varRtIoTargetDevNegAc[b]
         )
 
@@ -114,7 +116,7 @@ def add_border_flow_target_tracking(model, grid, ctx, rt):
         if int(b) not in rt.ctx.idx_border_dc:
             return pyo.Constraint.Skip
         return (
-            model.p_rt_io_target_active_dc[b] * (model.varDcBranchFlow[b] - model.p_rt_io_target_dc[b])
+            model.p_rt_io_target_active_dc[b] * (model.varDcBranchFlow[b, 0] - model.p_rt_io_target_dc[b])
             == model.varRtIoTargetDevPosDc[b] - model.varRtIoTargetDevNegDc[b]
         )
 

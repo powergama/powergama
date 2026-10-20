@@ -36,8 +36,8 @@ def apply_da_locks(lp, rt, timestep):
                 if not np.isfinite(da_output):
                     da_output = 0.0
                 da_output = max(0.0, da_output)
-                lp.model.p_gen_pmin[i] = da_output
-                lp.model.p_gen_pmax[i] = da_output
+                lp.model.p_gen_pmin[i, 0] = da_output
+                lp.model.p_gen_pmax[i, 0] = da_output
 
     # Foreign consumers fixed to their DA demand.
     if rt.locks.foreign_cons_lock is not None:
@@ -46,7 +46,7 @@ def apply_da_locks(lp, rt, timestep):
             if key in rt.locks.foreign_cons_lock.index:
                 locked_demand = float(rt.locks.foreign_cons_lock.loc[key])
                 if np.isfinite(locked_demand):
-                    lp.model.p_demand[i] = locked_demand
+                    lp.model.p_demand[i, 0] = locked_demand
 
     # Border-flow windows as variable bounds, reset to none where this timestep has
     # no window. The branch rating stays with cMaxFlowAc/cMaxFlowDc (issue #39).
@@ -55,7 +55,8 @@ def apply_da_locks(lp, rt, timestep):
 
 
 def _set_flow_bounds(var, lb_series, ub_series, timestep):
-    for b in var:
+    # RT runs in windows of one timestep: hour 0 of the window is the timestep.
+    for b, h in var:
         key = (int(timestep), int(b))
         lb = ub = None
         if lb_series is not None and ub_series is not None and key in lb_series.index and key in ub_series.index:
@@ -65,8 +66,8 @@ def _set_flow_bounds(var, lb_series, ub_series, timestep):
                 lb = None
             if not np.isfinite(ub):
                 ub = None
-        var[b].setlb(lb)
-        var[b].setub(ub)
+        var[b, h].setlb(lb)
+        var[b, h].setub(ub)
 
 
 def update_generator_targets(lp, rt, timestep):
@@ -175,7 +176,7 @@ def update_deviation_prices(lp, rt, timestep):
     for i in lp.model.s_load_flex:
         if int(i) in rt.ctx.consumer_target_indices:
             # Flex load / load-shedding: c+ = c0 + c_flex, c- = c0 - c_flex
-            _flex_cost = float(pyo.value(lp.model.p_loadflex_cost[i]))
+            _flex_cost = float(pyo.value(lp.model.p_loadflex_cost[i, 0]))
             _c_flex_pos = _fee + _flex_cost
             _c_flex_neg = _fee - _flex_cost
             _c_flex_pos, _c_flex_neg = _enforce_split_sum_guard(_c_flex_pos, _c_flex_neg)

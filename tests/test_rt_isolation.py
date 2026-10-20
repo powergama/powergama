@@ -49,7 +49,7 @@ def _offences(path):
 
 def test_core_modules_exist():
     names = {p.relative_to(LP_PACKAGE).as_posix() for p in CORE_MODULES}
-    assert {"problem.py", "extension.py", "single_period/build.py", "single_period/data.py"} <= names
+    assert {"problem.py", "extension.py", "formulation/build.py", "formulation/data.py"} <= names
 
 
 def test_core_never_names_rt():

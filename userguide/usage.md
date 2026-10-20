@@ -63,19 +63,24 @@ lp = powergama.LpProblem(
 much of each window is kept before the next window starts. Setting `commit_hours`
 below `horizon_hours` gives a rolling horizon with lookahead (e.g. 48/24).
 
+This is the same LP as the single-period mode, over a window of `horizon_hours`
+timesteps instead of one: `horizon_hours=1` gives the single-period results. Any
+solver works, with the same `solve()` options. Losses (`lossmethod` 1 or 2) and
+extensions such as `RtExtension` need `horizon_hours=1`.
+
 Storage values — both for generators and for flexible load — are evaluated once per
 window from the filling level at the start of it, since the whole window is a single
-LP and the value has to enter as a constant coefficient. The single-period mode instead
-re-prices from the current filling level before every time step. For flexible load
-this also means the reservoir level is a bounded variable within the window rather
-than a level clipped after each solve, so it cannot leave `[0, capacity]` the way it
-can in single-period mode. See [model_description.md](model_description.md).
+LP and the value has to enter as a constant coefficient. The single-period mode
+re-prices from the current filling level before every time step, being a window of
+one. See [model_formulations.md](model_formulations.md) and
+[model_description.md](model_description.md).
 
 ## 3. Balancing market (deviations from day-ahead)
 
 This simulation mode can be run after a day-ahead simulation to represent the balancing ("real-time") market, where there may be a cost for deviations from
 the day-ahead schedule. It is an extension of the single-period mode, switched on by
-passing `RtExtension` to the problem.
+passing `RtExtension` to the problem. Model components are indexed by hour in the
+window, `[·, h]`, and in single-period mode `h` is 0: `lp.model.varGeneration[i, 0]`.
 
 In the example below, `rt_lock_profile` is the day-ahead schedule for the given
 generator, as a fraction of its `pmax`.

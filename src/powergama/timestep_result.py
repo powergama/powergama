@@ -1,16 +1,12 @@
 """The contract between a solved LP and the results database.
 
 :class:`TimestepResult` names, once, the values the results database expects for a
-single timestep. Both solve paths in :mod:`powergama.lp` -- the sequential
-single-period loop and the multi-period rolling horizon -- build one of these and call
+single timestep. The solve loop in :mod:`powergama.lp` builds one for each committed
+timestep of a window (``lp.formulation.extract``) and calls
 :meth:`TimestepResult.store`, so there is a single site that knows the shape of
-``Results.addResultsFromTimestep``.
-
-The two paths read from genuinely different objects (single-period from ``self.var*[i]`` and
-``self.dual``, multi-period from a separate ``(entity, hour)``-indexed model and a dual
-dictionary), so what is shared here is the *contract*, not the extraction. Nothing in
-this module touches a Pyomo model or an ``LpProblem``; ``results`` is used only for the
-one call, and no ``Results`` type is imported.
+``Results.addResultsFromTimestep``. Nothing in this module touches a Pyomo model or an
+``LpProblem``; ``results`` is used only for the one call, and no ``Results`` type is
+imported.
 
 Ordering is part of the contract. Every list is positional, and the position means
 something different per field -- generator order, node order, "generators with storage"

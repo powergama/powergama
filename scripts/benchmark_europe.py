@@ -8,7 +8,7 @@ branch and on the change, same machine, same arguments, and compare.
     poetry run python scripts/benchmark_europe.py --mode multi_period --steps 168
 
 The phases are measured by wrapping the LpProblem methods the solve loop calls,
-so "solve+other" is everything in the loop that is neither the per-timestep
+so "solve+other" is everything in the loop that is neither the per-window
 update nor the result extraction: mainly the solver call, plus APPSI's update of
 the solver's copy of the model.
 """
@@ -45,8 +45,14 @@ def load_grid(steps):
 
 
 def timed(lp, name, totals):
-    """Replace lp.<name> with a wrapper that accumulates its wall time."""
-    inner = getattr(lp, name)
+    """Replace lp.<name> with a wrapper that accumulates its wall time.
+
+    Methods the LpProblem does not have are skipped, so the same script times
+    older versions too.
+    """
+    inner = getattr(lp, name, None)
+    if inner is None:
+        return
 
     def wrapper(*args, **kwargs):
         t0 = time.perf_counter()

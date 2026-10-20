@@ -47,24 +47,33 @@ def test_lossmethod_with_single_period_mode_is_allowed(testcase_9bus_data):
     assert lp is not None
 
 
-def test_daily_reset_with_partial_commit_window_raises(testcase_9bus_data):
-    """ramp_daily_reset only means "midnight" when the commit window is a whole day.
+def test_daily_reset_with_partial_commit_window_releases_only_at_midnight(tmp_path, testcase_9bus_data):
+    """ramp_daily_reset means midnight, whatever the commit window (issue #42).
 
-    The multi-period path releases the ramp constraint at every commit-window boundary;
-    with commit_hours=1 that is every hour, which left the ramp constraints empty.
+    It used to be released at every commit-window boundary, which with commit_hours=1
+    was every hour, and so this combination was rejected. Now the limit into a midnight
+    hour is lifted wherever in a window that hour falls.
     """
     data = testcase_9bus_data
+    mask = ~data.generator["type"].isin(["wind", "csp", "nuclear"])
     data.generator["ramp_daily_reset"] = True
-    data.generator["ramp_up_pu"] = 0.05
-    data.generator["ramp_down_pu"] = 0.05
+    data.generator["ramp_up_pu"] = float("nan")
+    data.generator["ramp_down_pu"] = float("nan")
+    data.generator.loc[mask, "ramp_up_pu"] = 0.05
+    data.generator.loc[mask, "ramp_down_pu"] = 0.05
 
-    with pytest.raises(NotImplementedError, match="ramp_daily_reset"):
-        powergama.LpProblem(
-            data,
-            objective_mode="multi_period",
-            horizon_hours=24,
-            commit_hours=1,
-        )
+    lp = powergama.LpProblem(data, objective_mode="multi_period", horizon_hours=24, commit_hours=1)
+    res = powergama.Results(data, tmp_path / "reset.sqlite")
+    lp.solve(res, solver="appsi_highs")
+
+    limit = 0.05 * data.generator["pmax"]
+    p_now = res.db.getResultGeneratorPowerAll(0)
+    for t in range(1, data.profiles.shape[0]):
+        p_prev, p_now = p_now, res.db.getResultGeneratorPowerAll(t)
+        if t % 24 == 0:
+            continue
+        for i in data.generator.index[mask]:
+            assert abs(p_now[i] - p_prev[i]) <= limit[i] + 1e-6, f"generator {i} broke its ramp limit at t={t}"
 
 
 def test_daily_reset_with_whole_day_commit_is_allowed(testcase_9bus_data):

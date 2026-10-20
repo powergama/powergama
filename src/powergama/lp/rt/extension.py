@@ -25,7 +25,7 @@ class RtExtension(ModelExtension):
       targets and day-ahead storage prices.
 
     The objective drops the operating cost and minimises the priced deviations
-    plus load shedding. Single-period mode only.
+    plus load shedding. Windows of one timestep only (single-period mode).
 
     Parameters
     ----------
@@ -77,7 +77,8 @@ class RtExtension(ModelExtension):
     def add_variables(self, model, grid, ctx):
         rt_build.add_deviation_vars(model)
 
-    def edit_objective_terms(self, model, terms):
+    def edit_objective_terms(self, model, terms, h):
+        # Windows of one timestep only (supports_multi_period is False), so h is 0.
         rt_build.edit_objective_terms(model, self, terms)
 
     def add_constraints(self, model, grid, ctx):

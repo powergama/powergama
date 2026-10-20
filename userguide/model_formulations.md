@@ -1,127 +1,124 @@
-# The two formulations, side by side
+# One formulation, over a window of timesteps
 
-PowerGAMA poses the dispatch problem in two ways. They model the same power
-system and should agree, but they do not — and the differences are not all
-deliberate.
-
-This document maps one onto the other, component by component, so that the
-differences are visible rather than discovered. It is the reference for merging
-them, which is the intended direction of travel.
+PowerGAMA solves one LP, over a **window** of `H` consecutive timesteps. The two
+simulation modes differ only in the window:
 
 | | single-period | multi-period |
 |---|---|---|
 | selected by | `objective_mode="single_period"` (default) | `objective_mode="multi_period"` |
-| one LP covers | one timestep | `horizon_hours` timesteps |
-| built by | [`lp/single_period/build.py`](../src/powergama/lp/single_period/build.py) | [`lp/multi_period/build.py`](../src/powergama/lp/multi_period/build.py) |
-| data from | [`single_period/data.py`](../src/powergama/lp/single_period/data.py) | [`multi_period/data.py`](../src/powergama/lp/multi_period/data.py) |
-| built | once, then mutated in place each timestep | rebuilt for every window |
-| time-varying data enters as | mutable `Param`s rewritten per timestep | constants baked in at build time |
-| storage state | an LP variable, `varStorage`, carried on the `LpProblem` between solves | an LP variable, `varStorage`, carried between windows |
-| supports losses | yes (`lossmethod` 0/1/2) | no — rejected at construction |
-| supports real-time | yes (`RtExtension`) | no — rejected at construction |
+| window length `H` | 1 | `horizon_hours` |
+| timesteps stored from each window | 1 | `commit_hours` (at most `horizon_hours`) |
+| losses (`lossmethod` 1, 2) | yes | only with `horizon_hours=1` |
+| extensions (e.g. `RtExtension`) | yes | only with `horizon_hours=1` |
 
-A window of length 1 is the single-period problem. See **Where they disagree**.
+A multi-period run with `horizon_hours=1` *is* a single-period run, and
+`tests/test_sim_single_period_rolling_equiv.py` checks it gives the same results.
+
+| | module |
+|---|---|
+| the model | [`lp/formulation/build.py`](../src/powergama/lp/formulation/build.py) |
+| the data for each window | [`lp/formulation/data.py`](../src/powergama/lp/formulation/data.py) |
+| the results of each window | [`lp/formulation/extract.py`](../src/powergama/lp/formulation/extract.py) |
+| the solve loop | [`lp/problem.py`](../src/powergama/lp/problem.py) |
+
+The model is **built once per window length**, and its mutable `Param`s are
+rewritten for every window rather than the model rebuilt. Only a multi-period run
+whose last window is cut short builds a second model, for that length.
 
 ## Index sets
 
-Every set is the same content in both, except that the multi-period model adds
-an hour dimension. Each variable and constraint indexed `[x]` in one is indexed
-`[x, h]` in the other.
+Every variable, and every constraint that applies hour by hour, is indexed by the
+entity and the hour `h` in the window: `varGeneration[i, h]`, `cPowerbalance[n, h]`.
+In single-period mode `h` is always 0.
 
-| set | single-period | multi-period |
-|---|---|---|
-| nodes, generators, loads, AC/DC branches | `s_node`, `s_gen`, `s_load`, `s_branch_ac`, `s_branch_dc` | same |
-| pumping, storage, flexible load | `s_gen_pump`, `s_gen_storage`, `s_load_flex` | same |
-| hours in the window | — | `s_h` |
-| NTC rows | `s_inter_area_ntc` | `s_ntc` |
-| areas | `s_area` (declared, unused) | — |
+| set | |
+|---|---|
+| nodes, generators, loads, AC/DC branches | `s_node`, `s_gen`, `s_load`, `s_branch_ac`, `s_branch_dc` |
+| pumping, storage, flexible load | `s_gen_pump`, `s_gen_storage`, `s_load_flex` |
+| hours in the window | `s_h` |
+| (generator, hour) pairs with a ramp limit to the hour before | `s_ramp_up`, `s_ramp_dn` — hours ≥ 1 only |
+| NTC rows | `s_inter_area_ntc` |
 
-Both are initialised from the same lists, which
-[`GridContext`](../src/powergama/lp/context.py) now holds, so neither formulation
-depends on the other having been built.
+They are initialised from the lists [`GridContext`](../src/powergama/lp/context.py)
+holds.
 
 ## Variables
 
-| quantity | single-period | multi-period |
-|---|---|---|
-| generation, pumping, flexible load | `varGeneration`, `varPump`, `varFlexLoad` | same, `[·, h]` |
-| load shed, dump load | `varLoadShed`, `varDumpLoad` | same, `[·, h]` |
-| AC/DC flow, voltage angle | `varAcBranchFlow`, `varDcBranchFlow`, `varVoltageAngle` | same, `[·, h]` |
-| generator storage level | `varStorage` | `varStorage` |
-| inflow spilled | `varSpill` | `varSpill` |
-| storage overflow (penalised slack) | `varStorageOverflow` | `varStorageOverflow` |
-| flexible-load reservoir | `varFlexStorage` | `varFlexStorage` |
-| ramp-down shortfall after a window's first hour | — | `varRampSlack` |
-| directional flow and losses | `varAcBranchFlow12/21`, `varLossAc12/21`, and the DC pair | — (no losses) |
-| RT deviations | the `varRt*` family | — (no RT) |
+| quantity | |
+|---|---|
+| generation, pumping, flexible load | `varGeneration`, `varPump`, `varFlexLoad` |
+| load shed, dump load | `varLoadShed`, `varDumpLoad` |
+| AC/DC flow, voltage angle | `varAcBranchFlow`, `varDcBranchFlow`, `varVoltageAngle` |
+| generator storage level, at the end of each hour | `varStorage` |
+| inflow spilled, and storage overflow (penalised slack) | `varSpill`, `varStorageOverflow` |
+| flexible-load reservoir level | `varFlexStorage` |
+| ramp-down shortfall, hours ≥ 1 | `varRampSlack` |
+| directional flow and losses (`lossmethod=1`) | `varAcBranchFlow12/21`, `varLossAc12/21`, and the DC pair |
+| RT deviations (`RtExtension`) | the `varRt*` family |
 
 ## Constraints
 
-Only `cPowerbalance` and `cFlowAngle` keep their names across both. The rest are
-the same physics under different names, or genuinely only exist on one side.
+| physics | |
+|---|---|
+| nodal power balance | `cPowerbalance` |
+| flow vs. angle difference, reference node | `cFlowAngle`, `cReferenceNode` |
+| branch capacity | `cMaxFlowAc`, `cMaxFlowDc` — two-sided rows, whose duals are the capacity sensitivities |
+| inter-area NTC | `cInterAreaNtcForward`/`Backward` |
+| generator output limits | `cGenMaxLimit`/`cGenMinLimit`, against `p_gen_pmax`/`p_gen_pmin` |
+| pumping | `cPump`, against `p_pump_pmax` |
+| flexible load | `cFlexload`; reservoir `cFlexStorCont`, with capacity and floor as variable bounds |
+| storage continuity | `cStorCont`, with capacity and spill limits as variable bounds |
+| losses (`lossmethod=1`) | `cFlowAc`/`cFlowDc`, `cLossAc12/21`, `cLossDc12/21` |
+| between consecutive hours (hours ≥ 1) | `cGenUbStorAvail`, `cPumpRoom`, `cRampUp`, `cRampDn` |
+| RT target tracking (`RtExtension`) | `cRtTargetTracking` and four siblings |
 
-| physics | single-period | multi-period |
-|---|---|---|
-| nodal power balance | `cPowerbalance[n]` | `cPowerbalance[n, h]` |
-| flow vs. angle difference | `cFlowAngle[b]` | `cFlowAngle[b, h]` |
-| reference node | `cReferenceNode` constraint | angle variables *fixed* in a loop, no component |
-| branch capacity | `cMaxFlowAc`, `cMaxFlowDc` — one two-sided `pyo.inequality` | `cAcFlowLb`/`cAcFlowUb`, `cDcFlowLb`/`cDcFlowUb` — four one-sided rows |
-| inter-area NTC | `cInterAreaNtcForward`/`Backward` | `cNtcFwd`/`cNtcBwd` |
-| generator output limits | `cGenMaxLimit`/`cGenMinLimit`, against mutable `p_gen_pmax`/`p_gen_pmin` | `cGenUbNs`, `cGenLbNs`, plus `cGenUbStorAvail`, `cGenUbStorCap`, `cGenLbStor` for storage |
-| pumping | `cPump`, with `p_pump_pmax` recomputed per timestep | `cPumpCap` + `cPumpRoom` |
-| flexible load | `cFlexload` | `cFlexUb` |
-| ramp limits | **no constraint** — variable bounds tightened each timestep | `cRampUp`, `cRampDn` |
-| storage continuity | `cStorCont`; capacity and spill limits as variable bounds | the same |
-| flexible-load reservoir | `cFlexStorCont`; capacity and floor as variable bounds | `cFlexStorCont`, `cFlexStorCap`, `cFlexStorFloor` |
-| losses | `cFlowAc`/`cFlowDc`, `cLossAc12/21`, `cLossDc12/21` | — |
-| RT target tracking | `cRtTargetTracking` and three siblings | — |
+### The first hour, and the hours after it
 
-The pattern: wherever the single-period path keeps state *outside* the LP and
-enforces it between solves, the multi-period path has to make it a variable with
-a continuity constraint, because the whole window is solved at once. Generator
-storage is the exception: both make its level a variable, and the single-period
-path carries it from one solve to the next.
+The window's first hour depends on the simulation state, which `data.py` computes
+before the solve and writes into `Param`s:
+
+- `p_storage_prev` and `p_flex_storage_prev`, the levels the window starts from;
+- the generator bounds `p_gen_pmin[i, 0]`/`p_gen_pmax[i, 0]`, which include the
+  availability from storage and the ramp limits around the previous dispatch. Where
+  a generator cannot keep to its ramp-down limit — a CSP plant that runs empty — the
+  floor is dropped (`pmin = min(pmin, pmax)`) rather than making the LP infeasible;
+- `p_pump_pmax[i, 0]`, limited by the room left in the storage.
+
+Later hours depend on the hour before, which is solved together with them, so the
+same limits are constraints on its variables: `cStorCont` and `cFlexStorCont` chain
+the levels, `cGenUbStorAvail` limits generation from storage to what the hour
+before left, `cPumpRoom` limits pumping to the room it left, and `cRampUp`/`cRampDn`
+limit the change in output. A ramp-down limit that cannot be kept has a slack,
+`varRampSlack`, priced like load shedding, so a window is never infeasible. None of
+these exist in a window of one timestep.
+
+A generator with `ramp_daily_reset` is free to change its output at midnight
+(`timestep % 24 == 0`): in the first hour its previous dispatch is forgotten, and
+in later hours its ramp limit into midnight is lifted.
 
 ## Objective
 
-Both are named `OBJ` and minimise cost, and both value storage the same way:
-nothing per MWh generated from storage, and the energy left in storage at the end
-of the LP valued at the storage value, as a **terminal storage value** term. In
-single-period the end is the end of the timestep; in multi-period, of the window.
-The storage value is fixed for the LP from the filling level at its start, which
-in multi-period means it does not respond to the level within a window.
+`OBJ` minimises cost. `build.objective_terms` gives the terms of each hour by name
+— operating cost, load shedding and other penalty slacks, and in the last hour the
+value of the energy left in storage — and an extension may edit them
+(`ModelExtension.edit_objective_terms`).
 
-Every per-step term is a cost rate in EUR/h; the terminal term is an amount in
-EUR and is divided by `dt`. The multi-period objective sums the per-step terms
-over `h`.
+Storage is valued only at the end of the window: nothing per MWh generated from
+storage, and the energy left in it valued at the storage value. That value is
+fixed for the window from the filling level at its start, so in a multi-period
+window it does not respond to the level within the window.
 
-## Where they disagree
+Every term is a cost rate in EUR/h; the terminal storage value is an amount in EUR
+and is divided by `dt`. The objective stored for each timestep is that hour's
+terms, with the value of the energy left in storage replaced by the value of the
+energy taken from it during the hour.
 
-Nowhere, for a window of 1: `tests/test_sim_single_period_rolling_equiv.py`
-checks that dispatch, storage, flexible-load storage, flows and prices agree on
-`data_9bus` and on `two_area` (pumping, ramp limits, flexible load, HVDC, a
-binding NTC). The last differences were settled before merging the two (#42):
+## History
 
-- **Storage** was priced twice in multi-period, per MWh generated and through
-  the terminal value (#40). Both now value it only at the end of the LP.
-- **Ramp limits for energy-limited generators.** Single-period applies
-  `pmin_now = min(pmin_now, pmax_now)`, which drops the ramp-down floor when the
-  availability bound is tighter — a CSP plant that empties ramps down past its
-  limit rather than making the timestep infeasible. Multi-period applies the same
-  guard to the first hour of each window, whose availability is known before the
-  solve. Later hours' availability depends on the solve, so there the ramp-down
-  limit has a slack, `varRampSlack`, priced like load shedding: a window is never
-  infeasible, and the slack is zero whenever the limit can be kept.
-- **Flexible load** is a bounded reservoir in both: `varFlexStorage` with a
-  continuity equality and `[0, capacity]` bounds, valued per MWh consumed. The
-  floor is skipped where `flex_on_off > 1`, since the per-timestep charge limit is
-  then below the drain and no schedule could hold the level non-negative; only
-  there does `constants.flexload_outside_cost` still come into play.
-
-## Features the multi-period path silently ignores
-
-Supported by the single-period solve loop and not implemented for windows:
-`savefiles`, `warmstart`, `solver_path`, `aclossmultiplier`/`dclossmultiplier`,
-`_relax_and_retry`, `_update_progress`, the shared `dual` handle, and the
-`lossmethod` pre-solve. Deciding which of these a merged formulation gains and
-which get deleted is part of the merge, not a precondition for it.
+The two modes used to be separate formulations, `lp/single_period/` and
+`lp/multi_period/`, which disagreed: multi-period priced storage draw twice (#40),
+bounded flexible load where single-period did not, applied ramp limits without
+single-period's guard, and was rebuilt for every window without the single-period
+solve loop's features (`solver` choice and duals, `warmstart`, `savefiles`,
+`_relax_and_retry`, progress reporting). They were made to agree and then merged
+(#42).

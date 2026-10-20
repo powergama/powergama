@@ -31,13 +31,10 @@ from . import solver as solver_mod
 from . import storage_value
 from .config import CONFIG_ATTRS, LpConfig
 from .context import CONTEXT_ATTRS, GridContext
-from .multi_period import build as mp_build
-from .multi_period import data as mp_data
-from .multi_period import extract as mp_extract
+from .formulation import build as formulation_build
+from .formulation import data as formulation_data
+from .formulation import extract as formulation_extract
 from .objective_trace import write_objective_trace
-from .single_period import build as sp_build
-from .single_period import data as sp_data
-from .single_period import extract as sp_extract
 
 
 class LpProblem:
@@ -63,9 +60,8 @@ class LpProblem:
     objective_mode : str
         "single_period" (default) solves one LP per timestep in sequence, carrying storage
         state forward between solves. "multi_period" solves a joint LP over a window
-        of `horizon_hours` with storage continuity inside the optimisation.
-        These are not equivalent at horizon_hours=1 -- see
-        tests/test_sim_single_period_rolling_equiv.py.
+        of `horizon_hours` with storage continuity inside the optimisation. Both are
+        the same LP (lp.formulation): single-period is a window of one timestep.
     horizon_hours : int
         Length of the optimisation window, in hours. "multi_period" mode only.
     commit_hours : int
@@ -77,15 +73,14 @@ class LpProblem:
         Scales the initial storage filling level of hydro-with-pumping and battery
         generators, relative to `storage_ini` in the grid data.
     extensions : list of ModelExtension
-        Optional additions to the single-period model, e.g.
+        Optional additions to the model, e.g.
         :class:`powergama.lp.rt.RtExtension` for balancing ("real-time") simulation.
         See :mod:`powergama.lp.extension`.
 
     Notes
     =====
-    Unsupported mode combinations raise NotImplementedError at construction:
-    an extension with "multi_period", lossmethod != 0 with "multi_period", and
-    ramp_daily_reset with commit_hours != 24.
+    Unsupported combinations raise NotImplementedError at construction: an
+    extension, or lossmethod != 0, with windows longer than one timestep.
     """
 
     def __init__(
@@ -99,10 +94,11 @@ class LpProblem:
         storage_initial_fill_scale=1.0,
         extensions=None,
     ):
-        # 1. The Pyomo model. Its identity must be preserved for the whole of solve():
-        #    APPSI's incremental update and gurobi_persistent.set_instance both key off
-        #    the object, so rebinding self.model mid-run would silently desynchronise
-        #    the solver from the model it was given.
+        # 1. The Pyomo model. APPSI's incremental update and
+        #    gurobi_persistent.set_instance both key off the object, so a solver must
+        #    only ever be handed the model it was created for. self.model is the model
+        #    for windows of the configured length; a window cut short at the end of a
+        #    multi-period run gets a model and solver of its own (_use_window_model).
         self.model = pyo.ConcreteModel()
 
         # 2. Compute matrices used in power flow equaions
@@ -147,7 +143,6 @@ class LpProblem:
         # self._idx_generatorsWithStorage and so on; __getattr__ resolves those
         # against the context.
         self._ctx = GridContext.from_grid(grid, self._Bbus, self._DA, self.refnodes)
-        self._cfg.check_ramp_daily_reset(self._ctx.ramp_daily_reset)
         # Previous-timestep generation dispatch; NaN signals first timestep (no ramp constraint).
         self._gen_prev = np.full(len(grid.generator), np.nan)
         # self._fancy_progressbar = False
@@ -181,10 +176,16 @@ class LpProblem:
         for ext in self._extensions:
             ext.prepare(self, grid)
 
-        # 4. Build the Pyomo model. Order is load-bearing -- see single_period.build.
-        #    The term names tell result extraction whether an extension removed the
-        #    storage value from the objective.
-        self._objective_term_names = sp_build.build_model(self.model, grid, self._ctx, self._cfg, self._extensions)
+        # 4. Build the Pyomo model. Order is load-bearing -- see formulation.build.
+        #    The objective's terms per hour tell result extraction what to report, and
+        #    whether an extension removed the storage value from the objective.
+        H = self._cfg.window_hours
+        self._objective_by_hour = formulation_build.build_model(
+            self.model, grid, self._ctx, self._cfg, H, self._extensions
+        )
+        self._objective_term_names = self._objective_by_hour[-1][0]
+        # model, objective by hour, solver, dual handle -- per window length
+        self._window_models = {H: [self.model, self._objective_by_hour, None, None]}
 
     def __getattr__(self, name):
         """Fall through to the config, then the grid context, then the Pyomo model.
@@ -305,133 +306,83 @@ class LpProblem:
             hour = int(offset) % int(self._horizon_hours)
             self._timestep_day_hour[int(ts)] = (day, hour)
 
-    # ------------------------------------------------------------------
-    # 24-hour joint optimisation
-    # ------------------------------------------------------------------
+    def _windows(self, timesteps_to_solve):
+        """The windows to solve, in order: lists of timesteps.
 
-    def _solve_and_store_day_joint(self, day_timesteps, results, solver_name, commit_hours=None):
-        """Build, solve, and store results for one rolling-horizon LP window.
-
-        Creates a fresh APPSI HiGHS instance for the day model, respecting
-        the same environment variable seeds/threads as the single-period path.
+        A window of `horizon_hours` timesteps starts every `commit_hours`; in
+        single-period mode both are 1. Windows at the end of the run are cut short.
         """
-        ts0 = day_timesteps[0]
-        if commit_hours is None:
-            commit_hours = len(day_timesteps)
-        commit_hours = int(max(1, min(int(commit_hours), len(day_timesteps))))
-        target_horizon = int(max(1, int(self._horizon_hours)))
-        solve_h = int(len(day_timesteps))
-        tail_note = ""
-        if solve_h < target_horizon:
-            tail_note = f", tail-window truncated from target {target_horizon}h"
-        print(
-            f"\n[24h joint] window starting at timestep {ts0} ({solve_h}h solve, {commit_hours}h commit{tail_note}) ..."
-        )
-        wd = mp_data.prepare_window(self, day_timesteps)
-        m = mp_build.build_window_model(self, wd)
-        print(
-            f"  Model built: {len(list(m.s_gen)) * len(day_timesteps)} gen×h vars, "
-            f"{len(list(m.s_node)) * len(day_timesteps)} node×h power-balance constraints"
-        )
+        H, commit = self._cfg.window_hours, self._cfg.window_commit
+        timesteps = list(timesteps_to_solve)
+        return [timesteps[start : start + H] for start in range(0, len(timesteps), commit)]
 
-        day_opt = solver_mod.create_window_solver(solver_name)
+    def _use_window_model(self, H, solver, solver_path, solve_args):
+        """Make the model for windows of *H* timesteps the active one, building it if needed.
 
-        res = day_opt.solve(m)
-        if res.termination_condition != appsi.base.TerminationCondition.optimal:
-            raise RuntimeError(f"[24h joint] non-optimal at timestep {ts0}: {res.termination_condition}")
-        day_opt.load_vars()
-        duals = day_opt.get_duals()
-        print("  Solved OK. Extracting results ...")
-        mp_extract.extract_and_store(self, m, wd, results, duals, commit_hours=commit_hours)
-
-    # ------------------------------------------------------------------
+        Only windows cut short at the end of a multi-period run have another length
+        than the model built in __init__. Each length keeps its own model and its own
+        solver for the whole of solve(): APPSI's incremental update and
+        gurobi_persistent.set_instance key off the model object, so a solver must only
+        ever be handed the one model it was created for.
+        """
+        if H not in self._window_models:
+            model = pyo.ConcreteModel()
+            objective = formulation_build.build_model(model, self._grid, self._ctx, self._cfg, H, self._extensions)
+            self._window_models[H] = [model, objective, None, None]
+        entry = self._window_models[H]
+        if entry[2] is None:
+            opt = solver_mod.create_solver(solver, entry[0], solver_path=solver_path, solve_args=solve_args)
+            entry[2], entry[3] = opt, solver_mod.create_dual_handle(opt, entry[0])
+        self.model, objective, opt, self.dual = entry
+        self._objective_by_hour = objective
+        self._objective_term_names = objective[-1][0]
+        return opt
 
     def _relax_and_retry(self, opt, warmstart, count, solve_args):
         raise NotImplementedError
 
-    # TODO: Update to allow persistent model solving
-    # (remove+add constraint instead of mutable parameters)
-    def _updateLpProblem(self, timestep):
-        """Rewrite the model's parameters and bounds for *timestep*.
+    def _updateLpProblem(self, timesteps):
+        """Rewrite the model's parameters for the window of *timesteps*.
 
         Kept as a method because it is an extension seam, not merely a long
         function: LpFaultProblem overrides it, reseeds storage from a baseline
         database inside the override, then calls super(). It must stay callable
-        exactly once per timestep, in order.
+        exactly once per window, in order.
         """
-        sp_data.update_timestep(self, timestep)
+        formulation_data.update_window(self, timesteps)
 
     def _update_persistent_model(self, opt):
         """Update objective function, constraints and bounds in persistent model"""
-        # Mutable parameters is not enough
-        #
-        # TODO: Code for persistent solver
+        # Mutable parameters is not enough: a persistent solver keeps its own copy of
+        # every constraint, so each one with a mutable parameter is removed and added
+        # again, and the objective is set again.
         # https://pyomo.readthedocs.io/en/latest/solvers/persistent_solvers.html
-        # to use pwersistent solvers, probably have to set instance at the
-        # start, and then modify it in each iteration rather than giving
-        # it as an argument to opt.solve:
-        #    opt.set_instance(self.model)
-        # and then use opt.solve()
-        # To modify e.g. a constraint between solves, remove and add, e.g.:
-        #    opt.remove_constraint(m.c)
-        #    del m.c
-        #    m.c = pe.Constraint(expr=m.y <= m.x)
-        #    opt.add_constraint(m.c)
-        # Variables can be updated without removing/adding
-        #    m.x.setlb(1.0)
-        #    opt.update_var(m.x)
-
-        # TODO Check that it is correct - speed up possible?
-        # TODO check if deleting and recreating constraint expression is necessary
-        # (seems not)
-
-        # 1. p_gen_pmin, p_gen_pmax => gen maxmin
-        #    p_pump_pmax => cPump; p_storage_prev, p_storage_inflow => cStorCont
-        # 2. p_demand, p_branch_ac_power_loss, p_branch_dc_power_loss => powerbalance
-        # 3. p_storage_value, p_loadflex_cost => OBJ
-
-        # 1.
-        for c in self.model.cGenMaxLimit.values():
-            opt.remove_constraint(c)
-        for c in self.model.cGenMinLimit.values():
-            opt.remove_constraint(c)
-        # del self.model.cGenMaxLimit
-        # del self.model.cGenMinLimit
-        # self._create_constraint_generator_output()
-        for c in self.model.cGenMaxLimit.values():
-            opt.add_constraint(c)
-        for c in self.model.cGenMinLimit.values():
-            opt.add_constraint(c)
-        for con in (self.model.cPump, self.model.cStorCont):
+        for name in (
+            "cGenMaxLimit",  # p_gen_pmax
+            "cGenMinLimit",  # p_gen_pmin
+            "cPump",  # p_pump_pmax
+            "cStorCont",  # p_storage_prev, p_storage_inflow
+            "cFlexStorCont",  # p_flex_storage_prev
+            "cPowerbalance",  # p_demand, p_branch_*_power_loss
+            "cLossAc12",  # p_branch_ac_powerflow12/21
+            "cLossAc21",
+            "cLossDc12",  # p_branch_dc_powerflow12/21
+            "cLossDc21",
+            "cGenUbStorAvail",  # p_storage_inflow
+            "cRampUp",  # p_ramp_up_mw
+            "cRampDn",  # p_ramp_dn_mw
+        ):
+            con = self.model.component(name)
+            if con is None:
+                continue
             for c in con.values():
                 opt.remove_constraint(c)
                 opt.add_constraint(c)
-
-        # 2.
-        for c in self.model.cPowerbalance.values():
-            opt.remove_constraint(c)
-        # del self.model.cPowerbalance
-        # self._create_constraint_powerbalance(self._grid)
-        for c in self.model.cPowerbalance.values():
-            opt.add_constraint(c)
-
-        # 3.
-        # no remove_object?
-        # del self.model.OBJ
-        # self._create_objective(self._grid)
+        # p_storage_value, p_loadflex_cost => OBJ
         opt.set_objective(self.model.OBJ)
 
-    # def _compute_transmission_loss(self, branch_flows, aclossmultiplier=1):
-    #    """Compute power losses based on power flow"""
-    #    for b in self.model.s_branch_ac:
-    #        r = self._grid.branch.loc[b, "resistance"]
-    #        branch_flows = self.model.p_branch_ac_powerflow[b]
-    #        lossMVA = r * branch_flows[b] ** 2 / const.baseMVA
-    #        # A multiplication factor to account for reactive current losses
-    #        lossMVA = lossMVA * aclossmultiplier
-
     def _update_params_powerlosses(self, aclossmultiplier=1, dclossmultiplier=1):
-        sp_data.update_loss_parameters(self, aclossmultiplier, dclossmultiplier)
+        formulation_data.update_loss_parameters(self, aclossmultiplier, dclossmultiplier)
 
     def _flexload_storage_value(self, i, storage_level, timestep):
         return storage_value.flexload_storage_value(self._grid, i, storage_level, timestep)
@@ -440,8 +391,8 @@ class LpProblem:
         # Used by LpFaultProblem
         return None
 
-    def _storeResultsAndUpdateStorage(self, timestep, results):
-        sp_extract.store_results_and_update_storage(self, timestep, results)
+    def _storeResultsAndUpdateStorage(self, timesteps, commit, objective_values, results):
+        formulation_extract.store_window(self, timesteps, commit, objective_values, results)
 
     def solve(
         self,
@@ -458,6 +409,10 @@ class LpProblem:
         """
         Solve LP problem for each time step in the time range
 
+        In single-period mode, one LP per timestep. In multi-period mode, one LP per
+        window of `horizon_hours` timesteps, of which the first `commit_hours` are
+        stored before the next window starts.
+
         Parameters
         ----------
         results : Results
@@ -470,7 +425,7 @@ class LpProblem:
         warmstart : Boolean
             Use warmstart option (only some solvers, e.g. gurobi)
         savefiles : Boolean
-            Save Pyomo model file and LP problem MPS file for each timestep
+            Save Pyomo model file and LP problem MPS file for each window
             This may be useful for debugging.
         aclossmultiplier : float
             Multiplier factor to scale computed AC losses, used with method 1
@@ -479,7 +434,8 @@ class LpProblem:
         logfile : string
             Name of log file for LP solver. Will keep only last iteration
         solve_args : dict
-            Arguments passed on to pyomo.solve(...) in each iteration
+            Arguments passed on to pyomo.solve(...) in each iteration. The default
+            suits the SolverFactory solvers; "appsi_highs" takes none.
         continue_from_last : bool
             Whether to continue from last saved result (useful if simulation
             was interrupted)
@@ -489,7 +445,10 @@ class LpProblem:
         results : Results
             PowerGAMA Results object reference
         """
-        if solve_args is None:
+        if solve_args is None and solver == "appsi_highs":
+            # The APPSI interface takes no per-solve keyword arguments.
+            solve_args = {}
+        elif solve_args is None:
             solve_args = {
                 "tee": False,  # stream the solver output
                 "keepfiles": False,  # print the LP file for examination
@@ -500,11 +459,11 @@ class LpProblem:
         if "_persistent" in solver:
             self._solver_persistent = True
 
-        # Initalise solver, and check it is available
-        opt = solver_mod.create_solver(solver, self.model, solver_path=solver_path, solve_args=solve_args)
-
-        # Enable access to dual values.
-        self.dual = solver_mod.create_dual_handle(opt, self.model)
+        # Initalise solver, and check it is available. Each window length gets its own;
+        # the full-length one is created now so that a missing solver fails early.
+        for entry in self._window_models.values():
+            entry[2] = entry[3] = None
+        opt = self._use_window_model(self._cfg.window_hours, solver, solver_path, solve_args)
 
         timesteps_to_solve = self._get_timesteps_to_solve(continue_from_last=continue_from_last, results=results)
         self._build_day_hour_index(timesteps_to_solve)
@@ -520,51 +479,24 @@ class LpProblem:
             )
             if self._ramp_up_pu is not None or self._ramp_down_pu is not None:
                 prev_gen = results.db.getResultGeneratorPowerAll(timestep=timesteps_to_solve[0] - 1)
-                for i in self.model.s_gen:
+                for i in self._ctx.gen_ids:
                     self._gen_prev[i] = prev_gen.get(i, 0.0)
 
-        if self._objective_mode == "multi_period":
-            # ── true 24h joint LP path ────────────────────────────────
-            # (lossmethod != 0 is rejected in __init__; losses are not modelled here)
-
-            # Rolling-horizon solve: optimise over objective horizon, commit only first 24h.
-            # This enables next-day lookahead (e.g. 48h solve / 24h commit).
-            solve_h = int(max(1, int(self._horizon_hours)))
-            commit_h = int(max(1, min(int(self._commit_hours), solve_h)))
-            windows = []
-            for start in range(0, len(timesteps_to_solve), commit_h):
-                win = list(timesteps_to_solve[start : start + solve_h])
-                if win:
-                    windows.append(win)
-
-            print(f"Solving (24h joint LP) — {len(windows)} window(s): {solve_h}h lookahead / {commit_h}h commit ...")
-            for win in windows:
-                # For daily_reset generators, clear _gen_prev at commit boundary (same rule intent as single-period)
-                if self._ramp_daily_reset is not None:
-                    for i in self.model.s_gen:
-                        if self._disable_nuclear_ramp_profile_conflict[int(i)]:
-                            continue
-                        if self._ramp_daily_reset[i]:
-                            self._gen_prev[i] = np.nan
-                self._solve_and_store_day_joint(win, results, solver, commit_hours=commit_h)
-
-            write_objective_trace(self)
-            return results
-
+        # Losses are only modelled in windows of one timestep (see LpConfig).
         if self._lossmethod in [1, 2] and continue_from_last:
             # Losses are linearised around the preceding timestep's flows. When resuming,
             # that solution is in the database, so seed from it rather than a pre-solve:
             # anything else changes every result from here on (issue #41).
             prev = timesteps_to_solve[0] - 1
             window = [prev, prev + 1]
-            sp_data.seed_loss_operating_point(
+            formulation_data.seed_loss_operating_point(
                 self,
                 ac_flows={indx: flow for _, indx, flow in results.db.getResultBranchFlowAll(window, "ac")},
                 dc_flows={indx: flow for _, indx, flow in results.db.getResultBranchFlowAll(window, "dc")},
             )
         elif self._lossmethod in [1, 2]:
             print("Computing losses in first timestep")
-            self._updateLpProblem(timestep=timesteps_to_solve[0])
+            self._updateLpProblem([timesteps_to_solve[0]])
             res = opt.solve(self.model)
             if isinstance(res, appsi.solvers.highs.HighsResults):
                 if res.termination_condition != appsi.base.TerminationCondition.optimal:
@@ -575,17 +507,28 @@ class LpProblem:
             # Now, power flow values are computed for the first timestep, and
             # power losses can be computed.
 
-        print("Solving...")
+        windows = self._windows(timesteps_to_solve)
+        if self._cfg.window_hours > 1:
+            print(
+                f"Solving {len(windows)} window(s) of {self._cfg.window_hours} timesteps, "
+                f"committing {self._cfg.window_commit} ..."
+            )
+        else:
+            print("Solving...")
         count = 0
         warmstart_now = False
         self._daily_objective_trace = {}
         self._hourly_objective_trace = []
-        for timestep in tqdm(timesteps_to_solve):
+        for window in tqdm(windows):
+            timestep = window[0]
+            opt = self._use_window_model(len(window), solver, solver_path, solve_args)
             # update LP problem (inflow, storage, profiles)
-            self._updateLpProblem(timestep)
+            self._updateLpProblem(window)
             self._update_params_powerlosses(aclossmultiplier, dclossmultiplier)
             if self._solver_persistent:
                 self._update_persistent_model(opt=opt)
+            if self._cfg.window_hours > 1:
+                solver_mod.discard_warm_start(opt)
 
             # solve the LP problem
             if savefiles:
@@ -624,21 +567,13 @@ class LpProblem:
             # store result for inspection if necessary
             self.solver_res = res
 
-            # debugging:
-            if False:
-                print(
-                    "Solver status = {}. Termination condition = {}".format(
-                        res.solver.status, res.solver.termination_condition
-                    )
-                )
-
             if isinstance(res, appsi.solvers.highs.HighsResults):
                 if res.termination_condition != appsi.base.TerminationCondition.optimal:
                     raise RuntimeError(
                         f"APPSI HIGHS non-optimal termination at timestep={timestep}: {res.termination_condition}"
                     )
                 opt.load_vars()
-                self.dual = opt.get_duals()
+                self.dual = self._window_models[len(window)][3] = opt.get_duals()
             elif res.solver.status != pyomo.opt.SolverStatus.ok:
                 warnings.warn("Something went wrong with LP solver: {}".format(res.solver.status))
                 try:
@@ -652,27 +587,28 @@ class LpProblem:
                 except NotImplementedError:
                     raise Exception("t={}: No feasible solution found.".format(timestep))
 
-            # This call is required for fault scenario simulation. Does nothing here.
-            self._update_progress(timestep, len(timesteps_to_solve))
+            # The objective of each committed hour, evaluated once: on a large grid the
+            # objective expression is slow to evaluate.
+            commit = min(self._cfg.window_commit, len(window))
+            objective_values = [float(pyo.value(expr)) for _, expr in self._objective_by_hour[:commit]]
+            for ts, obj_value in zip(window[:commit], objective_values):
+                # This call is required for fault scenario simulation. Does nothing here.
+                self._update_progress(ts, len(timesteps_to_solve))
 
-            # Evaluated once: on a large grid the objective expression is slow to evaluate.
-            self._objective_value = float(self.model.OBJ())
-            if int(timestep) in self._timestep_day_hour:
-                day_idx, hour_in_day = self._timestep_day_hour[int(timestep)]
-                obj_value = self._objective_value
-                self._daily_objective_trace[day_idx] = self._daily_objective_trace.get(day_idx, 0.0) + obj_value
-                self._hourly_objective_trace.append((int(timestep), int(day_idx), int(hour_in_day), obj_value))
+                if int(ts) in self._timestep_day_hour:
+                    day_idx, hour_in_day = self._timestep_day_hour[int(ts)]
+                    self._daily_objective_trace[day_idx] = self._daily_objective_trace.get(day_idx, 0.0) + obj_value
+                    self._hourly_objective_trace.append((int(ts), int(day_idx), int(hour_in_day), obj_value))
 
-            for ext in self._extensions:
-                ext.after_timestep(self, timestep)
+                for ext in self._extensions:
+                    ext.after_timestep(self, ts)
 
             # store results and update storage levels
-            self._storeResultsAndUpdateStorage(timestep, results)
+            self._storeResultsAndUpdateStorage(window, commit, objective_values, results)
 
-        if self._objective_mode == "multi_period" and self._daily_objective_trace:
-            print("Daily objective trace (single-period-path accumulation):")
-            for d in sorted(self._daily_objective_trace):
-                print(f"  day={d}: objective_sum={self._daily_objective_trace[d]:.6f}")
+        # Leave the full-length model as self.model, whatever the last window was.
+        if self.model is not self._window_models[self._cfg.window_hours][0]:
+            self._use_window_model(self._cfg.window_hours, solver, solver_path, solve_args)
 
         write_objective_trace(self)
 

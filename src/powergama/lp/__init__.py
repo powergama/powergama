@@ -1,24 +1,19 @@
 """LP problem formulation for PowerGAMA.
 
-The package is organised by *formulation*, so that the two ways of posing the
-dispatch problem sit side by side and can be read against each other:
+Both simulation modes solve the same LP, :mod:`.formulation`, over a window of
+timesteps: single-period mode is a window of one timestep, solved in sequence with
+storage state carried forward between solves; multi-period mode is a window of
+``horizon_hours``, of which the first ``commit_hours`` are committed before the
+window advances. The model is built once per window length and its parameters are
+rewritten for every window.
 
-``single_period``
-    One LP per timestep, solved in sequence, with storage state carried forward
-    between solves.
-``multi_period``
-    A joint LP over a window of ``horizon_hours``, of which the first
-    ``commit_hours`` are committed before the window advances.
+Extensions (:mod:`.extension`) add to the model through fixed hooks without the
+core naming them. ``rt`` holds the one that ships with the package:
+:class:`~powergama.lp.rt.RtExtension`, the balancing ("real-time") simulation,
+which tracks a day-ahead schedule.
 
-The single-period formulation takes optional extensions (:mod:`.extension`), which
-add to the model through fixed hooks without the core naming them. ``rt`` holds the
-one that ships with the package: :class:`~powergama.lp.rt.RtExtension`, the
-balancing ("real-time") simulation, which tracks a day-ahead schedule.
-
-A window of one period *should* be the single-period problem, and merging the two
-formulations is the intended direction of travel. They do not agree today -- see
-``userguide/model_formulations.md`` for the component-by-component correspondence
-and the places they deliberately differ.
+``userguide/model_formulations.md`` describes the formulation component by
+component, and what a window longer than one timestep adds.
 """
 
 from .extension import ModelExtension

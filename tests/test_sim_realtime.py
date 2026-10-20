@@ -45,7 +45,7 @@ def test_rt_applies_locks_and_targets(tmp_path):
     assert np.all(dc <= da["dc_flow"] + FLOW_WINDOW + 1e-6)
 
     # The locked demand reached the power balance parameter.
-    assert lp.model.p_demand[CONS_LOCKED].value == pytest.approx(LOCKED_DEMAND)
+    assert lp.model.p_demand[CONS_LOCKED, 0].value == pytest.approx(LOCKED_DEMAND)
 
     # Every kind of target produced a tracking constraint.
     assert set(lp.model.cRtTargetTracking) == {GEN_TARGET}
