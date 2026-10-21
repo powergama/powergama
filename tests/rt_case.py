@@ -1,7 +1,8 @@
 """The two-area real-time test case, shared by the RT test modules.
 
 A two-step case: a baseline (day-ahead) run, then RT inputs derived from it --
-soft targets on a generator, the storage unit and the flexible load, hard locks
+soft targets on a generator, the storage unit's generation and pumping and the
+flexible load, hard locks
 on a generator and a consumer, and border-flow windows and targets on the AC
 branch between the areas and the HVDC link.
 """
@@ -19,7 +20,7 @@ datapath_two_area = Path(__file__).parent / "test_data/two_area"
 N_STEPS = 24
 GEN_LOCKED = 0  # gas_a: hard-locked to its baseline output
 GEN_TARGET = 3  # coal_b: soft dispatch target
-GEN_STORAGE = 2  # hydro_pump: soft storage-filling target
+GEN_STORAGE = 2  # hydro_pump: soft generation and pumping targets
 CONS_LOCKED = 0  # consumer at a2: demand locked
 CONS_FLEX = 1  # consumer at b2: flexible load with a soft target
 BRANCH_BORDER = 1  # a2-b1, the AC branch between the two areas
@@ -73,7 +74,7 @@ def build_rt_case(tmp_path):
     res = powergama.Results(base, tmp_path / "da.sqlite", replace=True)
     lp.solve(res, solver="appsi_highs", solve_args={})
     gen = read_table(res, "Res_Generators")
-    sto = read_table(res, "Res_Storage")
+    pump = read_table(res, "Res_Pumping")
     flex = read_table(res, "Res_FlexibleLoad")
     ac = read_table(res, "Res_Branches")
     dc = read_table(res, "Res_DcBranches")
@@ -85,16 +86,21 @@ def build_rt_case(tmp_path):
     data.profiles["rt_target_coal"] = (
         series(gen, GEN_TARGET, "output").reindex(steps).values / data.generator.loc[GEN_TARGET, "pmax"]
     )
-    data.profiles["rt_storage_hydro"] = (
-        series(sto, GEN_STORAGE, "storage").reindex(steps).values / data.generator.loc[GEN_STORAGE, "storage_cap"]
+    data.profiles["rt_gen_hydro"] = (
+        series(gen, GEN_STORAGE, "output").reindex(steps).values / data.generator.loc[GEN_STORAGE, "pmax"]
+    )
+    data.profiles["rt_pump_hydro"] = (
+        series(pump, GEN_STORAGE, "output").reindex(steps).fillna(0.0).values
+        / data.generator.loc[GEN_STORAGE, "pump_cap"]
     )
     data.profiles["rt_target_flex"] = (
         series(flex, CONS_FLEX, "demand").reindex(steps).values / data.consumer.loc[CONS_FLEX, "demand_avg"]
     )
     data.generator["rt_target_ref"] = ""
     data.generator.loc[GEN_TARGET, "rt_target_ref"] = "rt_target_coal"
-    data.generator["rt_storage_target_ref"] = ""
-    data.generator.loc[GEN_STORAGE, "rt_storage_target_ref"] = "rt_storage_hydro"
+    data.generator.loc[GEN_STORAGE, "rt_target_ref"] = "rt_gen_hydro"
+    data.generator["rt_pump_target_ref"] = ""
+    data.generator.loc[GEN_STORAGE, "rt_pump_target_ref"] = "rt_pump_hydro"
     data.consumer["rt_target_ref"] = ""
     data.consumer.loc[CONS_FLEX, "rt_target_ref"] = "rt_target_flex"
 
@@ -107,7 +113,6 @@ def build_rt_case(tmp_path):
     dc_flow = series(dc, DCBRANCH_BORDER, "flow").reindex(steps).values
     idx_ac = pd.MultiIndex.from_product([steps, [BRANCH_BORDER]], names=["timestep", "indx"])
     idx_dc = pd.MultiIndex.from_product([steps, [DCBRANCH_BORDER]], names=["timestep", "indx"])
-    idx_sto = pd.MultiIndex.from_product([steps, [GEN_STORAGE]], names=["timestep", "indx"])
     data.foreign_gen_lock_parquet = write_lock(tmp_path / "gen_lock.parquet", gen_lock)
     data.foreign_consumer_lock_parquet = write_lock(tmp_path / "cons_lock.parquet", cons_lock)
     data.border_ac_flow_lock_parquet = write_lock(
@@ -123,9 +128,6 @@ def build_rt_case(tmp_path):
     data.border_dc_flow_bounds_parquet = write_lock(
         tmp_path / "dc_bounds.parquet",
         pd.DataFrame({"flow_lb": dc_flow - FLOW_WINDOW, "flow_ub": dc_flow + FLOW_WINDOW}, index=idx_dc),
-    )
-    data.da_storage_marginalprice_parquet = write_lock(
-        tmp_path / "storage_price.parquet", pd.DataFrame({"marginalprice": 20.0}, index=idx_sto)
     )
 
     # The real-time deviation: less wind than the day-ahead run planned for.

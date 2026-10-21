@@ -98,8 +98,17 @@ lp = powergama.LpProblem(
 ```
 
 `RtExtension` also takes `res_curtailment_factor` and `xborder_flow_penalty_eur_per_mwh`.
-Storage and flexible-load targets go in `generator.rt_storage_target_ref` and
-`consumer.rt_target_ref`. Hard day-ahead locks (pinned generators, fixed demand,
+In the notation of the WILLOW D4.5 annex these are c0 (`balancing_fee_eur_per_mwh`),
+1 + δ_curt (`res_curtailment_factor`) and c_xborder (`xborder_flow_penalty_eur_per_mwh`).
+A deviation of anything else from its target costs c0 plus its marginal cost when it is
+more than the day-ahead schedule, and c0 minus it when it is less.
+
+Storage is settled on its power, not its filling level: the generation of a storage unit
+is tracked through `generator.rt_target_ref`, and its pumping through
+`generator.rt_pump_target_ref` (a fraction of `pump_cap`). The storage value enters
+through the deviation prices. Flexible-load targets go in `consumer.rt_target_ref`.
+`generator.rt_storage_target_ref` and the `da_storage_marginalprice_parquet` lock file
+were removed, and setting either raises an error. Hard day-ahead locks (pinned generators, fixed demand,
 border-flow windows) are read from parquet files named by attributes on the
 `GridData` object; see `powergama.lp.rt.locks`. Without the extension, none of
 these inputs are read.

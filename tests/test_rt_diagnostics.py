@@ -70,18 +70,18 @@ def test_timestep_objective_matches_stored_result(debug_run):
 
 
 def test_active_channels_match_the_case(debug_run):
-    """One of each: generator target, storage target, gen lock, consumer lock, AC and DC border target."""
+    """Generator targets (one plain, one storage), a pump target, gen lock, consumer lock, AC and DC border target."""
     _, _, records = debug_run
     for r in records[2:]:
         assert r["active_channels"] == {
-            "rt_storage_target_count": 1,
-            "rt_target_gen_count": 1,
+            "rt_pump_target_count": 1,
+            "rt_target_gen_count": 2,
             "foreign_gen_lock_rows": 1,
             "foreign_cons_lock_rows": 1,
             "rt_io_target_active_ac": 1,
             "rt_io_target_active_dc": 1,
         }, f"timestep {r['timestep']}"
-        rows = r["rt_storage_rows"]
+        rows = r["rt_pump_rows"]
         assert [row["indx"] for row in rows] == [GEN_STORAGE]
         assert 0.0 <= rows[0]["soc_rt"] <= 1.0
 

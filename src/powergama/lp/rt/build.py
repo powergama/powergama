@@ -27,12 +27,6 @@ def add_params(model):
     model.p_rt_flexload_target = pyo.Param(model.s_load_flex, within=pyo.NonNegativeReals, default=0, mutable=True)
     model.p_rt_deviation_price_flex_pos = pyo.Param(model.s_load_flex, within=pyo.Reals, default=0, mutable=True)
     model.p_rt_deviation_price_flex_neg = pyo.Param(model.s_load_flex, within=pyo.Reals, default=0, mutable=True)
-    model.p_rt_storage_target = pyo.Param(model.s_gen_storage, within=pyo.NonNegativeReals, default=0, mutable=True)
-    model.p_rt_storage_balance_rhs = pyo.Param(
-        model.s_gen_storage, within=pyo.NonNegativeReals, default=0, mutable=True
-    )
-    model.p_rt_deviation_price_storage_pos = pyo.Param(model.s_gen_storage, within=pyo.Reals, default=0, mutable=True)
-    model.p_rt_deviation_price_storage_neg = pyo.Param(model.s_gen_storage, within=pyo.Reals, default=0, mutable=True)
     model.p_rt_pump_target = pyo.Param(model.s_gen_pump, within=pyo.NonNegativeReals, default=0, mutable=True)
     model.p_rt_deviation_price_pump_pos = pyo.Param(model.s_gen_pump, within=pyo.Reals, default=0, mutable=True)
     model.p_rt_deviation_price_pump_neg = pyo.Param(model.s_gen_pump, within=pyo.Reals, default=0, mutable=True)
@@ -43,13 +37,11 @@ def add_params(model):
 
 
 def add_deviation_vars(model):
-    """Deviations from the DA targets: generators, flexible load, storage trajectory, pumping, border flows."""
+    """Deviations from the DA targets: generators, flexible load, pumping, border flows."""
     model.varRtTargetDevPos = pyo.Var(model.s_gen, within=pyo.NonNegativeReals)
     model.varRtTargetDevNeg = pyo.Var(model.s_gen, within=pyo.NonNegativeReals)
     model.varRtFlexLoadTargetDevPos = pyo.Var(model.s_load_flex, within=pyo.NonNegativeReals)
     model.varRtFlexLoadTargetDevNeg = pyo.Var(model.s_load_flex, within=pyo.NonNegativeReals)
-    model.varRtStorageTargetDevPos = pyo.Var(model.s_gen_storage, within=pyo.NonNegativeReals)
-    model.varRtStorageTargetDevNeg = pyo.Var(model.s_gen_storage, within=pyo.NonNegativeReals)
     model.varRtPumpTargetDevPos = pyo.Var(model.s_gen_pump, within=pyo.NonNegativeReals)
     model.varRtPumpTargetDevNeg = pyo.Var(model.s_gen_pump, within=pyo.NonNegativeReals)
     model.varRtIoTargetDevPosAc = pyo.Var(model.s_branch_ac, within=pyo.NonNegativeReals)
@@ -89,28 +81,13 @@ def add_flexload_target_tracking(model, grid, ctx, rt):
     model.cRtFlexLoadTargetTracking = pyo.Constraint(model.s_load_flex, rule=rt_flexload_target_rule)
 
 
-def add_storage_target_tracking(model, grid, ctx, rt):
-    """Constraint: RT DA storage filling trajectory deviation accounting."""
-
-    def rt_storage_target_rule(model, i):
-        if int(i) not in rt.ctx.storage_target_indices:
-            return pyo.Constraint.Skip
-        lhs = model.p_rt_storage_balance_rhs[i] - (grid.timeDelta * model.varGeneration[i, 0])
-        if int(i) in model.s_gen_pump:
-            pump_eff = float(grid.generator.loc[i, "pump_efficiency"])
-            lhs += grid.timeDelta * pump_eff * model.varPump[i, 0]
-        return (
-            lhs - model.p_rt_storage_target[i] == model.varRtStorageTargetDevPos[i] - model.varRtStorageTargetDevNeg[i]
-        )
-
-    model.cRtStorageTargetTracking = pyo.Constraint(model.s_gen_storage, rule=rt_storage_target_rule)
-
-
 def add_pump_target_tracking(model, grid, ctx, rt):
     """Constraint: RT DA pumping deviation accounting.
 
     Pumped storage is settled on its power, like generation: what it pumps is
     tracked against the DA schedule, and the generation side by ``rt_target_ref``.
+    Its filling level is not tracked: RT drops the terminal storage value, and the
+    storage value enters through the deviation prices instead.
     """
 
     def rt_pump_target_rule(model, i):
@@ -173,12 +150,6 @@ def deviation_cost(model, rt):
         + model.p_rt_deviation_price_flex_neg[j] * model.varRtFlexLoadTargetDevNeg[j]
         for j in model.s_load_flex
         if int(j) in rt.ctx.consumer_target_indices
-    )
-    cost += sum(
-        model.p_rt_deviation_price_storage_pos[i] * model.varRtStorageTargetDevPos[i]
-        + model.p_rt_deviation_price_storage_neg[i] * model.varRtStorageTargetDevNeg[i]
-        for i in model.s_gen_storage
-        if int(i) in rt.ctx.storage_target_indices
     )
     cost += sum(
         model.p_rt_deviation_price_pump_pos[i] * model.varRtPumpTargetDevPos[i]

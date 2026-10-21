@@ -49,8 +49,8 @@ def test_rt_applies_locks_and_targets(tmp_path):
     assert lp.model.p_demand[CONS_LOCKED, 0].value == pytest.approx(LOCKED_DEMAND)
 
     # Every kind of target produced a tracking constraint.
-    assert set(lp.model.cRtTargetTracking) == {GEN_TARGET}
-    assert set(lp.model.cRtStorageTargetTracking) == {GEN_STORAGE}
+    assert set(lp.model.cRtTargetTracking) == {GEN_TARGET, GEN_STORAGE}
+    assert set(lp.model.cRtPumpTargetTracking) == {GEN_STORAGE}
     assert set(lp.model.cRtFlexLoadTargetTracking) == {CONS_FLEX}
     assert set(lp.model.cRtIoTargetTrackingAc) == {BRANCH_BORDER}
     assert set(lp.model.cRtIoTargetTrackingDc) == {DCBRANCH_BORDER}
@@ -146,6 +146,23 @@ def test_rt_pump_deviation_prices():
     assert cycle == pytest.approx(fee * (1 + eff) + deadband + eff * fuelcost)
 
     assert set(m.cRtPumpTargetTracking) == {GEN_STORAGE}
+
+
+def test_rt_storage_level_target_was_removed():
+    """Storage is settled on its power, so a filling-level target is rejected, not ignored."""
+    data = two_area_data()
+    data.profiles["rt_storage_hydro"] = 0.5
+    data.generator["rt_storage_target_ref"] = ""
+    data.generator.loc[GEN_STORAGE, "rt_storage_target_ref"] = "rt_storage_hydro"
+    with pytest.raises(ValueError, match="rt_storage_target_ref was removed"):
+        powergama.LpProblem(data, extensions=[RtExtension()])
+
+
+def test_rt_da_storage_price_was_removed(tmp_path):
+    data = two_area_data()
+    data.da_storage_marginalprice_parquet = str(tmp_path / "storage_price.parquet")
+    with pytest.raises(ValueError, match="da_storage_marginalprice_parquet was removed"):
+        powergama.LpProblem(data, extensions=[RtExtension()])
 
 
 @pytest.mark.parametrize("mode", ["single_period", "multi_period"])

@@ -18,8 +18,6 @@ class RtContext:
     target_gen_indices: set = field(default_factory=set)
     consumer_target_ref: object = None
     consumer_target_indices: set = field(default_factory=set)
-    storage_target_ref: object = None
-    storage_target_indices: set = field(default_factory=set)
     pump_target_ref: object = None
     pump_target_indices: set = field(default_factory=set)
 
@@ -55,6 +53,14 @@ class RtContext:
         return rt_ctx
 
     def _build_target_refs(self, grid, ctx):
+        # Storage is settled on its power, generation and pumping, not on its filling level.
+        if "rt_storage_target_ref" in grid.generator.columns:
+            refs = grid.generator["rt_storage_target_ref"]
+            if any(isinstance(r, str) and r.strip() for r in refs):
+                raise ValueError(
+                    "generator.rt_storage_target_ref was removed: RT storage follows its day-ahead "
+                    "generation (rt_target_ref) and pumping (rt_pump_target_ref) instead"
+                )
         # Generator dispatch targets.
         self.target_ref = grid.generator["rt_target_ref"] if "rt_target_ref" in grid.generator.columns else None
         self.target_gen_indices = {
@@ -85,19 +91,6 @@ class RtContext:
             and isinstance(self.pump_target_ref.loc[i], str)
             and str(self.pump_target_ref.loc[i]).strip()
             and int(i) in ctx.idx_generatorsWithPumping
-        }
-        # Storage (reservoir/battery) filling targets, as a fraction [0, 1] of capacity, so
-        # that storage state continuity matches DA.
-        self.storage_target_ref = (
-            grid.generator["rt_storage_target_ref"] if "rt_storage_target_ref" in grid.generator.columns else None
-        )
-        self.storage_target_indices = {
-            int(i)
-            for i in grid.generator.index
-            if self.storage_target_ref is not None
-            and isinstance(self.storage_target_ref.loc[i], str)
-            and str(self.storage_target_ref.loc[i]).strip()
-            and int(i) in ctx.idx_generatorsWithStorage
         }
 
     def _build_classification(self, grid, ctx):

@@ -123,31 +123,13 @@ def append_hourly_debug(lp, rt, timestep):
             return None
         return None
 
-    storage_rows = []
-    da_reference_storage_mismatch_cost = 0.0
-    for i in sorted(int(ii) for ii in rt.ctx.storage_target_indices):
+    pump_rows = []
+    for i in sorted(int(ii) for ii in rt.ctx.pump_target_indices):
         storage_cap = _val(lp._grid.generator.loc[i, "storage_cap"]) or 0.0
         pre_storage = _val(lp._storage[i]) or 0.0
         soc_rt = (pre_storage / storage_cap) if storage_cap > 0.0 else 0.0
-        ref_target = rt.ctx.storage_target_ref.iloc[int(i)] if rt.ctx.storage_target_ref is not None else ""
-        soc_da_target = _prof(timestep, ref_target)
-        dt_h = float(lp.timeDelta) if np.isfinite(lp.timeDelta) and lp.timeDelta > 0.0 else 1.0
-        da_gen_target_mw = _val(lp.model.p_rt_target[i]) or 0.0
-        da_pump_target_mw = 0.0
-        eff = (
-            float(pd.to_numeric(lp._grid.generator.loc[i, "pump_efficiency"], errors="coerce") or 0.0)
-            if int(i) in lp.model.s_gen_pump
-            else 0.0
-        )
-        lhs_da_mwh = (_val(lp.model.p_rt_storage_balance_rhs[i]) or 0.0) - dt_h * da_gen_target_mw
-        if int(i) in lp.model.s_gen_pump:
-            lhs_da_mwh += dt_h * eff * da_pump_target_mw
-        target_mwh = _val(lp.model.p_rt_storage_target[i]) or 0.0
-        mismatch_da_mwh = lhs_da_mwh - target_mwh
-        c_pos = _val(lp.model.p_rt_deviation_price_storage_pos[i]) or 0.0
-        c_neg = _val(lp.model.p_rt_deviation_price_storage_neg[i]) or 0.0
-        mismatch_da_cost = c_pos * max(0.0, mismatch_da_mwh) + c_neg * max(0.0, -mismatch_da_mwh)
-        da_reference_storage_mismatch_cost += float(mismatch_da_cost)
+        ref_target = rt.ctx.pump_target_ref.iloc[int(i)]
+        eff = float(pd.to_numeric(lp._grid.generator.loc[i, "pump_efficiency"], errors="coerce") or 0.0)
         row = {
             "indx": int(i),
             "node": str(lp._grid.generator.loc[i, "node"]),
@@ -156,31 +138,23 @@ def append_hourly_debug(lp, rt, timestep):
             "storage_cap_mwh": float(storage_cap),
             "pre_storage_mwh": float(pre_storage),
             "soc_rt": float(max(0.0, min(1.0, soc_rt))),
-            "target_storage_mwh": _val(lp.model.p_rt_storage_target[i]) or 0.0,
-            "storage_dev_pos_mwh": _val(lp.model.varRtStorageTargetDevPos[i]) or 0.0,
-            "storage_dev_neg_mwh": _val(lp.model.varRtStorageTargetDevNeg[i]) or 0.0,
-            "coef_storage_pos": _val(lp.model.p_rt_deviation_price_storage_pos[i]) or 0.0,
-            "coef_storage_neg": _val(lp.model.p_rt_deviation_price_storage_neg[i]) or 0.0,
             "gen_mw": _val(lp.model.varGeneration[i, 0]) or 0.0,
-            "pump_mw": (_val(lp.model.varPump[i, 0]) or 0.0) if int(i) in lp.model.s_gen_pump else 0.0,
             "gen_target_mw": _val(lp.model.p_rt_target[i]) or 0.0,
-            "pump_target_mw": 0.0,
+            "pump_mw": _val(lp.model.varPump[i, 0]) or 0.0,
+            "pump_target_mw": _val(lp.model.p_rt_pump_target[i]) or 0.0,
+            "pump_dev_pos_mw": _val(lp.model.varRtPumpTargetDevPos[i]) or 0.0,
+            "pump_dev_neg_mw": _val(lp.model.varRtPumpTargetDevNeg[i]) or 0.0,
+            "coef_pump_pos": _val(lp.model.p_rt_deviation_price_pump_pos[i]) or 0.0,
+            "coef_pump_neg": _val(lp.model.p_rt_deviation_price_pump_neg[i]) or 0.0,
             "gen_cost_mwh": rt_data.marginal_cost(lp, i),
             # Net value of pumping 1 MWh: the storage value of what reaches storage,
             # less the pumping cost.
-            "pump_cost_mwh": (
-                (_val(lp.model.p_storage_value[i]) or 0.0) * eff - (_val(lp.model.p_genpump_cost[i]) or 0.0)
-                if int(i) in lp.model.s_gen_pump
-                else 0.0
-            ),
-            "rt_storage_target_ref": str(ref_target) if isinstance(ref_target, str) else "",
-            "soc_da_target_profile": float(soc_da_target) if soc_da_target is not None else None,
-            "da_ref_storage_balance_lhs_mwh": float(lhs_da_mwh),
-            "da_ref_storage_target_mwh": float(target_mwh),
-            "da_ref_storage_balance_mismatch_mwh": float(mismatch_da_mwh),
-            "da_ref_storage_mismatch_cost": float(mismatch_da_cost),
+            "pump_credit_mwh": (_val(lp.model.p_storage_value[i]) or 0.0) * eff
+            - (_val(lp.model.p_genpump_cost[i]) or 0.0),
+            "rt_pump_target_ref": str(ref_target) if isinstance(ref_target, str) else "",
+            "pump_target_profile": _prof(timestep, ref_target),
         }
-        storage_rows.append(row)
+        pump_rows.append(row)
 
     gas_rows = []
     da_replay_unavoidable_gas_dev_cost_lb = 0.0
@@ -244,16 +218,10 @@ def append_hourly_debug(lp, rt, timestep):
         + float(row["gen_dev_neg_mw"]) * float(row["coef_gen_neg"])
         for row in gas_rows
     )
-    storage_actual_dev_cost = sum(
-        float(row["storage_dev_pos_mwh"]) * float(row["coef_storage_pos"])
-        + float(row["storage_dev_neg_mwh"]) * float(row["coef_storage_neg"])
-        for row in storage_rows
-    )
-    storage_da_injected_abs_balance_mismatch_mwh = sum(
-        abs(float(row["da_ref_storage_balance_mismatch_mwh"])) for row in storage_rows
-    )
-    storage_da_injected_signed_balance_mismatch_mwh = sum(
-        float(row["da_ref_storage_balance_mismatch_mwh"]) for row in storage_rows
+    pump_actual_dev_cost = sum(
+        float(row["pump_dev_pos_mw"]) * float(row["coef_pump_pos"])
+        + float(row["pump_dev_neg_mw"]) * float(row["coef_pump_neg"])
+        for row in pump_rows
     )
 
     be_balancing_dev = (
@@ -261,6 +229,11 @@ def append_hourly_debug(lp, rt, timestep):
             lp.model.varGeneration[i, 0] - lp.model.p_rt_target[i]
             for i in lp.model.s_gen
             if int(i) in rt.ctx.target_gen_indices
+        )
+        - _sum_expr(
+            lp.model.varPump[i, 0] - lp.model.p_rt_pump_target[i]
+            for i in lp.model.s_gen_pump
+            if int(i) in rt.ctx.pump_target_indices
         )
         + _sum_expr(lp.model.varLoadShed[j, 0] for j in lp.model.s_load)
         - _sum_expr(lp.model.varDumpLoad[j, 0] for j in lp.model.s_load)
@@ -295,7 +268,6 @@ def append_hourly_debug(lp, rt, timestep):
         "fossil_other": 0.0,
         "storage_generation": 0.0,
         "other": 0.0,
-        "storage_soc": 0.0,
         "pump_dev": 0.0,
         "flex_dev": 0.0,
     }
@@ -343,7 +315,7 @@ def append_hourly_debug(lp, rt, timestep):
         redispatch_mw_attribution[bucket]["up_dev_mw"] += float(dev_pos)
         redispatch_mw_attribution[bucket]["down_dev_mw"] += float(dev_neg)
 
-    redispatch_cost_attribution_eur["storage_soc"] = float(storage_actual_dev_cost)
+    redispatch_cost_attribution_eur["pump_dev"] = float(pump_actual_dev_cost)
     redispatch_cost_attribution_eur["flex_dev"] = _sum_expr(
         lp.model.p_rt_deviation_price_flex_pos[j] * lp.model.varRtFlexLoadTargetDevPos[j]
         + lp.model.p_rt_deviation_price_flex_neg[j] * lp.model.varRtFlexLoadTargetDevNeg[j]
@@ -400,16 +372,10 @@ def append_hourly_debug(lp, rt, timestep):
                 for j in lp.model.s_load_flex
                 if int(j) in rt.ctx.consumer_target_indices
             ),
-            "storage_dev": _sum_expr(
-                lp.model.p_rt_deviation_price_storage_pos[i] * lp.model.varRtStorageTargetDevPos[i]
-                + lp.model.p_rt_deviation_price_storage_neg[i] * lp.model.varRtStorageTargetDevNeg[i]
-                for i in lp.model.s_gen_storage
-                if int(i) in rt.ctx.storage_target_indices
-            ),
-            "da_ref_storage_mismatch_cost": float(da_reference_storage_mismatch_cost),
+            "pump_dev": float(pump_actual_dev_cost),
         },
         "active_channels": {
-            "rt_storage_target_count": int(len(rt.ctx.storage_target_indices)),
+            "rt_pump_target_count": int(len(rt.ctx.pump_target_indices)),
             "rt_target_gen_count": int(len(rt.ctx.target_gen_indices)),
             "foreign_gen_lock_rows": int(
                 sum(
@@ -443,21 +409,17 @@ def append_hourly_debug(lp, rt, timestep):
             ),
         },
         "da_injection_check": {
-            "storage_check_available": True,
             "gas_da_injected_dev_cost": 0.0,
-            "storage_da_injected_dev_cost": float(da_reference_storage_mismatch_cost),
-            "storage_da_injected_abs_balance_mismatch_mwh": float(storage_da_injected_abs_balance_mismatch_mwh),
-            "storage_da_injected_signed_balance_mismatch_mwh": float(storage_da_injected_signed_balance_mismatch_mwh),
             "da_replay_gas_reachable_count": int(len(gas_rows) - da_replay_infeasible_gas_count),
             "da_replay_gas_infeasible_count": int(da_replay_infeasible_gas_count),
             "da_replay_unavoidable_gas_dev_cost_lb": float(da_replay_unavoidable_gas_dev_cost_lb),
             "actual_gas_rt_dev_cost": float(gas_actual_dev_cost),
-            "actual_storage_rt_dev_cost": float(storage_actual_dev_cost),
-            "actual_total_rt_dev_cost": float(gas_actual_dev_cost + storage_actual_dev_cost),
+            "actual_pump_rt_dev_cost": float(pump_actual_dev_cost),
+            "actual_total_rt_dev_cost": float(gas_actual_dev_cost + pump_actual_dev_cost),
         },
         "redispatch_cost_attribution_eur": redispatch_cost_attribution_eur,
         "redispatch_mw_attribution": redispatch_mw_attribution,
-        "rt_storage_rows": storage_rows,
+        "rt_pump_rows": pump_rows,
         "rt_gen_rows": gas_rows,
     }
 

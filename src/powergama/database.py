@@ -38,7 +38,7 @@ class DatabaseBaseClass(object):
         _scan(getattr(data, "consumer", None), ["demand_ref", "rt_target_ref"])
         _scan(
             getattr(data, "generator", None),
-            ["inflow_ref", "pmin_ref", "pmax_ref", "rt_target_ref", "rt_storage_target_ref"],
+            ["inflow_ref", "pmin_ref", "pmax_ref", "rt_target_ref", "rt_pump_target_ref"],
         )
         return refs
 
@@ -64,9 +64,7 @@ class DatabaseBaseClass(object):
             sample = ", ".join(missing[:12])
             tail = "" if len(missing) <= 12 else f" ... (+{len(missing) - 12} more)"
             raise RuntimeError(
-                "Missing required profile columns referenced by data_generator/data_consumer: "
-                + sample
-                + tail
+                "Missing required profile columns referenced by data_generator/data_consumer: " + sample + tail
             )
 
     def __init__(self, filename):
@@ -218,7 +216,9 @@ class DatabaseBaseClass(object):
                         profiles = profiles.join(aux, how="left")
                 data["profiles"] = profiles
 
-            df_ntc = pd.read_sql("SELECT name FROM sqlite_master WHERE type='table' AND name='data_inter_area_ntc'", con)
+            df_ntc = pd.read_sql(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='data_inter_area_ntc'", con
+            )
             if not df_ntc.empty:
                 data["inter_area_ntc"] = pd.read_sql("SELECT * FROM data_inter_area_ntc", con, index_col="index")
                 data["inter_area_ntc"].index.name = None

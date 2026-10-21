@@ -30,7 +30,6 @@ LOCK_ATTRS = (
     "border_dc_flow_lock_parquet",
     "border_ac_flow_bounds_parquet",
     "border_dc_flow_bounds_parquet",
-    "da_storage_marginalprice_parquet",
 )
 
 
@@ -50,8 +49,6 @@ class DaLocks:
     border_ac_flow_ub: pd.Series | None = None
     border_dc_flow_lb: pd.Series | None = None
     border_dc_flow_ub: pd.Series | None = None
-    # {(timestep, storage_indx): value}, for storage deviation pricing.
-    da_storage_marginalprice: dict[tuple[int, int], float] = field(default_factory=dict)
     # Border branches: those carrying lock data, intersected with the grid.
     idx_border_ac: set[int] = field(default_factory=set)
     idx_border_dc: set[int] = field(default_factory=set)
@@ -94,6 +91,10 @@ def load_da_locks(grid) -> DaLocks:
     - generators: timestep, indx, output
     - consumers: timestep, indx, demand
     """
+    if getattr(grid, "da_storage_marginalprice_parquet", ""):
+        raise ValueError(
+            "da_storage_marginalprice_parquet was removed: RT prices storage deviations at the current storage value"
+        )
     locks = DaLocks()
 
     gen_path = getattr(grid, "foreign_gen_lock_parquet", "")
@@ -180,21 +181,6 @@ def load_da_locks(grid) -> DaLocks:
                 locks.border_dc_flow_ub = ddf_idx["flow_ub"]
             except Exception as exc:
                 warnings.warn(f"Failed reading BE-border DC flow bounds parquet '{p}': {exc}", UserWarning)
-
-    da_storage_marginalprice_path = getattr(grid, "da_storage_marginalprice_parquet", "")
-    if da_storage_marginalprice_path:
-        p = Path(str(da_storage_marginalprice_path))
-        if p.exists():
-            try:
-                sdf = pd.read_parquet(p)
-                sdf["timestep"] = pd.to_numeric(sdf["timestep"], errors="coerce").fillna(-1).astype(int)
-                sdf["indx"] = pd.to_numeric(sdf["indx"], errors="coerce").fillna(-1).astype(int)
-                sdf["marginalprice"] = pd.to_numeric(sdf["marginalprice"], errors="coerce").fillna(0.0)
-                locks.da_storage_marginalprice = {
-                    (int(row["timestep"]), int(row["indx"])): float(row["marginalprice"]) for _, row in sdf.iterrows()
-                }
-            except Exception as exc:
-                warnings.warn(f"Failed reading DA storage marginalprice parquet '{p}': {exc}", UserWarning)
 
     # Border branches: branches that cross between different areas (used for border-flow locking).
     # Identified by the presence of border flow lock data on the grid object (set externally).

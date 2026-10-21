@@ -1,7 +1,19 @@
 # Changes
 
 ## unpublished
-2026-10-20
+2026-10-21
+- **breaking:** RT storage is settled on its power, not its filling level. Pumping is tracked
+  against the day-ahead schedule through a new `generator.rt_pump_target_ref` profile column
+  (a fraction of `pump_cap`), priced at c0 ± (deadband − storage value × pump_efficiency),
+  and storage generation through `rt_target_ref` like any other generator (ported from
+  761d88f by Valentin Chabaud). `generator.rt_storage_target_ref` and the
+  `da_storage_marginalprice_parquet` lock file are removed and raise an error if set. RT
+  used to drop the pumping cost with the operating cost, so pumping was free and a storage
+  unit could pump and generate at once; now generating η MWh and pumping 1 MWh more costs
+  c0(1 + η) + deadband. The RT debug stream reports `rt_pump_rows` and
+  `rt_pump_target_count` in place of `rt_storage_rows` and `rt_storage_target_count`
+- the storage value plot draws the pump threshold at storage value × pump_efficiency −
+  deadband, the price below which pumping pays
 - **behaviour change:** spilled power is limited to the inflow, so only inflow that cannot be
   stored is spilled, never stored or pumped energy (#33). Storage without inflow, such as
   batteries and pure pumped storage, can no longer spill, and in a surplus can no longer pump
