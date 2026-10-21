@@ -20,6 +20,8 @@ class RtContext:
     consumer_target_indices: set = field(default_factory=set)
     storage_target_ref: object = None
     storage_target_indices: set = field(default_factory=set)
+    pump_target_ref: object = None
+    pump_target_indices: set = field(default_factory=set)
 
     # --- generator classification (read only by the diagnostics, except
     #     wind/solar/hydro_ror which the deviation pricing uses) -------------
@@ -71,6 +73,18 @@ class RtContext:
             and isinstance(self.consumer_target_ref.loc[i], str)
             and str(self.consumer_target_ref.loc[i]).strip()
             and int(i) in ctx.idx_consumersWithFlexLoad
+        }
+        # Pumping targets of pumped storage, as a fraction of pump_cap.
+        self.pump_target_ref = (
+            grid.generator["rt_pump_target_ref"] if "rt_pump_target_ref" in grid.generator.columns else None
+        )
+        self.pump_target_indices = {
+            int(i)
+            for i in grid.generator.index
+            if self.pump_target_ref is not None
+            and isinstance(self.pump_target_ref.loc[i], str)
+            and str(self.pump_target_ref.loc[i]).strip()
+            and int(i) in ctx.idx_generatorsWithPumping
         }
         # Storage (reservoir/battery) filling targets, as a fraction [0, 1] of capacity, so
         # that storage state continuity matches DA.

@@ -84,6 +84,19 @@ def update_generator_targets(lp, rt, timestep):
             lp.model.p_rt_target[i] = 0.0
 
 
+def update_pump_targets(lp, rt, timestep):
+    """Write each pumped-storage unit's DA pumping target for this timestep."""
+    if rt.ctx.pump_target_ref is None or not rt.ctx.pump_target_indices:
+        return
+    for i in lp.model.s_gen_pump:
+        rt_ref = rt.ctx.pump_target_ref.iloc[int(i)]
+        if isinstance(rt_ref, str) and rt_ref in lp._grid.profiles.columns:
+            pump_cap = float(lp._grid.generator.loc[i, "pump_cap"])
+            lp.model.p_rt_pump_target[i] = max(0.0, pump_cap * float(lp._grid.profiles.loc[timestep, rt_ref]))
+        else:
+            lp.model.p_rt_pump_target[i] = 0.0
+
+
 def update_flexload_and_storage_targets(lp, rt, timestep):
     """Write flexible-load DA targets, storage DA targets and the storage balance RHS."""
     # Update consumer (flexible load) DA targets for DA-target deviation penalties
@@ -173,6 +186,21 @@ def update_deviation_prices(lp, rt, timestep):
         else:
             lp.model.p_rt_deviation_price_gen_pos[i] = 0.0
             lp.model.p_rt_deviation_price_gen_neg[i] = 0.0
+    for i in lp.model.s_gen_pump:
+        if int(i) in rt.ctx.pump_target_indices:
+            # Pumping: c+ = c0 + c_pump, c- = c0 - c_pump, where c_pump is the cost of
+            # pumping 1 MWh: the deadband, less the storage value of what reaches storage.
+            # Pumping x more and generating eff*x more then costs c0*(1 + eff) + deadband,
+            # whatever the storage value, so cycling never pays.
+            _pump_credit = float(pyo.value(lp.model.p_storage_value[i])) * float(
+                lp._grid.generator.loc[i, "pump_efficiency"]
+            ) - float(pyo.value(lp.model.p_genpump_cost[i]))
+            _c_pump_pos, _c_pump_neg = _enforce_split_sum_guard(_fee - _pump_credit, _fee + _pump_credit)
+            lp.model.p_rt_deviation_price_pump_pos[i] = _c_pump_pos
+            lp.model.p_rt_deviation_price_pump_neg[i] = _c_pump_neg
+        else:
+            lp.model.p_rt_deviation_price_pump_pos[i] = 0.0
+            lp.model.p_rt_deviation_price_pump_neg[i] = 0.0
     for i in lp.model.s_load_flex:
         if int(i) in rt.ctx.consumer_target_indices:
             # Flex load / load-shedding: c+ = c0 + c_flex, c- = c0 - c_flex

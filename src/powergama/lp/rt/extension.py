@@ -16,7 +16,8 @@ class RtExtension(ModelExtension):
 
     - **Soft targets**, as profile columns referenced from the grid data:
       ``generator.rt_target_ref`` (dispatch, fraction of pmax),
-      ``generator.rt_storage_target_ref`` (filling level, fraction of storage_cap)
+      ``generator.rt_storage_target_ref`` (filling level, fraction of storage_cap),
+      ``generator.rt_pump_target_ref`` (pumping, fraction of pump_cap)
       and ``consumer.rt_target_ref`` (flexible load, fraction of demand_avg).
       Deviations from them are priced, not forbidden.
     - **Hard locks**, as parquet files named by attributes on the GridData object
@@ -85,6 +86,7 @@ class RtExtension(ModelExtension):
         rt_build.add_target_tracking(model, grid, ctx, self)
         rt_build.add_flexload_target_tracking(model, grid, ctx, self)
         rt_build.add_storage_target_tracking(model, grid, ctx, self)
+        rt_build.add_pump_target_tracking(model, grid, ctx, self)
         rt_build.add_border_flow_target_tracking(model, grid, ctx, self)
 
     # --- simulation -----------------------------------------------------------
@@ -93,6 +95,7 @@ class RtExtension(ModelExtension):
         # Locks first: they override the limits and demand the core has just written.
         rt_data.apply_da_locks(lp, self, timestep)
         rt_data.update_generator_targets(lp, self, timestep)
+        rt_data.update_pump_targets(lp, self, timestep)
         rt_data.update_flexload_and_storage_targets(lp, self, timestep)
         rt_data.update_deviation_prices(lp, self, timestep)
         rt_data.update_border_flow_targets(lp, self, timestep)
