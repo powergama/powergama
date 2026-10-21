@@ -84,8 +84,21 @@ def update_generator_targets(lp, rt, timestep):
             lp.model.p_rt_target[i] = 0.0
 
 
-def update_flexload_and_storage_targets(lp, rt, timestep):
-    """Write flexible-load DA targets, storage DA targets and the storage balance RHS."""
+def update_pump_targets(lp, rt, timestep):
+    """Write each pumped-storage unit's DA pumping target for this timestep."""
+    if rt.ctx.pump_target_ref is None or not rt.ctx.pump_target_indices:
+        return
+    for i in lp.model.s_gen_pump:
+        rt_ref = rt.ctx.pump_target_ref.iloc[int(i)]
+        if isinstance(rt_ref, str) and rt_ref in lp._grid.profiles.columns:
+            pump_cap = float(lp._grid.generator.loc[i, "pump_cap"])
+            lp.model.p_rt_pump_target[i] = max(0.0, pump_cap * float(lp._grid.profiles.loc[timestep, rt_ref]))
+        else:
+            lp.model.p_rt_pump_target[i] = 0.0
+
+
+def update_flexload_targets(lp, rt, timestep):
+    """Write flexible-load DA targets."""
     # Update consumer (flexible load) DA targets for DA-target deviation penalties
     if rt.ctx.consumer_target_ref is not None and rt.ctx.consumer_target_indices:
         for j in lp.model.s_load_flex:
@@ -97,23 +110,6 @@ def update_flexload_and_storage_targets(lp, rt, timestep):
                 )
             else:
                 lp.model.p_rt_flexload_target[j] = 0.0
-
-    # Update storage DA filling targets and one-step storage balance RHS.
-    if rt.ctx.storage_target_ref is not None and rt.ctx.storage_target_indices:
-        for i in lp.model.s_gen_storage:
-            inflow_factor = lp._grid.generator.loc[i, "inflow_fac"]
-            inflow_profile = lp._grid.generator.loc[i, "inflow_ref"]
-            capacity = lp._grid.generator.loc[i, "pmax"]
-            gen_inflow = capacity * inflow_factor * lp._grid.profiles[inflow_profile][timestep]
-            lp.model.p_rt_storage_balance_rhs[i] = max(0.0, float(lp._storage[i] + gen_inflow * lp.timeDelta))
-
-            rt_storage_ref = rt.ctx.storage_target_ref.iloc[int(i)]
-            if isinstance(rt_storage_ref, str) and rt_storage_ref in lp._grid.profiles.columns:
-                storage_cap = float(lp._grid.generator.loc[i, "storage_cap"])
-                target_frac = float(lp._grid.profiles.loc[timestep, rt_storage_ref])
-                lp.model.p_rt_storage_target[i] = max(0.0, storage_cap * max(0.0, min(1.0, target_frac)))
-            else:
-                lp.model.p_rt_storage_target[i] = 0.0
 
 
 def marginal_cost(lp, i):
@@ -127,12 +123,11 @@ def marginal_cost(lp, i):
 
 def update_deviation_prices(lp, rt, timestep):
     """Price this timestep's deviation variables from current marginal costs."""
-    # In deviation objective mode, all generation technologies use the same
-    # RT-local deviation pricing scheme (no DA-price coupling):
-    #   deviation_price = max(0, current_marginal_cost + balancing_fee)
-    # applied symmetrically to upward and downward deviation variables.
-    # This ensures every technology follows a pure deviation-based RT scheme,
-    # while ramp-rate constraints continue to govern feasible redispatch.
+    # Every tracked quantity is priced around its current marginal cost c:
+    #   c+ = c0 + c (more than DA), c- = c0 - c (less than DA),
+    # with c0 the balancing fee, so c0 is paid on every MWh of deviation either way.
+    # Variable renewables are the exception (below). Ramp limits still govern which
+    # redispatch is feasible.
     _fee = float(rt.balancing_fee_eur_per_mwh)
     _split_eps = 1e-6
 
@@ -173,6 +168,21 @@ def update_deviation_prices(lp, rt, timestep):
         else:
             lp.model.p_rt_deviation_price_gen_pos[i] = 0.0
             lp.model.p_rt_deviation_price_gen_neg[i] = 0.0
+    for i in lp.model.s_gen_pump:
+        if int(i) in rt.ctx.pump_target_indices:
+            # Pumping: c+ = c0 + c_pump, c- = c0 - c_pump, where c_pump is the cost of
+            # pumping 1 MWh: the deadband, less the storage value of what reaches storage.
+            # Pumping x more and generating eff*x more then costs c0*(1 + eff) + deadband,
+            # whatever the storage value, so cycling never pays.
+            _pump_credit = float(pyo.value(lp.model.p_storage_value[i])) * float(
+                lp._grid.generator.loc[i, "pump_efficiency"]
+            ) - float(pyo.value(lp.model.p_genpump_cost[i]))
+            _c_pump_pos, _c_pump_neg = _enforce_split_sum_guard(_fee - _pump_credit, _fee + _pump_credit)
+            lp.model.p_rt_deviation_price_pump_pos[i] = _c_pump_pos
+            lp.model.p_rt_deviation_price_pump_neg[i] = _c_pump_neg
+        else:
+            lp.model.p_rt_deviation_price_pump_pos[i] = 0.0
+            lp.model.p_rt_deviation_price_pump_neg[i] = 0.0
     for i in lp.model.s_load_flex:
         if int(i) in rt.ctx.consumer_target_indices:
             # Flex load / load-shedding: c+ = c0 + c_flex, c- = c0 - c_flex
@@ -185,24 +195,6 @@ def update_deviation_prices(lp, rt, timestep):
         else:
             lp.model.p_rt_deviation_price_flex_pos[i] = 0.0
             lp.model.p_rt_deviation_price_flex_neg[i] = 0.0
-    for i in lp.model.s_gen_storage:
-        if int(i) in rt.ctx.storage_target_indices:
-            # Storage DA-marginal pricing: c+ = c0 + c_DA, c- = c0 - c_DA
-            # c_DA is the DA marginal storage value (from da_storage_marginalprice parquet),
-            # falling back to the current storage value if not available.
-            _c_da_storage = rt.locks.da_storage_marginalprice.get((int(timestep), int(i)), None)
-            if _c_da_storage is None:
-                _c_da_storage = float(pyo.value(lp.model.p_storage_value[i]))
-            else:
-                _c_da_storage = float(_c_da_storage)
-            c_pos = _fee + _c_da_storage
-            c_neg = _fee - _c_da_storage
-            c_pos, c_neg = _enforce_split_sum_guard(c_pos, c_neg)
-            lp.model.p_rt_deviation_price_storage_pos[i] = c_pos
-            lp.model.p_rt_deviation_price_storage_neg[i] = c_neg
-        else:
-            lp.model.p_rt_deviation_price_storage_pos[i] = 0.0
-            lp.model.p_rt_deviation_price_storage_neg[i] = 0.0
 
 
 def update_border_flow_targets(lp, rt, timestep):

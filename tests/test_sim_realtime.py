@@ -21,6 +21,7 @@ from rt_case import (
     read_table,
     series,
     solve_rt_case,
+    two_area_data,
 )
 
 import powergama
@@ -48,8 +49,8 @@ def test_rt_applies_locks_and_targets(tmp_path):
     assert lp.model.p_demand[CONS_LOCKED, 0].value == pytest.approx(LOCKED_DEMAND)
 
     # Every kind of target produced a tracking constraint.
-    assert set(lp.model.cRtTargetTracking) == {GEN_TARGET}
-    assert set(lp.model.cRtStorageTargetTracking) == {GEN_STORAGE}
+    assert set(lp.model.cRtTargetTracking) == {GEN_TARGET, GEN_STORAGE}
+    assert set(lp.model.cRtPumpTargetTracking) == {GEN_STORAGE}
     assert set(lp.model.cRtFlexLoadTargetTracking) == {CONS_FLEX}
     assert set(lp.model.cRtIoTargetTrackingAc) == {BRANCH_BORDER}
     assert set(lp.model.cRtIoTargetTrackingDc) == {DCBRANCH_BORDER}
@@ -111,6 +112,57 @@ def test_rt_target_can_be_violated_if_economic(tmp_path, testcase_9bus_data):
     # Generator does not follow the target dispatch
     assert gen_coal_plant[5] < expected_dispatch[5]
     assert gen_coal_plant[6] < expected_dispatch[6]
+
+
+def test_rt_pump_deviation_prices():
+    """Pumping is priced like generation: c0 +/- c_pump, c_pump = deadband - storage value * efficiency.
+
+    Pumping 1 MWh more and generating eff MWh more leaves the storage level where it
+    was. That round trip costs c0 (1 + eff) + deadband, plus the fuel cost of what is
+    generated, whatever the storage value (761d88f), so cycling never pays in RT.
+    """
+    data = two_area_data()
+    data.profiles["rt_gen_hydro"] = 0.0
+    data.profiles["rt_pump_hydro"] = 0.0
+    data.generator["rt_target_ref"] = ""
+    data.generator.loc[GEN_STORAGE, "rt_target_ref"] = "rt_gen_hydro"
+    data.generator["rt_pump_target_ref"] = ""
+    data.generator.loc[GEN_STORAGE, "rt_pump_target_ref"] = "rt_pump_hydro"
+    fee = 10.0
+    lp = powergama.LpProblem(data, extensions=[RtExtension(balancing_fee_eur_per_mwh=fee)])
+    lp._updateLpProblem([0])
+    m = lp.model
+
+    eff = data.generator.loc[GEN_STORAGE, "pump_efficiency"]
+    deadband = data.generator.loc[GEN_STORAGE, "pump_deadband"]
+    storage_value = m.p_storage_value[GEN_STORAGE].value
+    assert storage_value > 0
+    credit = storage_value * eff - deadband
+    assert m.p_rt_deviation_price_pump_pos[GEN_STORAGE].value == pytest.approx(fee - credit)
+    assert m.p_rt_deviation_price_pump_neg[GEN_STORAGE].value == pytest.approx(fee + credit)
+
+    cycle = eff * m.p_rt_deviation_price_gen_pos[GEN_STORAGE].value + m.p_rt_deviation_price_pump_pos[GEN_STORAGE].value
+    fuelcost = m.p_gen_cost[GEN_STORAGE].value
+    assert cycle == pytest.approx(fee * (1 + eff) + deadband + eff * fuelcost)
+
+    assert set(m.cRtPumpTargetTracking) == {GEN_STORAGE}
+
+
+def test_rt_storage_level_target_was_removed():
+    """Storage is settled on its power, so a filling-level target is rejected, not ignored."""
+    data = two_area_data()
+    data.profiles["rt_storage_hydro"] = 0.5
+    data.generator["rt_storage_target_ref"] = ""
+    data.generator.loc[GEN_STORAGE, "rt_storage_target_ref"] = "rt_storage_hydro"
+    with pytest.raises(ValueError, match="rt_storage_target_ref was removed"):
+        powergama.LpProblem(data, extensions=[RtExtension()])
+
+
+def test_rt_da_storage_price_was_removed(tmp_path):
+    data = two_area_data()
+    data.da_storage_marginalprice_parquet = str(tmp_path / "storage_price.parquet")
+    with pytest.raises(ValueError, match="da_storage_marginalprice_parquet was removed"):
+        powergama.LpProblem(data, extensions=[RtExtension()])
 
 
 @pytest.mark.parametrize("mode", ["single_period", "multi_period"])

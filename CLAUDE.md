@@ -122,7 +122,7 @@ Selected via `LpProblem` constructor arguments (see [usage.md](userguide/usage.m
    `horizon_hours=1`.
 3. **Balancing / real-time** (`extensions=[RtExtension(...)]`, from `powergama.lp.rt`) — a
    single-period solve with penalties on deviation from a day-ahead schedule supplied through
-   `rt_target_ref` / `rt_storage_target_ref` profile columns and the DA lock parquets
+   `rt_target_ref` / `rt_pump_target_ref` profile columns and the DA lock parquets
    (`lp/rt/locks.py`). It is the second step after a day-ahead run, and not a third formulation:
    `RtExtension` plugs into the model through the `ModelExtension` hooks
    (`lp/extension.py`), including editing the objective's named terms of each hour. Windows of
