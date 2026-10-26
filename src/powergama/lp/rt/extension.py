@@ -16,25 +16,29 @@ class RtExtension(ModelExtension):
 
     - **Soft targets**, as profile columns referenced from the grid data:
       ``generator.rt_target_ref`` (dispatch, fraction of pmax),
-      ``generator.rt_storage_target_ref`` (filling level, fraction of storage_cap)
+      ``generator.rt_pump_target_ref`` (pumping, fraction of pump_cap)
       and ``consumer.rt_target_ref`` (flexible load, fraction of demand_avg).
       Deviations from them are priced, not forbidden.
     - **Hard locks**, as parquet files named by attributes on the GridData object
       (see :data:`~powergama.lp.rt.locks.LOCK_ATTRS`): pinned foreign
       generators, fixed foreign demand and border-flow windows, plus border-flow
-      targets and day-ahead storage prices.
+      targets.
 
     The objective drops the operating cost and minimises the priced deviations
-    plus load shedding. Windows of one timestep only (single-period mode).
+    plus load shedding. Storage is settled on its power, generation and pumping,
+    not on its filling level. Windows of one timestep only (single-period mode).
 
     Parameters
     ----------
     balancing_fee_eur_per_mwh : float
-        Flat fee per MWh of real-time redispatch, to discourage marginal deviations.
+        Flat fee per MWh of real-time redispatch, to discourage marginal deviations
+        (c0 in the WILLOW D4.5 annex).
     res_curtailment_factor : float
-        Penalty multiplier on real-time curtailment of variable renewable generation.
+        Penalty multiplier on real-time curtailment of variable renewable generation
+        (1 + delta_curt in the annex).
     xborder_flow_penalty_eur_per_mwh : float
-        Penalty per MWh of deviation from day-ahead cross-border flows.
+        Penalty per MWh of deviation from day-ahead cross-border flows (c_xborder in
+        the annex).
     """
 
     supports_multi_period = False
@@ -84,7 +88,7 @@ class RtExtension(ModelExtension):
     def add_constraints(self, model, grid, ctx):
         rt_build.add_target_tracking(model, grid, ctx, self)
         rt_build.add_flexload_target_tracking(model, grid, ctx, self)
-        rt_build.add_storage_target_tracking(model, grid, ctx, self)
+        rt_build.add_pump_target_tracking(model, grid, ctx, self)
         rt_build.add_border_flow_target_tracking(model, grid, ctx, self)
 
     # --- simulation -----------------------------------------------------------
@@ -93,7 +97,8 @@ class RtExtension(ModelExtension):
         # Locks first: they override the limits and demand the core has just written.
         rt_data.apply_da_locks(lp, self, timestep)
         rt_data.update_generator_targets(lp, self, timestep)
-        rt_data.update_flexload_and_storage_targets(lp, self, timestep)
+        rt_data.update_pump_targets(lp, self, timestep)
+        rt_data.update_flexload_targets(lp, self, timestep)
         rt_data.update_deviation_prices(lp, self, timestep)
         rt_data.update_border_flow_targets(lp, self, timestep)
 

@@ -12,8 +12,8 @@ problem::
 RT is the second step of a two-step workflow. A day-ahead run produces a
 schedule; an external prepare-rt step turns it into RT inputs -- hard locks
 (parquet files: pinned foreign generators, fixed foreign demand, border-flow
-windows) and soft targets (``rt_target_ref`` / ``rt_storage_target_ref`` profile
-columns, border-flow targets, DA storage prices) whose deviations are penalised.
+windows) and soft targets (``rt_target_ref`` / ``rt_pump_target_ref`` profile
+columns, border-flow targets) whose deviations are penalised.
 Everything else is optimised freely.
 
 The core never names RT. Everything here is reached through the hooks of
