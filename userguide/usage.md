@@ -1,14 +1,23 @@
 # PowerGAMA usage
 
-There are three distinct ways to run PowerGAMA
-1. Single-period scheduling (default)
-    - sequential solving timestep by timestep. All energy is traded in each timestep and storage is updated between each timestep
-1. Multi-period schceduling
-    - optimising over a planning horizon, typically representing day-ahead scheduling. Storage is optimised within the horizon. Rolling-horizon optimisation.
-1. Balancing
-    - Balancing market, timestep-by-timestep optimisation, where there is a cost for deviations from a planned schedule.
+PowerGAMA was built to study grid capacity and long-term investments: it optimises the
+dispatch of a whole power system **timestep by timestep**, each timestep a DC optimal power
+flow, with storage carried from one timestep to the next through storage values. This is
+the default, and still the right tool for that purpose.
 
-## Timestep by timestep optimisation
+Two extensions, aimed at studying grid **operation**, build on it:
+
+- **Multi-period optimisation with a rolling horizon** (section 2) optimises a window of
+  several timesteps at once, for example 24 hours, and keeps part of it before moving on.
+  It was introduced to mimic the day-ahead (DA) market, where the dispatch of a whole day
+  is cleared at once on forecasts, and storage is scheduled across the day.
+- **The real-time (RT) extension** (section 3) reproduces, in a simplified way, how the
+  forecast errors of a day-ahead schedule are balanced when the delivery hour comes: it
+  starts from the DA schedule and finds the cheapest way to correct it. It is a high-level
+  driver for what the intraday and balancing markets do, not a model of their internal
+  mechanisms.
+
+## 1. Timestep by timestep optimisation
 
 1. Load data
     ```python
@@ -25,7 +34,7 @@ There are three distinct ways to run PowerGAMA
     data.readProfileData(
         filename=datapath / "9busmod_profiles.csv",
         storagevalue_filling=datapath / "9busmod_profiles_storval_filling.csv",
-        storagevalue_time=datapath / "9busmod_profiles_storval_time.csv",
+        storagevalue_time=datapath / "9busmod_profiles_storval_time.csv",  # deprecated, see below
         timerange=timerange,
         timedelta=1.0,
     )
@@ -48,20 +57,29 @@ There are three distinct ways to run PowerGAMA
     )
     ```
 
-## 2. Day-ahead market (multi-period optimisation)
+The storage-value time curves of this example come from a separate file
+(`storagevalue_time`), which is deprecated: they can be ordinary profile columns, and
+`filename` can be a list of CSV or Parquet profile files (see
+[input_data.md](input_data.md)).
+
+## 2. Multi-period optimisation with a rolling horizon
 
 ```python
 lp = powergama.LpProblem(
     data,
     objective_mode="multi_period",
     horizon_hours=24,
-    commit_hours=24,
+    commit_hours=12,
 )
 ```
 
 `horizon_hours` is the length of the window that is optimised; `commit_hours` is how
 much of each window is kept before the next window starts. Setting `commit_hours`
-below `horizon_hours` gives a rolling horizon with lookahead (e.g. 48/24).
+below `horizon_hours` gives a rolling horizon with lookahead: with 24/12, each window
+sees a day ahead, its first 12 hours are kept, and the next window starts there, from the
+storage levels the kept hours left. With `commit_hours = horizon_hours` the windows do
+not overlap. This is how a day-ahead market is mimicked: the dispatch of each window is
+cleared at once, so storage is scheduled across the day instead of hour by hour.
 
 This is the same LP as the single-period mode, over a window of `horizon_hours`
 timesteps instead of one: `horizon_hours=1` gives the single-period results. Any
@@ -72,43 +90,26 @@ Storage values — both for generators and for flexible load — are evaluated o
 window from the filling level at the start of it, since the whole window is a single
 LP and the value has to enter as a constant coefficient. The single-period mode
 re-prices from the current filling level before every time step, being a window of
-one. See [model_formulations.md](model_formulations.md) and
-[model_description.md](model_description.md).
+one. Ramp limits (`ramp_up_pu`, `ramp_down_pu`) apply within each window and from one
+window to the next. See [model_description.md](model_description.md) and
+[model_formulations.md](model_formulations.md).
 
-## 3. Balancing market (deviations from day-ahead)
+## 3. The real-time (RT) extension
 
-This simulation mode can be run after a day-ahead simulation to represent the balancing ("real-time") market, where there may be a cost for deviations from
-the day-ahead schedule. It is an extension of the single-period mode, switched on by
-passing `RtExtension` to the problem. Model components are indexed by hour in the
-window, `[·, h]`, and in single-period mode `h` is 0: `lp.model.varGeneration[i, 0]`.
-
-In the example below, `rt_lock_profile` is the day-ahead schedule for the given
-generator, as a fraction of its `pmax`.
+The RT extension runs after a day-ahead run. It solves timestep by timestep, with
+`RtExtension` attached to the problem, and pays for every deviation from the day-ahead
+schedule. A function, `prepare_rt`, writes its inputs from the results of the day-ahead
+run:
 
 ```python
-from powergama.lp.rt import RtExtension
+from powergama.lp.rt import RtExtension, prepare_rt
 
-data.profiles["rt_lock_profile"] = ...
-data.generator.loc[index_gen, "rt_target_ref"] = "rt_lock_profile"
-
-lp = powergama.LpProblem(
-    data,
-    extensions=[RtExtension(balancing_fee_eur_per_mwh=100)],
-)
+prepared = prepare_rt(res_da, "rt_inputs", ...)   # res_da: a finished day-ahead run
+data_rt = powergama.GridData()
+data_rt.readGridData(**prepared.grid_files())
+data_rt.readProfileData(filename=["profiles_rt.csv", prepared.files["da_solution"]], ...)
+lp = powergama.LpProblem(data_rt, extensions=[RtExtension()])
 ```
 
-`RtExtension` also takes `res_curtailment_factor` and `xborder_flow_penalty_eur_per_mwh`.
-In the notation of the WILLOW D4.5 annex these are c0 (`balancing_fee_eur_per_mwh`),
-1 + δ_curt (`res_curtailment_factor`) and c_xborder (`xborder_flow_penalty_eur_per_mwh`).
-A deviation of anything else from its target costs c0 plus its marginal cost when it is
-more than the day-ahead schedule, and c0 minus it when it is less.
-
-Storage is settled on its power, not its filling level: the generation of a storage unit
-is tracked through `generator.rt_target_ref`, and its pumping through
-`generator.rt_pump_target_ref` (a fraction of `pump_cap`). The storage value enters
-through the deviation prices. Flexible-load targets go in `consumer.rt_target_ref`.
-`generator.rt_storage_target_ref` and the `da_storage_marginalprice_parquet` lock file
-were removed, and setting either raises an error. Hard day-ahead locks (pinned generators, fixed demand,
-border-flow windows) are read from parquet files named by attributes on the
-`GridData` object; see `powergama.lp.rt.locks`. Without the extension, none of
-these inputs are read.
+How to set it up and what it does are in [Usage_RT.md](Usage_RT.md) and
+[model_description_RT.md](model_description_RT.md).

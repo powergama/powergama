@@ -3,7 +3,7 @@
 ``POWERGAMA_RT_SOLVER_DEBUG_JSONL`` makes RtExtension write one JSON record per
 event: a header, one per solve() call, and one per solved timestep. It is
 write-only instrumentation, so nothing else in the suite would notice it break.
-Runs on the two-area RT case, which exercises every kind of lock and target.
+Runs on the two-area RT case, which exercises every kind of target and the inter-area rule.
 """
 
 import json
@@ -11,7 +11,21 @@ import sqlite3
 
 import pandas as pd
 import pytest
-from rt_case import CONS_FLEX, GEN_STORAGE, GEN_TARGET, N_STEPS, build_rt_case, solve_rt_case
+from rt_case import (
+    BRANCH_BORDER,
+    CONS_FLEX,
+    DCBRANCH_BORDER,
+    GEN_STORAGE,
+    GEN_TARGET,
+    LOCK_SHARE,
+    LOCK_WIDTH_BACKWARD,
+    LOCK_WIDTH_FORWARD,
+    N_STEPS,
+    build_rt_case,
+    read_table,
+    series,
+    solve_rt_case,
+)
 
 ENV = "POWERGAMA_RT_SOLVER_DEBUG_JSONL"
 TOL = 1e-6
@@ -57,7 +71,9 @@ def test_stream_has_header_solve_start_and_one_record_per_timestep(debug_run):
     header, start = records[0], records[1]
     assert header["debug_session_id"] == start["debug_session_id"] == rt.debug_session_id != ""
     assert "rt_balancing_fee_eur_per_mwh" not in header  # the prices are unit data
-    assert header["rt_xborder_flow_penalty_eur_per_mwh"] == rt.xborder_flow_penalty_eur_per_mwh
+    assert "rt_xborder_flow_penalty_eur_per_mwh" not in header
+    assert header["inter_area_rules_balancing_penalised"] == [0]
+    assert header["inter_area_rules_locked"] == [0]
     assert start["n_timesteps"] == N_STEPS
     assert (start["first_timestep"], start["last_timestep"]) == (0, N_STEPS - 1)
 
@@ -70,14 +86,14 @@ def test_timestep_objective_matches_stored_result(debug_run):
 
 
 def test_active_channels_match_the_case(debug_run):
-    """Generator targets (one plain, one storage), a pump target, AC and DC border target."""
+    """Generator targets (one plain, one storage), a pump target, one penalised and locked inter-area rule."""
     _, _, records = debug_run
     for r in records[2:]:
         assert r["active_channels"] == {
             "rt_pump_target_count": 1,
             "rt_target_gen_count": 2,
-            "rt_io_target_active_ac": 1,
-            "rt_io_target_active_dc": 1,
+            "rt_rule_balancing_penalty_count": 1,
+            "rt_rule_lock_count": 1,
         }, f"timestep {r['timestep']}"
         rows = r["rt_pump_rows"]
         assert [row["indx"] for row in rows] == [GEN_STORAGE]
@@ -111,6 +127,33 @@ def test_no_stream_without_the_variable(tmp_path, monkeypatch):
     assert not list(tmp_path.rglob("*.jsonl"))
     rt.append_debug_event({"event": "ignored"})  # a no-op, not an error
     assert len(_objective(res)) == N_STEPS
+
+
+def test_rule_rows(debug_run):
+    """One row per held inter-area rule: the RT and DA summed flows, the deviation and its cost."""
+    lp, res, records = debug_run
+    ac = read_table(res, "Res_Branches")
+    dc = read_table(res, "Res_DcBranches")
+    da_flow = lp._grid.profiles["da_flow_0"]
+    for r in records[2:]:
+        t = r["timestep"]
+        (row,) = r["rt_rule_rows"]
+        assert (row["rule"], row["area_from"], row["area_to"], row["da_flow_ref"]) == (
+            0,
+            "AREA_A",
+            "AREA_B",
+            "da_flow_0",
+        )
+        transfer = series(ac, BRANCH_BORDER, "flow")[t] + series(dc, DCBRANCH_BORDER, "flow")[t]
+        assert row["transfer_mw"] == pytest.approx(transfer, abs=TOL)
+        assert row["da_flow_mw"] == da_flow.loc[t]
+        assert row["dev_pos_mw"] - row["dev_neg_mw"] == pytest.approx(transfer - da_flow.loc[t], abs=TOL)
+        assert r["term_breakdown"]["xborder_dev"] == pytest.approx(row["dev_cost"], abs=TOL)
+        assert row["dev_cost"] == pytest.approx(row["balancing_penalty"] * (row["dev_pos_mw"] + row["dev_neg_mw"]))
+        assert row["lock_share"] == LOCK_SHARE
+        assert row["lock_lb_mw"] == pytest.approx(da_flow.loc[t] - LOCK_WIDTH_BACKWARD)
+        assert row["lock_ub_mw"] == pytest.approx(da_flow.loc[t] + LOCK_WIDTH_FORWARD)
+        assert row["lock_lb_mw"] - TOL <= row["transfer_mw"] <= row["lock_ub_mw"] + TOL
 
 
 def test_rows_are_per_unit(debug_run):

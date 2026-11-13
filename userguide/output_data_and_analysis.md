@@ -8,6 +8,54 @@ To re-open and analyse a system previously simulated and stored in a sqlite data
 ```
 And then use the analysis
 
+The database stores the profiles already cut to the time range of the run, so a reopened
+run assumes that its time range starts at 0. For a run on other rows of the profile files,
+pass them: `Results.from_existing("results.sqlite3", timedelta=1.0, timerange=range(24, 48))`.
+
+The grid read back is the grid that was written: the node, branch, DC branch, generator and
+consumer tables, the profiles, the storage-value tables and the inter-area rules
+(`inter_area_rules`), so a new `LpProblem` on `pg_res.grid` has the inter-area constraints
+of the original run. A grid table may have a column named `index` of its own: the database
+then keeps the row index in a column `level_0`, and reads it back from there (a column
+named `level_0` cannot be stored and raises).
+
+## Reading the dispatch as frames
+
+`Results.get_dispatch_frames(timeMaxMin=None)` returns the dispatch of a run as a dictionary of
+pandas DataFrames, one per kind of element:
+
+| key | values | columns |
+|---|---|---|
+| `generator_output` | generator output (MW) | every generator |
+| `pumping` | pumping (MW) | every generator with pumping (`pump_cap > 0`) |
+| `flexload_demand` | flexible demand (MW) | every consumer with flexible load |
+| `storage` | storage filling (MWh) | every generator with storage (`storage_cap > 0`) |
+| `branch_flow` | AC branch flow (MW) | every AC branch |
+| `dcbranch_flow` | DC branch flow (MW) | every DC branch |
+
+The columns are the element indices (the row index of `grid.generator`, `grid.consumer`,
+...). The index is the stored timestep, which is `timerange[0]` plus the timestep within the
+run: the row of the profile files the timestep was read from. A run on
+`timerange=range(24, 48)` therefore gives frames indexed 24..47. `timeMaxMin = [start, end]`
+selects `start <= timestep < end`; by default the whole time range of the run.
+
+The values are exactly the stored ones. A value that is not stored, for instance because the
+run stopped early, is NaN and is never filled. `Results.is_complete(timerange=None)` tells
+whether the stored timesteps are exactly the time range of the run (or the one given):
+
+```python
+res = powergama.Results.from_existing("da.sqlite3", timedelta=1.0)
+if not res.is_complete():
+    raise RuntimeError("the run did not finish")
+frames = res.get_dispatch_frames()
+output = frames["generator_output"]  # index = timestep, columns = generator index
+```
+
+Other result variables can be read the same way, one at a time, with
+`res.db.getResultFrame(table, column, timeMaxMin)`, e.g.
+`res.db.getResultFrame("Res_Nodes", "nodalprice", [0, 24])`. Only the result tables with one
+value per element and timestep are accepted (see `Database.RESULT_FRAME_COLUMNS`).
+
 ## Output data format
 The results of the simulation is saved in a sqlite3 database file
 

@@ -8,7 +8,8 @@ factor, and the storage values at the DA filling level (``da_storage_values``).
 The reference ``test_data/two_area/rt_type_prices_no_storage`` holds the result tables of the
 RT run below made with the old ``RtExtension(balancing_fee_eur_per_mwh=1,
 res_curtailment_factor=2, xborder_flow_penalty_eur_per_mwh=5)`` (025625f), which priced
-units by type and marginal cost inside the extension.
+units by type and marginal cost inside the extension. Its border penalty is now on the
+summed inter-area flow, ``inter_area_rules.balancing_penalty = 5`` (``rt_case``).
 """
 
 import sqlite3
@@ -18,7 +19,9 @@ import numpy as np
 import pandas as pd
 import pytest
 from rt_case import (
+    BRANCH_BORDER,
     CONS_FLEX,
+    DCBRANCH_BORDER,
     GEN_STORAGE,
     GEN_TARGET,
     N_STEPS,
@@ -33,16 +36,6 @@ import powergama
 from powergama.lp.rt import RtExtension, da_storage_values, price_columns
 
 REFERENCE = Path(__file__).parent / "test_data/two_area/rt_type_prices_no_storage"
-RESULT_TABLES = [
-    "Res_ObjFunc",
-    "Res_Generators",
-    "Res_Pumping",
-    "Res_Storage",
-    "Res_FlexibleLoad",
-    "Res_Branches",
-    "Res_DcBranches",
-    "Res_Nodes",
-]
 GEN_WIND = 1
 
 
@@ -67,13 +60,38 @@ def _case(tmp_path, *, storage_tracked):
     return data
 
 
+# Exact up to solver round-off: the inter-area flows are a different (equally cheap) vertex.
+DISPATCH_TABLES = ["Res_ObjFunc", "Res_Generators", "Res_Pumping", "Res_Storage", "Res_FlexibleLoad"]
+ROUND_OFF = 1e-9
+
+
 def test_reproduces_type_prices_without_storage(tmp_path):
-    """Without a tracked storage unit, the RT run is the one with the old type-based pricing, bit for bit."""
+    """Without a tracked storage unit, the RT run keeps the old type-based dispatch, objective and prices.
+
+    Bit-identical until the border rules moved to RT; since then the cross-border penalty acts on the
+    summed flow of the inter-area rule rather than on each branch, so the solver may move
+    flow between the parallel AC branch and HVDC link at no cost: hours 9-19 route 30 MW
+    more over the AC branch and 30 MW less over the link. The summed flow, the dispatch,
+    the objective and the nodal prices are unchanged (to round-off); the bus angles follow
+    the AC flow. The per-branch windows of +/-30 MW became the lock on the summed flow,
+    lock_share 0.6 (DA - 60 MW, DA + 100 MW), and the reference still holds.
+    """
     data = _case(tmp_path, storage_tracked=False)
     _, res = solve_rt_case(data, tmp_path / "rt.sqlite")
-    for table in RESULT_TABLES:
+    for table in DISPATCH_TABLES:
         expected = pd.read_parquet(REFERENCE / f"{table}.parquet")
-        pd.testing.assert_frame_equal(_read(res, table), expected, check_exact=True, obj=table)
+        pd.testing.assert_frame_equal(_read(res, table), expected, check_exact=False, atol=ROUND_OFF, obj=table)
+    cols = ["timestep", "indx", "nodalprice", "loadshed", "dumpload"]
+    expected = pd.read_parquet(REFERENCE / "Res_Nodes.parquet")[cols]
+    pd.testing.assert_frame_equal(_read(res, "Res_Nodes")[cols], expected, check_exact=False, atol=ROUND_OFF)
+
+    def summed(ac, dc):
+        return (series(ac, BRANCH_BORDER, "flow") + series(dc, DCBRANCH_BORDER, "flow")).to_numpy()
+
+    ref = summed(
+        pd.read_parquet(REFERENCE / "Res_Branches.parquet"), pd.read_parquet(REFERENCE / "Res_DcBranches.parquet")
+    )
+    np.testing.assert_allclose(summed(_read(res, "Res_Branches"), _read(res, "Res_DcBranches")), ref, atol=ROUND_OFF)
 
 
 def _filling_factor(grid, column, level, cap):

@@ -39,6 +39,9 @@ column              value (clipped to [0, 1])                       referenced b
 ``da_price_down_<d>`` at the DA filling level (and the pumping and  (``rt_price_down_ref``, ...),
 ``da_pump_price_*`` flexible-demand equivalents), EUR/MWh, not      *prices*, storage units only
 ``da_cons_price_*`` clipped; see :func:`price_columns`
+``da_flow_<k>``     DA flow summed over the branches of inter-area  ``inter_area_rules.da_flow_ref``
+                    rule k (row k of the table), MW, area_from ->   of rule k, *inter_area*
+                    area_to, not clipped; see :func:`da_flow_columns`
 ==================  ==============================================  ==================================
 
 The pin options also reference ``da_gen_<d>`` (``pmax_ref``, and ``pmin_ref`` to fix) and
@@ -85,11 +88,15 @@ class RefColumns:
         target). Rows not in the index are left as they are.
     consumer:
         The same for the RT consumer rows. A Series sets the one column it is named after.
+    inter_area_rules:
+        The same for the rows of the inter-area table (``da_flow_ref``,
+        ``balancing_penalty``, ``lock_share``, from :func:`da_flow_columns`); empty for the other functions.
     """
 
     profiles: pd.DataFrame
     generator: pd.DataFrame
     consumer: pd.DataFrame | pd.Series
+    inter_area_rules: pd.DataFrame = field(default_factory=pd.DataFrame)
 
 
 TargetColumns = RefColumns
@@ -155,7 +162,8 @@ def combine_columns(*parts: RefColumns) -> RefColumns:
     profiles = pd.DataFrame(columns, index=index, dtype=np.float64)
     generator = _merge_refs([_ref_frame(p.generator) for p in parts], "generator")
     consumer = _merge_refs([_ref_frame(p.consumer) for p in parts], "consumer")
-    return RefColumns(profiles=profiles, generator=generator, consumer=consumer)
+    rules = _merge_refs([_ref_frame(p.inter_area_rules) for p in parts], "inter_area_rules")
+    return RefColumns(profiles=profiles, generator=generator, consumer=consumer, inter_area_rules=rules)
 
 
 def clear_refs(table: pd.DataFrame, mask, columns, *, timesteps, which: str = "generator") -> RefColumns:
@@ -906,6 +914,7 @@ def prepare_rt(
     initial_storage=None,
     peak_tranches: PeakTranches | None = None,
     prices: DeviationPrices | None = None,
+    inter_area: InterAreaFlows | None = None,
     summary: bool = True,
     sources: dict[str, str] | None = None,
     summary_header: dict[str, str] | None = None,
@@ -963,12 +972,18 @@ def prepare_rt(
         tranches included) with :func:`price_columns`, the storage values by default at
         the DA filling level (:func:`da_storage_values`). Without it no price is written,
         and an RT run raises on the first tracked row without one.
+    inter_area:
+        An :class:`InterAreaFlows`: write the DA summed flow of the inter-area rules
+        (``da_flow_<k>``, MW) and set their ``da_flow_ref``, and ``balancing_penalty`` / ``lock_share``
+        where given, with :func:`da_flow_columns`. The DA grid must have an inter-area table.
+        Without it the table is copied as it is (a DA ``da_flow_ref`` would point at a
+        column ``da_solution.parquet`` lacks).
     summary:
         Write ``prepare_rt_summary.md`` and ``channels.csv``.
     sources:
         Where each channel family comes from, for the summary, by family (``da_gen``,
         ``da_pump``, ``da_cons``, ``da_carry``, ``da_storage``, ``da_headroom``,
-        ``da_price``). The DA families default to the DA database, ``da_carry`` to
+        ``da_price``, ``da_flow``). The DA families default to the DA database, ``da_carry`` to
         ``carry_curtailment.source``, ``da_headroom`` to the DA database and
         ``peak_tranches.source``, ``da_price`` to the DA database and ``prices.source``.
     summary_header:
@@ -977,11 +992,6 @@ def prepare_rt(
 
     The options and the targets share their columns (a pinned unit's ``da_gen_<d>`` is its
     target column too). A unit both pinned and in *carry_curtailment* raises.
-
-    Planned keyword-only options (not implemented yet; they will be added here without
-    changing the arguments above):
-
-    - DA border flows for ``inter_area_rules.da_flow_ref``.
     """
     grid = res_da.grid
     if not res_da.is_complete():
@@ -1089,9 +1099,26 @@ def prepare_rt(
                 timesteps=timesteps,
             )
         )
+    rules_name = next((name for name in INTER_AREA_TABLES if name in tables), None)
+    if inter_area is not None:
+        if rules_name is None:
+            raise ValueError("inter_area: the DA grid has no inter-area table (inter_area_rules)")
+        parts.append(
+            da_flow_columns(
+                frames,
+                tables[rules_name],
+                grid=grid,
+                mask=inter_area.mask,
+                balancing_penalty=inter_area.balancing_penalty,
+                lock_share=inter_area.lock_share,
+                timesteps=timesteps,
+            )
+        )
     refs = combine_columns(*parts)
     tables["generator"] = apply_refs(tables["generator"], refs.generator)
     tables["consumer"] = apply_refs(tables["consumer"], refs.consumer)
+    if rules_name is not None and not refs.inter_area_rules.empty:
+        tables[rules_name] = apply_refs(tables[rules_name], refs.inter_area_rules)
     da_solution = refs.profiles
 
     outdir = Path(outdir)
@@ -1128,6 +1155,10 @@ def prepare_rt(
                 if prices.storage_value is None
                 else "storage values given by the caller"
             ) + (f"; {prices.source}" if prices.source else "")
+        if inter_area is not None:
+            family_sources["da_flow"] = f"AC and DC branch flows from {da_run}" + (
+                f"; {inter_area.source}" if inter_area.source else ""
+            )
         family_sources.update(sources or {})
         option_counts = {
             "fix": fix,
@@ -1153,6 +1184,10 @@ def prepare_rt(
             options += (
                 f", prices (c0 {prices.fee:g} EUR/MWh, {n_res} renewable at {prices.curtailment_factor:g} x c0 down)"
             )
+        if inter_area is not None:
+            rules = tables[rules_name]
+            n_ref = len(refs.inter_area_rules)
+            options += f", inter_area {n_ref} of {len(rules)} rules"
         header = {
             "DA run": f"`{da_file}`" if da_file else "(in memory)",
             "DA timesteps": f"{timesteps[0]}..{timesteps[-1]} ({len(timesteps)})",
@@ -1167,6 +1202,7 @@ def prepare_rt(
                 tables["consumer"],
                 outdir,
                 node=tables["node"],
+                inter_area_rules=tables.get(rules_name) if rules_name is not None else None,
                 sources=family_sources,
                 header=header,
             )
@@ -1582,4 +1618,169 @@ class DeviationPrices:
     renewable: pd.Series | None = None
     curtailment_factor: float = 2.0
     storage_value: dict[str, pd.DataFrame] | None = None
+    source: str | None = None
+
+
+# --- inter-area rules: the DA summed flow -----------------------------------------
+
+DA_FLOW_PREFIX = "da_flow_"
+"""The DA summed flow of inter-area rule k is the profile column ``da_flow_<k>``."""
+
+RULE_COLUMNS = ("da_flow_ref", "balancing_penalty", "lock_share")
+"""The inter-area rule columns read by the RT extension only."""
+
+
+def rule_branches(grid, area_from, area_to) -> dict[str, list]:
+    """The branches crossing from *area_from* to *area_to*, signed as the NTC constraint signs them.
+
+    ``{"ac_pos": [...], "ac_neg": [...], "dc_pos": [...], "dc_neg": [...]}``: the AC and DC
+    branches from *area_from* into *area_to* (``pos``) and the other way (``neg``), from
+    ``node.area`` (:meth:`~powergama.GridData.getInterAreaBranches`). The summed flow of the
+    rule is the ``pos`` flows less the ``neg`` flows.
+    """
+    ac = grid.getInterAreaBranches(area_from=area_from, area_to=area_to, acdc="ac")
+    dc = grid.getInterAreaBranches(area_from=area_from, area_to=area_to, acdc="dc")
+    return {
+        "ac_pos": list(ac["branches_pos"]),
+        "ac_neg": list(ac["branches_neg"]),
+        "dc_pos": list(dc["branches_pos"]),
+        "dc_neg": list(dc["branches_neg"]),
+    }
+
+
+def _rule_values(value, rules: pd.DataFrame, name: str, *, low: float, high: float) -> pd.Series:
+    """A per-rule number: None (unset), a scalar for every rule, or a Series/dict by rule row.
+
+    NaN is unset (the table's value stays). A set value outside [low, high] raises.
+    """
+    if value is None:
+        return pd.Series(np.nan, index=rules.index, dtype=float)
+    if isinstance(value, dict):
+        value = pd.Series(value, dtype=float)
+    if isinstance(value, pd.Series):
+        unknown = value.index.difference(rules.index)
+        if len(unknown):
+            raise ValueError(f"'{name}' names rule row(s) {list(unknown[:5])}, which the inter-area table lacks")
+        values = pd.to_numeric(value, errors="coerce").astype(float).reindex(rules.index)
+    else:
+        values = pd.Series(float(value), index=rules.index, dtype=float)
+    bad = values.notna() & ~values.between(low, high)
+    if bad.any():
+        raise ValueError(f"'{name}' must be within [{low:g}, {high:g}], not {list(values[bad][:5])}")
+    return values
+
+
+def da_flow_columns(
+    frames: dict[str, pd.DataFrame],
+    rules: pd.DataFrame,
+    *,
+    grid,
+    mask=None,
+    balancing_penalty=None,
+    lock_share=None,
+    timesteps=None,
+) -> RefColumns:
+    """The DA summed flow of each inter-area rule, and the rule columns that use it.
+
+    Parameters
+    ----------
+    frames:
+        DA dispatch as returned by :meth:`powergama.Results.get_dispatch_frames`. Uses
+        ``branch_flow`` and ``dcbranch_flow``.
+    rules:
+        The RT inter-area table (``area_from``, ``area_to``, ...), e.g. from
+        :func:`rt_tables_from_da`.
+    grid:
+        The grid the branches and their areas come from (the DA ``GridData``; the RT one
+        has the same nodes and branches).
+    mask:
+        Boolean Series on the rule rows: the rules to give a ``da_flow_ref``. Default every
+        rule with a branch across its boundary (a rule without one is skipped); a rule the
+        mask selects without such a branch raises ``ValueError``.
+    balancing_penalty:
+        The cross-border balancing penalty, EUR per MWh of deviation of the summed flow from
+        DA (``>= 0``): a scalar for every
+        selected rule, or a Series/dict by rule row. ``None`` (or NaN) keeps the table's value.
+    lock_share:
+        lambda in [0, 1]: RT keeps the summed flow within DA - (1 - lambda) x ``ntc_backward``
+        and DA + (1 - lambda) x ``ntc_forward`` (lambda = 1: at DA). A scalar or a
+        Series/dict as for *balancing_penalty*; ``None`` keeps the table's value (NaN: no lock).
+    timesteps:
+        The DA timesteps the frames must be on; default those of ``branch_flow``.
+
+    Returns
+    -------
+    A :class:`RefColumns` with the profile columns ``da_flow_<k>``, k the rule's row (MW,
+    ``area_from`` to ``area_to``, not clipped: the stored DA flows of the rule's AC and DC
+    branches, summed with the signs of the NTC constraint), and in ``inter_area_rules`` the
+    ``da_flow_ref`` of the selected rules (and their ``balancing_penalty`` / ``lock_share`` where set).
+
+    NaN in a DA flow that is needed raises ``ValueError``.
+    """
+    ac_frame, dc_frame = frames["branch_flow"], frames["dcbranch_flow"]
+    expected = pd.Index(list(timesteps)) if timesteps is not None else ac_frame.index
+    _check_index("branch_flow", ac_frame, expected)
+    _check_index("dcbranch_flow", dc_frame, expected)
+    explicit = mask is not None
+    selected = _mask(mask, rules, "inter-area rules") if explicit else pd.Series(True, index=rules.index)
+    penalties = _rule_values(balancing_penalty, rules, "balancing_penalty", low=0.0, high=np.inf)
+    shares = _rule_values(lock_share, rules, "lock_share", low=0.0, high=1.0)
+
+    columns: dict[str, pd.Series] = {}
+    refs = []
+    for k in rules.index[selected]:
+        branches = rule_branches(grid, rules.at[k, "area_from"], rules.at[k, "area_to"])
+        if not any(branches.values()):
+            if explicit:
+                raise ValueError(
+                    f"Inter-area rule {k} ({rules.at[k, 'area_from']} -> {rules.at[k, 'area_to']}) "
+                    "has no branch across its boundary, so no DA flow"
+                )
+            continue
+        signed = [(ac_frame, b, 1.0) for b in branches["ac_pos"]]
+        signed += [(ac_frame, b, -1.0) for b in branches["ac_neg"]]
+        signed += [(dc_frame, b, 1.0) for b in branches["dc_pos"]]
+        signed += [(dc_frame, b, -1.0) for b in branches["dc_neg"]]
+        flow = pd.Series(0.0, index=expected, dtype=np.float64)
+        for frame, b, sign in signed:
+            if frame[b].isna().any():
+                raise ValueError(f"NaN in the DA flow of branch {b} of inter-area rule {k}")
+            flow = flow + sign * frame[b].to_numpy(dtype=np.float64)
+        columns[f"{DA_FLOW_PREFIX}{k}"] = flow
+        refs.append(k)
+
+    profiles = pd.DataFrame(columns, index=expected, dtype=np.float64)
+    index = pd.Index(refs, dtype=rules.index.dtype)
+    rule_refs = pd.DataFrame(
+        {
+            "da_flow_ref": pd.Series([f"{DA_FLOW_PREFIX}{k}" for k in refs], index=index, dtype=object),
+            "balancing_penalty": penalties.reindex(index),
+            "lock_share": shares.reindex(index),
+        },
+        index=index,
+    )
+    rule_refs = rule_refs.drop(columns=[c for c in ("balancing_penalty", "lock_share") if rule_refs[c].isna().all()])
+    empty = pd.DataFrame()
+    return RefColumns(profiles=profiles, generator=empty, consumer=empty, inter_area_rules=rule_refs)
+
+
+@dataclass
+class InterAreaFlows:
+    """The inter-area rules :func:`prepare_rt` ties to their DA summed flow, see :func:`da_flow_columns`.
+
+    mask:
+        Boolean Series on the rule rows; default every rule with a branch across its boundary.
+    balancing_penalty:
+        The cross-border balancing penalty, EUR per MWh of deviation of the summed flow from
+        DA: a scalar, or by rule row; ``None`` keeps the table's value (default 0: none).
+    lock_share:
+        lambda in [0, 1], the share of the NTC locked around the DA summed flow: a scalar,
+        or by rule row; ``None`` keeps the table's value (default NaN: no lock).
+    source:
+        Where the values come from, for the summary.
+    """
+
+    mask: pd.Series | None = None
+    balancing_penalty: float | pd.Series | dict | None = None
+    lock_share: float | pd.Series | dict | None = None
     source: str | None = None

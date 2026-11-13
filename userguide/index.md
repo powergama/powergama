@@ -5,10 +5,12 @@ Specific topics:
 - [Scenario creation](scenario_generation.md)
 - [Input data](input_data.md)
 - [Output data and result analysis](output_data_and_analysis.md)
-- [Model description](model_description.md)
+- [Model description](model_description.md) and its [formulation](model_formulations.md)
+- [Real-time (RT) runs: usage](Usage_RT.md) and [model description](model_description_RT.md)
 - [Fault scenario analysis](fault_scenario_analysis.md)
 - [Example: 9 bus case](../tests/example_notebook_9bus.ipynb) (Jupyter notebook)
 - [Example: Europe 2014](../tests/example_notebook_Europe2014.ipynb) (Jupyter notebook)
+- [Example: day-ahead and real-time runs, wind curtailment in Belgium (WILLOW)](../tests/example_notebook_willow_da_rt.ipynb) (Jupyter notebook)
 
 # Introduction
 
@@ -31,10 +33,14 @@ solution in one timestep depends on the previous timestep, and the
 problem should therefore be solved sequentially. A realistic utilisation of
 energy storage is ensured through the use of storage values.
 
-PowerGAMA does not include any power market subtleties (such as start-up
-costs, limited ramp rates, forecast errors, unit commitments) and as
-such will tend to overestimate the ability to accommodate large amounts
-of variable renewable energy. Essentially it assumes a perfect market
+In its basic form, PowerGAMA does not include power market subtleties
+(such as start-up costs, limited ramp rates, forecast errors, unit
+commitments) and as such will tend to overestimate the ability to
+accommodate large amounts of variable renewable energy. Two extensions
+address part of this for studies of grid operation: multi-period
+optimisation with a rolling horizon, with ramp limits, mimics the
+day-ahead market, and the real-time (RT) extension corrects its schedule
+for forecast errors (see [Usage](usage.md)). Essentially it assumes a perfect market
 based on nodal pricing without barriers between different countries.
 This is naturally a gross oversimplification of the real power system,
 but gives nonetheless very useful information to guide the planning of

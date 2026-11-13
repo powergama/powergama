@@ -2,8 +2,9 @@
 
 A *channel* is a profile column of a :class:`~powergama.lp.rt.prepare.RefColumns`
 (``da_gen_<d>``, ``da_pump_<d>``, ``da_cons_<d>``, ``da_carry_<d>``, ``da_storage_<d>``,
-``da_headroom_<d>``, the ``da_price`` family, ``rt_target_zero``). :func:`summarize_channels` lists, for each channel, the RT rows that
-reference it and how; :func:`write_channel_summary` writes that as ``channels.csv`` and a
+``da_headroom_<d>``, the ``da_price`` family, ``da_flow_<k>``, ``rt_target_zero``).
+:func:`summarize_channels` lists, for each channel, the RT rows (generator, consumer and
+inter-area rule) that reference it and how; :func:`write_channel_summary` writes that as ``channels.csv`` and a
 short overview, ``prepare_rt_summary.md``. :func:`~powergama.lp.rt.prepare.prepare_rt`
 writes both next to ``da_solution.parquet``.
 
@@ -19,12 +20,23 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .prepare import DA_INDEX, ZERO_TARGET, RefColumns, _capacity, _is_flexible, _ref_frame
+from .prepare import DA_INDEX, ZERO_TARGET, RefColumns, _capacity, _is_flexible, _ref_frame, override_profile_refs
 
 SUMMARY_FILE = "prepare_rt_summary.md"
 CHANNELS_FILE = "channels.csv"
 
-FAMILIES = ("da_gen", "da_pump", "da_cons", "da_carry", "da_storage", "da_headroom", "da_price", "zero", "other")
+FAMILIES = (
+    "da_gen",
+    "da_pump",
+    "da_cons",
+    "da_carry",
+    "da_storage",
+    "da_headroom",
+    "da_price",
+    "da_flow",
+    "zero",
+    "other",
+)
 """The channel families, in the order of the summary. ``other`` is any column not named by
 :mod:`~powergama.lp.rt.prepare`."""
 
@@ -36,6 +48,7 @@ FAMILY_TITLE = {
     "da_storage": "DA storage filling",
     "da_headroom": "peak-tranche headroom",
     "da_price": "deviation price of a storage unit (EUR/MWh)",
+    "da_flow": "DA summed flow of an inter-area rule (MW)",
     "zero": "zero",
     "other": "other columns",
 }
@@ -52,6 +65,8 @@ FAMILY_FORMULA = {
     "da_price": "c0 +/- the marginal cost of d, its storage value v at the DA filling level (storage_price x "
     "F(DA filling) x T(t), or the flexible-load value): generation c0 + (fuelcost + v) up, c0 - (fuelcost + v) "
     "down; pumping c0 -/+ (v x pump_efficiency - pump_deadband); flexible demand c0 +/- v",
+    "da_flow": "the DA flows of the AC and DC branches across the boundary of rule k, summed area_from -> "
+    "area_to (the signs of the NTC constraint), MW, not clipped",
     "zero": "0",
     "other": "set by the caller",
 }
@@ -64,6 +79,7 @@ FAMILY_PATTERN = {
     "da_storage": "da_storage_<d>",
     "da_headroom": "da_headroom_<d>",
     "da_price": "da_[pump_|cons_]price_<up|down>_<d>",
+    "da_flow": "da_flow_<k>",
     "zero": ZERO_TARGET,
     "other": "<name>",
 }
@@ -82,6 +98,7 @@ USAGES = (
     "pump_price_down",
     "cons_price_up",
     "cons_price_down",
+    "flow_ref",
 )
 """How an RT row uses a channel, in the order of the summary:
 
@@ -94,7 +111,8 @@ USAGES = (
 - ``storage_ini``: generator ``storage_ini_ref``;
 - ``price_up``, ``price_down``: generator ``rt_price_up_ref``, ``rt_price_down_ref``;
 - ``pump_price_up``, ``pump_price_down``: generator ``rt_pump_price_up_ref``, ``rt_pump_price_down_ref``;
-- ``cons_price_up``, ``cons_price_down``: consumer ``rt_price_up_ref``, ``rt_price_down_ref``.
+- ``cons_price_up``, ``cons_price_down``: consumer ``rt_price_up_ref``, ``rt_price_down_ref``;
+- ``flow_ref``: inter-area rule ``da_flow_ref`` (its balancing penalty and lock act on that flow).
 """
 
 USAGE_TEXT = {
@@ -111,6 +129,7 @@ USAGE_TEXT = {
     "pump_price_down": "pumping deviation price down (`rt_pump_price_down_ref`)",
     "cons_price_up": "flexible-demand deviation price up (consumer `rt_price_up_ref`)",
     "cons_price_down": "flexible-demand deviation price down (consumer `rt_price_down_ref`)",
+    "flow_ref": "DA summed flow (`da_flow_ref`)",
 }
 
 USAGE_TABLE = {
@@ -127,6 +146,7 @@ USAGE_TABLE = {
     "pump_price_down": "generator",
     "cons_price_up": "consumer",
     "cons_price_down": "consumer",
+    "flow_ref": "inter_area_rules",
 }
 
 CHANNEL_COLUMNS = [
@@ -146,9 +166,10 @@ CHANNEL_COLUMNS = [
 """The columns of ``channels.csv``. ``rt_rows`` (``<table>:<row>``), ``usage`` (the usages
 of that row, joined by ``+``), ``desc``, ``node``, ``area`` and ``type`` are lists joined
 by ``;``, one entry per referencing row in the same order; ``usages`` is the set of usages
-over all rows, joined by ``;``."""
+over all rows, joined by ``;``. ``da_row`` is the DA row the channel is keyed on (for
+``da_flow_<k>``, the rule row k)."""
 
-_FAMILY_RE = re.compile(r"^(da_gen|da_pump|da_cons|da_carry|da_storage|da_headroom)_(\d+)$")
+_FAMILY_RE = re.compile(r"^(da_gen|da_pump|da_cons|da_carry|da_storage|da_headroom|da_flow)_(\d+)$")
 
 _PRICE_RE = re.compile(r"^da_(?:pump_|cons_)?price_(?:up|down)_(\d+)$")
 
@@ -181,13 +202,21 @@ def _effective(table: pd.DataFrame, part: pd.DataFrame, col: str, names: set) ->
     return values.where(values.map(lambda v: isinstance(v, str) and v in names))
 
 
-def _references(refs: RefColumns, generator: pd.DataFrame, consumer: pd.DataFrame) -> pd.DataFrame:
+def _references(
+    refs: RefColumns, generator: pd.DataFrame, consumer: pd.DataFrame, rules: pd.DataFrame | None = None
+) -> pd.DataFrame:
     """One row per (channel, table, RT row, usage)."""
     names = set(refs.profiles.columns)
     out: list[tuple] = []
     gen_part = _ref_frame(refs.generator)
     cons_part = _ref_frame(refs.consumer)
-    for what, table, part in (("generator", generator, gen_part), ("consumer", consumer, cons_part)):
+    rule_part = _ref_frame(refs.inter_area_rules)
+    if rules is None and not rule_part.empty:
+        raise ValueError("RefColumns sets inter-area rules, but no inter-area table was given")
+    checked = [("generator", generator, gen_part), ("consumer", consumer, cons_part)]
+    if rules is not None:
+        checked.append(("inter_area_rules", rules, rule_part))
+    for what, table, part in checked:
         missing = part.index.difference(table.index)
         if len(missing):
             raise ValueError(f"RefColumns sets RT {what} row(s) {list(missing[:5])}, which the {what} table lacks")
@@ -219,6 +248,11 @@ def _references(refs: RefColumns, generator: pd.DataFrame, consumer: pd.DataFram
         for col, usage in CONS_PRICE_USAGES.items():
             if isinstance(cons_eff[col].at[r], str):
                 out.append((cons_eff[col].at[r], "consumer", r, usage))
+    if rules is not None:
+        flow = _effective(rules, rule_part, "da_flow_ref", names)
+        for r in rules.index:
+            if isinstance(flow.at[r], str):
+                out.append((flow.at[r], "inter_area_rules", r, "flow_ref"))
     return pd.DataFrame(out, columns=["name", "table", "row", "usage"])
 
 
@@ -230,6 +264,24 @@ GEN_PRICE_USAGES = {
     "rt_pump_price_down_ref": "pump_price_down",
 }
 CONS_PRICE_USAGES = {"rt_price_up_ref": "cons_price_up", "rt_price_down_ref": "cons_price_down"}
+
+
+def _rule_info(rules: pd.DataFrame) -> pd.DataFrame:
+    """``desc`` (balancing penalty and lock share), ``node`` (""), ``area`` (``from->to``), ``type`` ("") of each rule."""
+    info = pd.DataFrame(index=rules.index)
+    nan = pd.Series(np.nan, index=rules.index)
+    penalty = pd.to_numeric(
+        rules["balancing_penalty"] if "balancing_penalty" in rules.columns else nan, errors="coerce"
+    )
+    share = pd.to_numeric(rules["lock_share"] if "lock_share" in rules.columns else nan, errors="coerce")
+    info["desc"] = [
+        "balancing_penalty " + (f"{p:g}" if np.isfinite(p) else "-") + ", lock_share " + (f"{x:g}" if np.isfinite(x) else "-")
+        for p, x in zip(penalty, share)
+    ]
+    info["node"] = ""
+    info["area"] = rules["area_from"].astype(str) + "->" + rules["area_to"].astype(str)
+    info["type"] = ""
+    return info
 
 
 def _row_info(table: pd.DataFrame, node: pd.DataFrame | None) -> pd.DataFrame:
@@ -258,6 +310,7 @@ def summarize_channels(
     *,
     da_index: str = DA_INDEX,
     node: pd.DataFrame | None = None,
+    inter_area_rules: pd.DataFrame | None = None,
     sources: dict[str, str] | None = None,
     header: dict[str, str] | None = None,
 ) -> tuple[str, pd.DataFrame]:
@@ -278,6 +331,10 @@ def summarize_channels(
     node:
         The node table (``id``, ``area``), for the ``area`` of each row through its ``node``.
         Not needed if the tables have an ``area`` column; without either, no area grouping.
+    inter_area_rules:
+        The RT inter-area table, if *refs* sets ``da_flow_ref`` on it (or it has one); its
+        rows are reported as ``inter_area_rules:<row>``, their ``area`` as ``from->to`` and
+        their ``desc`` as the balancing penalty and lock share. *refs* setting rules without it raises.
     sources:
         Where each family comes from, by family name (``da_gen``, ``da_carry``, ...), for
         the summary; a family without one is reported without a source.
@@ -295,9 +352,14 @@ def summarize_channels(
         A channel no row references has ``n_rows`` 0.
     """
     sources = dict(sources or {})
-    long = _references(refs, generator, consumer)
+    rules = inter_area_rules
+    if rules is not None:
+        rules = _with_refs(rules, _ref_frame(refs.inter_area_rules))
+    long = _references(refs, generator, consumer, rules)
     _check_da_rows(long, generator, consumer, da_index)
     info = {"generator": _row_info(generator, node), "consumer": _row_info(consumer, node)}
+    if rules is not None:
+        info["inter_area_rules"] = _rule_info(rules)
 
     rows = []
     for name in refs.profiles.columns:
@@ -306,7 +368,7 @@ def summarize_channels(
         entries: list[tuple[str, object, str]] = []
         for (what, r), group in used.groupby(["table", "row"], sort=False):
             entries.append((what, r, "+".join(u for u in USAGES if u in set(group["usage"]))))
-        entries.sort(key=lambda e: (e[0] != "generator", e[1]))
+        entries.sort(key=lambda e: (TABLE_ORDER.index(e[0]), e[1]))
         details = [info[what].loc[r] for what, r, _ in entries]
         rows.append(
             {
@@ -334,9 +396,13 @@ def summarize_channels(
         lines.append("")
     n_gen = long.loc[long["table"] == "generator", "row"].nunique()
     n_cons = long.loc[long["table"] == "consumer", "row"].nunique()
+    users = f"{_n(n_gen, 'generator')} and {_n(n_cons, 'consumer')}"
+    if rules is not None:
+        n_rules = long.loc[long["table"] == "inter_area_rules", "row"].nunique()
+        users = f"{_n(n_gen, 'generator')}, {_n(n_cons, 'consumer')} and {_n(n_rules, 'inter-area rule')}"
     lines.append(
-        f"{_n(len(channels), 'channel')} (DA-derived profile columns), referenced by {_n(n_gen, 'generator')} "
-        f"and {_n(n_cons, 'consumer')}. One row per channel, with the rows using it: `{CHANNELS_FILE}`."
+        f"{_n(len(channels), 'channel')} (DA-derived profile columns), referenced by {users}. "
+        f"One row per channel, with the rows using it: `{CHANNELS_FILE}`."
     )
     for family in FAMILIES:
         names = channels.loc[channels["family"] == family, "name"]
@@ -357,27 +423,38 @@ def summarize_channels(
             details = info[what].loc[sorted(set(sub["row"]))]
             groups = _groups(details)
             lines.append(
-                f"- Used as {USAGE_TEXT[usage]} by {_n(len(details), what)}" + (f": {groups}" if groups else "")
+                f"- Used as {USAGE_TEXT[usage]} by {_n(len(details), TABLE_NOUN[what])}"
+                + (f": {groups}" if groups else "")
             )
+            if what == "inter_area_rules":
+                for r, row in details.iterrows():
+                    lines.append(f"  - rule {r} ({row['area']}): {row['desc']}")
         unused = int((channels.loc[names.index, "n_rows"] == 0).sum())
         if unused and not used.empty:
             lines.append(f"- {unused} of them not referenced by any row.")
 
     lines += ["", "## Not covered", ""]
-    covered = {what: set(long.loc[long["table"] == what, "row"]) for what in ("generator", "consumer")}
+    covered = {what: set(long.loc[long["table"] == what, "row"]) for what in TABLE_ORDER}
     any_left = False
-    for what, table in (("generator", generator), ("consumer", consumer)):
+    checked = [("generator", generator), ("consumer", consumer)]
+    if rules is not None:
+        checked.append(("inter_area_rules", rules))
+    for what, table in checked:
         left = [r for r in table.index if r not in covered[what]]
         if not left:
             continue
         any_left = True
         reasons = pd.Series([_uncovered_reason(what, table, r) for r in left], index=left)
-        lines.append(f"- {_n(len(left), what)} without any channel:")
+        lines.append(f"- {_n(len(left), TABLE_NOUN[what])} without any channel:")
         for reason, idx in reasons.groupby(reasons, sort=False).groups.items():
             groups = _groups(info[what].loc[list(idx)])
             lines.append(f"  - {reason} ({len(idx)})" + (f": {groups}" if groups else ""))
     if not any_left:
-        lines.append("Every generator and consumer row uses a channel.")
+        lines.append(
+            "Every generator and consumer row uses a channel."
+            if rules is None
+            else "Every generator, consumer and inter-area rule row uses a channel."
+        )
     return "\n".join(lines) + "\n", channels
 
 
@@ -389,6 +466,12 @@ def _check_da_rows(long: pd.DataFrame, generator: pd.DataFrame, consumer: pd.Dat
     tables = {"generator": generator, "consumer": consumer}
     for (what, name), group in long.groupby(["table", "name"]):
         family, d = channel_family(name)
+        if what == "inter_area_rules":
+            # keyed on the rule's own row, not on a DA row
+            bad = [r for r in sorted(set(group["row"])) if d is not None and r != d]
+            if bad:
+                raise ValueError(f"Inter-area rule(s) {bad[:5]} reference '{name}', the DA flow of rule {d}")
+            continue
         table = tables[what]
         if d is None or da_index not in table.columns:
             continue
@@ -404,6 +487,8 @@ def _check_da_rows(long: pd.DataFrame, generator: pd.DataFrame, consumer: pd.Dat
 
 
 def _uncovered_reason(what: str, table: pd.DataFrame, r) -> str:
+    if what == "inter_area_rules":
+        return "no `da_flow_ref` (no balancing penalty or lock in RT)"
     if what == "generator":
         if "pmax" in table.columns and not _capacity(table.at[r, "pmax"]) > 0.0:
             return "no capacity (`pmax <= 0`)"
@@ -411,6 +496,26 @@ def _uncovered_reason(what: str, table: pd.DataFrame, r) -> str:
     if not _is_flexible(table, r):
         return "no flexible load"
     return "flexible load, no channel"
+
+
+TABLE_ORDER = ("generator", "consumer", "inter_area_rules")
+TABLE_NOUN = {"generator": "generator", "consumer": "consumer", "inter_area_rules": "inter-area rule"}
+
+
+def _with_refs(table: pd.DataFrame, part: pd.DataFrame) -> pd.DataFrame:
+    """*table* with the cells *part* sets (NA in *part* leaves the table's value); no-profile refs NaN."""
+    table = table.copy()
+    for col in part.columns:
+        cells = part[col].dropna()
+        if col not in table.columns:
+            table[col] = pd.Series(np.nan, index=table.index, dtype=object)
+        elif cells.dtype == object and table[col].dtype != object:
+            table[col] = table[col].astype(object)
+        table.loc[cells.index, col] = cells
+    if "da_flow_ref" in table.columns:
+        refs = override_profile_refs(table, "da_flow_ref")
+        table["da_flow_ref"] = refs.where(refs.ne(""), np.nan)
+    return table
 
 
 def _n(count: int, noun: str) -> str:

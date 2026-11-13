@@ -33,6 +33,7 @@ import pandas as pd
 import pyomo.environ as pyo
 
 from ... import constants as const
+from . import build as rt_build
 
 
 def append_payload(rt, payload, *, warning_context=""):
@@ -68,7 +69,10 @@ def initialize_debug_stream(rt, grid):
             # RT always minimises deviation; kept for readers of the header format.
             "dispatch_objective_mode": "deviation",
             "rt_target_tracking_active": True,
-            "rt_xborder_flow_penalty_eur_per_mwh": float(rt.xborder_flow_penalty_eur_per_mwh),
+            "inter_area_rules_balancing_penalised": sorted(
+                int(r) for r, t in rt.ctx.rules.items() if t.balancing_penalty > 0.0
+            ),
+            "inter_area_rules_locked": sorted(int(r) for r, t in rt.ctx.rules.items() if t.lock_share is not None),
         }
         append_payload(
             rt,
@@ -213,7 +217,7 @@ def append_hourly_debug(lp, rt, timestep):
 
     da_replay_infeasible = sum(1 for row in gen_rows if not row["da_replay_target_reachable"])
 
-    be_balancing_dev = (
+    balancing_dev = (
         _sum_expr(
             lp.model.varGeneration[i, 0] - lp.model.p_rt_target[i]
             for i in lp.model.s_gen
@@ -231,21 +235,33 @@ def append_hourly_debug(lp, rt, timestep):
             for j in lp.model.s_load_flex
             if int(j) in rt.ctx.consumer_target_indices
         )
-        + _sum_expr(
-            rt.ctx.border_ac_sign.get(int(b), 0.0)
-            * (_val(lp.model.p_rt_io_target_active_ac[b]) or 0.0)
-            * ((_val(lp.model.varAcBranchFlow[b, 0]) or 0.0) - (_val(lp.model.p_rt_io_target_ac[b]) or 0.0))
-            for b in lp.model.s_branch_ac
-            if int(b) in rt.ctx.idx_border_ac
-        )
-        + _sum_expr(
-            rt.ctx.border_dc_sign.get(int(b), 0.0)
-            * (_val(lp.model.p_rt_io_target_active_dc[b]) or 0.0)
-            * ((_val(lp.model.varDcBranchFlow[b, 0]) or 0.0) - (_val(lp.model.p_rt_io_target_dc[b]) or 0.0))
-            for b in lp.model.s_branch_dc
-            if int(b) in rt.ctx.idx_border_dc
-        )
     )
+
+    rule_rows = []
+    for r in sorted(rt.ctx.rules):
+        target = rt.ctx.rules[r]
+        transfer = _val(rt_build.rule_transfer(lp.model, lp._ctx.inter_area_rules_rows[r])) or 0.0
+        da_flow = _val(lp.model.p_rt_rule_da_flow[r]) or 0.0
+        penalised = r in lp.model.s_rt_rule_penalised
+        dev_pos = (_val(lp.model.varRtRuleDevPos[r]) or 0.0) if penalised else 0.0
+        dev_neg = (_val(lp.model.varRtRuleDevNeg[r]) or 0.0) if penalised else 0.0
+        rule_rows.append(
+            {
+                "rule": int(r),
+                "area_from": target.area_from,
+                "area_to": target.area_to,
+                "da_flow_ref": target.column,
+                "transfer_mw": float(transfer),
+                "da_flow_mw": float(da_flow),
+                "dev_pos_mw": dev_pos,
+                "dev_neg_mw": dev_neg,
+                "balancing_penalty": target.balancing_penalty,
+                "dev_cost": float(target.balancing_penalty * (dev_pos + dev_neg)),
+                "lock_share": target.lock_share,
+                "lock_lb_mw": None if target.width_backward is None else float(da_flow - target.width_backward),
+                "lock_ub_mw": None if target.width_forward is None else float(da_flow + target.width_forward),
+            }
+        )
 
     payload = {
         "event": "rt_timestep_debug",
@@ -255,7 +271,7 @@ def append_hourly_debug(lp, rt, timestep):
             "rt_deviation_objective_active": True,
         },
         "residual": {
-            "rt_balancing_deviation_mw": float(be_balancing_dev),
+            "rt_balancing_deviation_mw": float(balancing_dev),
         },
         "term_breakdown": {
             "loadshed": _sum_expr(const.loadshedcost * lp.model.varLoadShed[j, 0] for j in lp.model.s_load),
@@ -263,24 +279,13 @@ def append_hourly_debug(lp, rt, timestep):
             "gen_dev": float(sum(row["dev_cost"] for row in gen_rows)),
             "flex_dev": float(sum(row["dev_cost"] for row in flex_rows)),
             "pump_dev": float(sum(row["dev_cost"] for row in pump_rows)),
+            "xborder_dev": float(sum(row["dev_cost"] for row in rule_rows)),
         },
         "active_channels": {
             "rt_pump_target_count": int(len(rt.ctx.pump_target_indices)),
             "rt_target_gen_count": int(len(rt.ctx.target_gen_indices)),
-            "rt_io_target_active_ac": int(
-                sum(
-                    int(_val(lp.model.p_rt_io_target_active_ac[b]) or 0)
-                    for b in lp.model.s_branch_ac
-                    if int(b) in rt.ctx.idx_border_ac
-                )
-            ),
-            "rt_io_target_active_dc": int(
-                sum(
-                    int(_val(lp.model.p_rt_io_target_active_dc[b]) or 0)
-                    for b in lp.model.s_branch_dc
-                    if int(b) in rt.ctx.idx_border_dc
-                )
-            ),
+            "rt_rule_balancing_penalty_count": int(len(lp.model.s_rt_rule_penalised)),
+            "rt_rule_lock_count": int(len(lp.model.s_rt_rule_locked)),
         },
         "da_replay_check": {
             "reachable_count": int(len(gen_rows) - da_replay_infeasible),
@@ -290,6 +295,7 @@ def append_hourly_debug(lp, rt, timestep):
         "rt_gen_rows": gen_rows,
         "rt_pump_rows": pump_rows,
         "rt_flex_rows": flex_rows,
+        "rt_rule_rows": rule_rows,
     }
 
     append_payload(

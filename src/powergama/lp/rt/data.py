@@ -1,4 +1,4 @@
-"""Per-timestep real-time data: day-ahead locks, targets and deviation prices.
+"""Per-timestep real-time data: targets, deviation prices and the inter-area rules' DA flows.
 
 The deviation prices are unit data (``rt_price_up``/``rt_price_down`` and their
 ``*_ref`` profile multipliers, resolved once in :class:`RtContext`); nothing here
@@ -7,9 +7,8 @@ prices a unit by its type or cost.
 Called once per timestep by :meth:`RtExtension.update_timestep`, after the core
 has written this timestep's generator limits and demand.
 
-`apply_da_locks` sets the border-flow windows. The rest write only ``p_rt_*``
-parameters, so they are independent of the single-period parameter writes and
-of each other.
+They write only ``p_rt_*`` parameters, so they are independent of the
+single-period parameter writes and of each other.
 
 Pinned generators and fixed demand are not locks any more: they are ordinary
 grid data, ``pmin_ref = pmax_ref`` and ``demand_ref`` pointing at a profile
@@ -20,34 +19,8 @@ tests/test_sim_realtime.py covers both.
 These take the LpProblem, for the same reason the single-period updater does:
 they read mutable simulation state (_storage) alongside grid data, and an
 eight-argument signature would be a longer way of spelling `self`. The RT
-extension comes in as ``rt``, for its locks, context and settings.
+extension comes in as ``rt``, for its context and settings.
 """
-
-import numpy as np
-
-
-def apply_da_locks(lp, rt, timestep):
-    """Apply the day-ahead hard locks: the border-flow windows."""
-    # Border-flow windows as variable bounds, reset to none where this timestep has
-    # no window. The branch rating stays with cMaxFlowAc/cMaxFlowDc (issue #39).
-    _set_flow_bounds(lp.model.varAcBranchFlow, rt.locks.border_ac_flow_lb, rt.locks.border_ac_flow_ub, timestep)
-    _set_flow_bounds(lp.model.varDcBranchFlow, rt.locks.border_dc_flow_lb, rt.locks.border_dc_flow_ub, timestep)
-
-
-def _set_flow_bounds(var, lb_series, ub_series, timestep):
-    # RT runs in windows of one timestep: hour 0 of the window is the timestep.
-    for b, h in var:
-        key = (int(timestep), int(b))
-        lb = ub = None
-        if lb_series is not None and ub_series is not None and key in lb_series.index and key in ub_series.index:
-            lb = float(lb_series.loc[key])
-            ub = float(ub_series.loc[key])
-            if not np.isfinite(lb):
-                lb = None
-            if not np.isfinite(ub):
-                ub = None
-        var[b, h].setlb(lb)
-        var[b, h].setub(ub)
 
 
 def update_generator_targets(lp, rt, timestep):
@@ -165,32 +138,16 @@ def update_deviation_prices(lp, rt, timestep):
     )
 
 
-def update_border_flow_targets(lp, rt, timestep):
-    """Write the DA border-flow targets for AC and DC branches."""
-    for b in lp.model.s_branch_ac:
-        key = (int(timestep), int(b))
-        if rt.locks.border_ac_flow_lock is not None and key in rt.locks.border_ac_flow_lock.index:
-            da_flow = float(rt.locks.border_ac_flow_lock.loc[key])
-            if np.isfinite(da_flow):
-                lp.model.p_rt_io_target_ac[b] = da_flow
-                lp.model.p_rt_io_target_active_ac[b] = 1
-            else:
-                lp.model.p_rt_io_target_ac[b] = 0.0
-                lp.model.p_rt_io_target_active_ac[b] = 0
-        else:
-            lp.model.p_rt_io_target_ac[b] = 0.0
-            lp.model.p_rt_io_target_active_ac[b] = 0
-
-    for b in lp.model.s_branch_dc:
-        key = (int(timestep), int(b))
-        if rt.locks.border_dc_flow_lock is not None and key in rt.locks.border_dc_flow_lock.index:
-            da_flow = float(rt.locks.border_dc_flow_lock.loc[key])
-            if np.isfinite(da_flow):
-                lp.model.p_rt_io_target_dc[b] = da_flow
-                lp.model.p_rt_io_target_active_dc[b] = 1
-            else:
-                lp.model.p_rt_io_target_dc[b] = 0.0
-                lp.model.p_rt_io_target_active_dc[b] = 0
-        else:
-            lp.model.p_rt_io_target_dc[b] = 0.0
-            lp.model.p_rt_io_target_active_dc[b] = 0
+def update_rule_flows(lp, rt, timestep):
+    """Write the DA summed flow (MW) of each inter-area rule RT holds to it, and its lock window."""
+    if not rt.ctx.rules:
+        return
+    m = lp.model
+    row = lp._grid.profiles.index.get_loc(timestep)
+    for r, target in rt.ctx.rules.items():
+        da_flow = float(lp._grid.profiles.iat[row, target.profile_position])
+        m.p_rt_rule_da_flow[r] = da_flow
+        if target.width_forward is not None:
+            m.p_rt_rule_lock_ub[r] = da_flow + target.width_forward
+        if target.width_backward is not None:
+            m.p_rt_rule_lock_lb[r] = da_flow - target.width_backward

@@ -4,9 +4,9 @@ A two-step case: a baseline (day-ahead) run, then RT inputs derived from it --
 soft targets on a generator, the storage unit's generation and pumping and the
 flexible load, a generator pinned to its baseline output and a consumer with
 fixed demand (both as profile columns, ``pmin_ref = pmax_ref`` and ``demand_ref``),
-and border-flow windows and targets on the AC branch between the areas and the
-HVDC link. The deviation prices are unit data written by ``price_columns``, with the
-storage values at the DA filling level.
+and the inter-area rule held to its DA summed flow (``da_flow_ref``) at a balancing penalty and
+within a lock window. The deviation prices are unit data written by ``price_columns``,
+with the storage values at the DA filling level.
 """
 
 import sqlite3
@@ -27,7 +27,10 @@ CONS_FIXED = 0  # consumer at a2: demand fixed through demand_ref
 CONS_FLEX = 1  # consumer at b2: flexible load with a soft target
 BRANCH_BORDER = 1  # a2-b1, the AC branch between the two areas
 DCBRANCH_BORDER = 0  # a1-b2 HVDC link
-FLOW_WINDOW = 30.0  # MW either side of the baseline border flow
+XBORDER_PENALTY = 5.0  # EUR/MWh of deviation of the summed inter-area flow from DA
+LOCK_SHARE = 0.6  # lambda: the summed flow within DA - 0.4 x 150 MW and DA + 0.4 x 250 MW
+LOCK_WIDTH_FORWARD = 100.0  # (1 - LOCK_SHARE) x ntc_forward
+LOCK_WIDTH_BACKWARD = 60.0  # (1 - LOCK_SHARE) x ntc_backward
 FIXED_DEMAND = 140.0  # MW, against a profile-driven demand_avg of 150
 FEE = 10.0  # c0, the balancing fee of the case (EUR/MWh)
 CURTAILMENT_FACTOR = 2.0
@@ -62,11 +65,6 @@ def series(df, indx, col):
     return df[df["indx"] == indx].set_index("timestep")[col]
 
 
-def write_lock(path, frame):
-    frame.reset_index().to_parquet(path)
-    return str(path)
-
-
 def add_prices(data, res_da, *, fee=FEE, curtailment_factor=CURTAILMENT_FACTOR):
     """Write the deviation prices of every row into *data*, from c0 and the DA storage values.
 
@@ -98,7 +96,8 @@ def build_rt_case(tmp_path, fee=FEE):
 
     Returns the RT GridData, with soft targets, the generator pin and the fixed demand as
     profile columns, the deviation prices at c0 = *fee* (:func:`add_prices`), and the
-    border-flow locks as parquet files on the grid object.
+    inter-area rule's DA summed flow (``da_flow_0``) with a balancing penalty of
+    :data:`XBORDER_PENALTY` and a lock share of :data:`LOCK_SHARE`.
     """
     base = two_area_data()
     lp = powergama.LpProblem(base)
@@ -145,25 +144,11 @@ def build_rt_case(tmp_path, fee=FEE):
     data.profiles["rt_fixed_demand"] = FIXED_DEMAND / data.consumer.loc[CONS_FIXED, "demand_avg"]
     data.consumer.loc[CONS_FIXED, "demand_ref"] = "rt_fixed_demand"
 
-    # Border-flow windows/targets, as parquet artefacts.
+    # The inter-area rule held to its DA summed flow (both branches go from A to B).
     ac_flow = series(ac, BRANCH_BORDER, "flow").reindex(steps).values
     dc_flow = series(dc, DCBRANCH_BORDER, "flow").reindex(steps).values
-    idx_ac = pd.MultiIndex.from_product([steps, [BRANCH_BORDER]], names=["timestep", "indx"])
-    idx_dc = pd.MultiIndex.from_product([steps, [DCBRANCH_BORDER]], names=["timestep", "indx"])
-    data.border_ac_flow_lock_parquet = write_lock(
-        tmp_path / "ac_lock.parquet", pd.DataFrame({"flow": ac_flow}, index=idx_ac)
-    )
-    data.border_dc_flow_lock_parquet = write_lock(
-        tmp_path / "dc_lock.parquet", pd.DataFrame({"flow": dc_flow}, index=idx_dc)
-    )
-    data.border_ac_flow_bounds_parquet = write_lock(
-        tmp_path / "ac_bounds.parquet",
-        pd.DataFrame({"flow_lb": ac_flow - FLOW_WINDOW, "flow_ub": ac_flow + FLOW_WINDOW}, index=idx_ac),
-    )
-    data.border_dc_flow_bounds_parquet = write_lock(
-        tmp_path / "dc_bounds.parquet",
-        pd.DataFrame({"flow_lb": dc_flow - FLOW_WINDOW, "flow_ub": dc_flow + FLOW_WINDOW}, index=idx_dc),
-    )
+    data.profiles["da_flow_0"] = ac_flow + dc_flow
+    data.inter_area_rules.loc[0, ["da_flow_ref", "balancing_penalty", "lock_share"]] = ["da_flow_0", XBORDER_PENALTY, LOCK_SHARE]
 
     add_prices(data, res, fee=fee)
 
@@ -173,7 +158,7 @@ def build_rt_case(tmp_path, fee=FEE):
 
 
 def solve_rt_case(data, dbfile):
-    rt = RtExtension(xborder_flow_penalty_eur_per_mwh=5)
+    rt = RtExtension()
     lp = powergama.LpProblem(data, extensions=[rt])
     res = powergama.Results(data, dbfile, replace=True)
     lp.solve(res, solver="appsi_highs", solve_args={})

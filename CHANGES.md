@@ -2,6 +2,62 @@
 
 ## unpublished
 
+### Inter-area rules in RT
+2026-11-13
+
+Added
+- `inter_area_rules` has three optional columns, read by `RtExtension` only (a DA run
+  ignores them): `balancing_penalty` (EUR/MWh, ≥ 0, default 0), `lock_share` (λ in [0, 1],
+  default NaN: no lock) and `da_flow_ref` (profile column with the DA summed flow of the
+  rule, MW, `area_from` → `area_to`; default `""`). The results database keeps the
+  `da_flow_ref` columns like the other profile refs
+- cross-border balancing penalty on the **summed** flow: a rule with a `da_flow_ref`
+  and `balancing_penalty` p > 0 costs p per MWh of |T − DA|, T the summed flow of the
+  rule's NTC constraint (`varRtRuleDevPos`/`Neg`, `cRtRuleFlowTracking`)
+- lock on the **summed** flow: a rule with a `da_flow_ref` and a `lock_share` λ holds
+  T within DA − (1 − λ)·`ntc_backward` and DA + (1 − λ)·`ntc_forward`
+  (`cRtRuleLockForward`/`cRtRuleLockBackward`, rows with mutable bounds
+  `p_rt_rule_lock_ub`/`_lb` written each timestep; λ = 1 pins T to DA, an infinite NTC
+  leaves that side open), together with its penalty if it has one
+- `prepare_rt(..., inter_area=InterAreaFlows(mask, balancing_penalty, lock_share, source))`
+  writes `da_flow_<k>` (the stored DA AC and DC branch flows across the boundary of rule k,
+  summed with the signs of the NTC constraint) and fills the three columns in;
+  `da_flow_columns(...)` is the rule on its own. `RefColumns` gains an `inter_area_rules`
+  part, and the channel summary the `da_flow` family (usage `flow_ref`, rows
+  `inter_area_rules:<k>`, `desc` `balancing_penalty <p>, lock_share <λ>`)
+- the JSONL debug stream reports `rt_rule_rows` (with `balancing_penalty` per entry),
+  `term_breakdown.xborder_dev`, `rt_rule_balancing_penalty_count`, and in the header
+  `inter_area_rules_balancing_penalised` / `inter_area_rules_locked`
+
+Removed and renamed
+- **breaking (RT):** `RtExtension` no longer takes `xborder_flow_penalty_eur_per_mwh` (use
+  `inter_area_rules.balancing_penalty`); `RtExtension()` takes no argument
+- **breaking (RT):** the per-branch border-flow targets and windows are removed:
+  `border_ac_flow_lock_parquet`, `border_dc_flow_lock_parquet`,
+  `border_ac_flow_bounds_parquet` and `border_dc_flow_bounds_parquet` (use
+  `balancing_penalty` / `lock_share`). Gone with them: `powergama.lp.rt.locks` (`DaLocks`,
+  `load_da_locks`, `LOCK_ATTRS`, `REMOVED_LOCK_ATTRS`), `rt.data.apply_da_locks`,
+  `RtExtension.locks`, `p_rt_io_*`, `varRtIo*`, `cRtIoTargetTracking*`,
+  `add_border_flow_target_tracking`, `update_border_flow_targets`,
+  `RtContext.idx_border_*` / `border_*_sign` and `_be_oriented_sign`. The debug stream's
+  `rt_balancing_deviation_mw` no longer includes a border term (it was oriented on a "BE"
+  node prefix), and the header loses `rt_xborder_flow_penalty_eur_per_mwh`
+- the profile columns `be_da_net_export_mw` and `be_da_lock_share` (WILLOW T45, Belgium)
+  are no longer kept in a results database above SQLite's column limit when nothing
+  references them
+
+Changes results? Day-ahead runs: no (they ignore the new columns). RT runs: yes, for users
+of the per-branch border-flow targets or windows:
+- the penalty and the lock act on the summed flow of a boundary, so flow may shift between
+  the parallel branches of a boundary at no cost (on `two_area` with penalty 5, 30 MW moves
+  from the HVDC link to the AC branch in hours 9-19; dispatch, objective and prices are
+  unchanged)
+- the lock's width comes from the NTC and `lock_share`, not from per-branch bounds; on
+  `two_area` λ = 0.6 (DA − 60, DA + 100 MW) in place of ±30 MW per branch gives the same
+  dispatch, objective and prices. Being a row rather than a variable bound, the lock no
+  longer zeroes branch sensitivities
+- RT runs without border-flow targets or windows are unchanged
+
 ### DA to RT preparation
 2026-11-13
 
