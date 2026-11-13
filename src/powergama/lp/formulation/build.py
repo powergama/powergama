@@ -46,7 +46,7 @@ def build_model(model, grid, ctx, cfg, H, extensions=()):
     objective_by_hour = create_objective(model, grid, ctx, cfg, H, extensions)
     powerbalance_rhs = get_powerbalance_rhs(model, ctx)
     create_constraint_powerflow_limit(model, grid, ctx, cfg)
-    create_constraint_inter_area_ntc(model, grid, ctx, cfg)
+    create_constraint_inter_area_rules(model, grid, ctx, cfg)
     create_constraint_powerloss(model, grid, ctx, cfg)
     create_constraint_generator_output(model, grid, ctx, cfg)
     create_constraint_generator_pump(model, grid, ctx, cfg)
@@ -253,7 +253,7 @@ def create_constraint_powerflow_limit(model, grid, ctx, cfg):
     model.cMaxFlowDc = pyo.Constraint(model.s_branch_dc, model.s_h, rule=maxflowDc_rule)
 
 
-def create_constraint_inter_area_ntc(model, grid, ctx, cfg):
+def create_constraint_inter_area_rules(model, grid, ctx, cfg):
     """Constraint: Directional NTC limits between areas.
 
     For each (area_from, area_to) pair, limit the net transfer
@@ -261,10 +261,10 @@ def create_constraint_inter_area_ntc(model, grid, ctx, cfg):
         -ntc_backward <= net_transfer <= ntc_forward
     """
 
-    if ctx.inter_area_ntc is None or ctx.inter_area_ntc.shape[0] == 0:
+    if ctx.inter_area_rules is None or ctx.inter_area_rules.shape[0] == 0:
         return
 
-    model.s_inter_area_ntc = pyo.RangeSet(0, len(ctx.inter_area_ntc) - 1)
+    model.s_inter_area_rules = pyo.RangeSet(0, len(ctx.inter_area_rules) - 1)
 
     def net_transfer(model, row, h):
         return (
@@ -275,7 +275,7 @@ def create_constraint_inter_area_ntc(model, grid, ctx, cfg):
         )
 
     def ntc_forward_rule(model, cidx, h):
-        row = ctx.inter_area_ntc_rows[int(cidx)]
+        row = ctx.inter_area_rules_rows[int(cidx)]
         cap = row["ntc_forward"]
         if not np.isfinite(cap):
             return pyo.Constraint.Skip
@@ -284,7 +284,7 @@ def create_constraint_inter_area_ntc(model, grid, ctx, cfg):
         return net_transfer(model, row, h) <= cap
 
     def ntc_backward_rule(model, cidx, h):
-        row = ctx.inter_area_ntc_rows[int(cidx)]
+        row = ctx.inter_area_rules_rows[int(cidx)]
         cap = row["ntc_backward"]
         if not np.isfinite(cap):
             return pyo.Constraint.Skip
@@ -292,8 +292,8 @@ def create_constraint_inter_area_ntc(model, grid, ctx, cfg):
             return pyo.Constraint.Skip
         return net_transfer(model, row, h) >= -cap
 
-    model.cInterAreaNtcForward = pyo.Constraint(model.s_inter_area_ntc, model.s_h, rule=ntc_forward_rule)
-    model.cInterAreaNtcBackward = pyo.Constraint(model.s_inter_area_ntc, model.s_h, rule=ntc_backward_rule)
+    model.cInterAreaRulesForward = pyo.Constraint(model.s_inter_area_rules, model.s_h, rule=ntc_forward_rule)
+    model.cInterAreaRulesBackward = pyo.Constraint(model.s_inter_area_rules, model.s_h, rule=ntc_backward_rule)
 
 
 def _powerloss_rules1(model, grid, ctx, cfg):

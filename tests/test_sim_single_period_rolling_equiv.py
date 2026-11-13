@@ -59,7 +59,7 @@ def _two_area():
         dc_branches=datapath_two_area / "dcbranches.csv",
         generators=datapath_two_area / "generators.csv",
         consumers=datapath_two_area / "consumers.csv",
-        inter_area_ntc=datapath_two_area / "inter_area_ntc.csv",
+        inter_area_rules=datapath_two_area / "inter_area_rules.csv",
     )
     data.readProfileData(
         filename=datapath_two_area / "profiles.csv",
@@ -78,6 +78,6 @@ def test_single_period_equals_multi_period_horizon_1_two_area(tmp_path):
     assert len(data.getIdxGeneratorsWithPumping()) > 0
     assert len(data.getIdxConsumersWithFlexibleLoad()) > 0
     assert not pd.isna(data.generator["ramp_up_pu"]).all()
-    assert not pd.isna(data.inter_area_ntc["ntc_forward"]).all()
+    assert not pd.isna(data.inter_area_rules["ntc_forward"]).all()
 
     _assert_equal(*_solve_both(data, tmp_path), data)

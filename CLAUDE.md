@@ -29,14 +29,25 @@ A simulation is a pipeline of four objects:
 `GridData` → `LpProblem` → `Results` → `Database` (sqlite3)
 
 - **[GridData.py](src/powergama/GridData.py)** holds the static grid model as pandas DataFrames
-  (`node`, `branch`, `dcbranch`, `generator`, `consumer`, `inter_area_ntc`) plus time series in
-  `profiles`, `storagevalue_filling`, `storagevalue_time`. The dict `GridData.keys_powergama` is the
+  (`node`, `branch`, `dcbranch`, `generator`, `consumer`, `inter_area_rules`) plus time series in
+  `profiles` and `storagevalue_filling` (101 rows, one per percent of filling). The storage-value
+  *time* curves are ordinary profile columns (`storval_time_ref`/`flex_storval_time`; `"const"`,
+  `""` or NaN is a factor of 1); `storagevalue_time` is the deprecated separate table, used for every
+  row when given. `GridContext` resolves and checks both once, for the rows the LP values only
+  (generators with storage, consumers with flexible load). The dict `GridData.keys_powergama` is the
   **single source of truth for the input schema**: every column name, which are required
   (`default=None`) and the default for optional ones. Adding an input field means adding it there.
-  `read_csv_files` accepts a filename, a *list* of filenames (concatenated), or CSV/Parquet.
+  `read_csv_files` accepts a filename, a *list* of filenames (concatenated), or CSV/Parquet;
+  `readProfileData(filename=...)` likewise, but each file is cut to `timerange` and the files are
+  joined *by column* (duplicate column names, or a file lacking rows of `timerange`, raise).
   Generators/consumers reference profile *columns by name* (e.g. `inflow_ref`, `demand_ref`,
-  `storval_filling_ref`, and the optional `pmax_ref`/`pmin_ref`/`rt_target_ref`), so a string in a
-  grid-data column must match a column in `data.profiles`.
+  `storval_filling_ref`, `rt_target_ref`), so a string in a grid-data column must match a column
+  in `data.profiles`. The override refs `pmax_ref`, `pmin_ref`, `storage_ini_ref` default to
+  `"const"`, which there means *no profile* (no `const` column needed; empty/NaN read the same).
+  Any other value must be a profile column: `GridContext._build_profile_refs` raises at
+  `LpProblem` construction otherwise. When set, `pmax_eff(t) = pmax·profile(t)`,
+  `pmin_eff(t) = pmax·profile(t)` (both fractions of *installed* `pmax`; `pmax_ref` also scales
+  inflow), and the initial filling is `storage_cap·profile` at the first timestep (fresh runs only).
 
 - **[lp/](src/powergama/lp/)** is the optimisation package (`powergama.LpProblem`). Both
   simulation modes solve **one formulation**, an LP over a window of `H` timesteps
@@ -200,7 +211,7 @@ session scope; `testcase_9bus_data` hands out a `deepcopy` because several tests
 Test data sets:
 
 - `data_9bus` — the main case, but note what it *lacks*: no pumping, no DC branch, no flexible load,
-  a single area, one storage generator. Its `ntc_interarea.csv` references an area with no nodes, so
+  a single area, one storage generator. Its `inter_area_rules.csv` references an area with no nodes, so
   every NTC constraint is skipped.
 - `two_area` — covers exactly those gaps (two areas with a binding inter-area NTC, an HVDC link,
   a pumped-storage generator, a flexible load, ramp limits). Use this when touching NTC, pumping,

@@ -68,6 +68,9 @@ class ResultsBaseClass(object):
         grid_data = powergama.GridData()
         grid_data.from_dict(data_dict, timedelta=timedelta)
         # TODO: replace this with grid_data.validate() or something similar
+        # A database written before an optional column was added to keys_powergama lacks it:
+        # add it with its default before filling empty cells.
+        grid_data._addDefaultColumns(keys=grid_data.keys_powergama)
         grid_data._fillEmptyCells(keys=grid_data.keys_powergama)
         res = cls(grid_data, databasefile, replace=False)
         return res

@@ -60,7 +60,9 @@ def _generator_limits(lp, timestep):
     P_max = gen["pmax"].to_numpy(float)
     P_min = gen["pmin"].to_numpy(float)
 
-    # Time-varying pmax factor is applied to installed capacity.
+    # Time-varying pmax factor is applied to installed capacity. The refs were
+    # validated by GridContext: "" (no profile) is the only name that is not a
+    # column, and it gives NaN here, i.e. no override. So does a NaN profile value.
     pmax_factor = np.ones(len(gen))
     if lp._pmax_ref is not None:
         factor = _profile_values(grid.profiles, timestep, lp._pmax_ref, required=False)
@@ -190,7 +192,7 @@ def update_window(lp, timesteps):
         _store(
             model.p_storage_value,
             stores,
-            storage_value.generator_storage_values(grid, stores, storage[stores], timesteps[-1]),
+            storage_value.generator_storage_values(grid, lp._ctx, stores, storage[stores], timesteps[-1]),
         )
 
     # 3b. flexible load: reservoir level at the start of the window, and the value of
@@ -198,7 +200,9 @@ def update_window(lp, timesteps):
     for i in lp._idx_consumersWithFlexLoad:
         model.p_flex_storage_prev[i] = lp._ctx.flex_storage_seed(i, float(lp._storage_flexload[i]))
         for h, ts in enumerate(timesteps):
-            model.p_loadflex_cost[i, h] = storage_value.flexload_storage_value(lp._grid, i, lp._storage_flexload[i], ts)
+            model.p_loadflex_cost[i, h] = storage_value.flexload_storage_value(
+                lp._grid, lp._ctx, i, lp._storage_flexload[i], ts
+            )
 
     # 4. Extensions, which may override what is set above. They only run in windows
     #    of one timestep. The core sets no branch-flow variable bounds: the rating is

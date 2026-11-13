@@ -25,7 +25,7 @@ class GridData(object):
         "node": {"id": None, "area": None, "zone": "", "lat": None, "lon": None},
         "branch": {"node_from": None, "node_to": None, "reactance": None, "capacity": None, "resistance": 0.0},
         "dcbranch": {"node_from": None, "node_to": None, "capacity": None, "resistance": 0.0},
-        "inter_area_ntc": {"area_from": None, "area_to": None, "ntc_forward": None, "ntc_backward": None},
+        "inter_area_rules": {"area_from": None, "area_to": None, "ntc_forward": None, "ntc_backward": None},
         "generator": {
             "type": None,
             "desc": "",
@@ -48,6 +48,12 @@ class GridData(object):
             "ramp_up_pu": numpy.nan,
             "ramp_down_pu": numpy.nan,
             "ramp_daily_reset": False,
+            "pmin_ref": "const",
+            "pmax_ref": "const",
+            "storage_ini_ref": "const",
+            # Rows of one physical unit (e.g. price blocks) share a value; "" is a group of
+            # one. The model does not read it.
+            "block_group": "",
         },
         "consumer": {
             "node": None,
@@ -66,9 +72,9 @@ class GridData(object):
         "node": {"id": str, "area": str},
         "branch": {"node_from": str, "node_to": str, "capacity": float},
         "dcbranch": {"node_from": str, "node_to": str, "capacity": float},
-        "generator": {"node": str, "type": str, "pmax": float, "ramp_daily_reset": bool},
+        "generator": {"node": str, "type": str, "pmax": float, "ramp_daily_reset": bool, "block_group": str},
         "consumer": {"node": str},
-        "inter_area_ntc": {"area_from": str, "area_to": str, "ntc_forward": float, "ntc_backward": float},
+        "inter_area_rules": {"area_from": str, "area_to": str, "ntc_forward": float, "ntc_backward": float},
     }
 
     def __init__(self):
@@ -81,7 +87,7 @@ class GridData(object):
         self.dcbranch = None
         self.generator = None
         self.consumer = None
-        self.inter_area_ntc = None
+        self.inter_area_rules = None
         self.profiles = None
         self.storagevalue_filling = None
         self.storagevalue_time = None
@@ -116,7 +122,11 @@ class GridData(object):
             if dtype:
                 for col, col_dtype in dtype.items():
                     if col in df.columns:
-                        df[col] = df[col].astype(col_dtype)
+                        if col_dtype is str:
+                            # like read_csv(dtype=str): a missing value stays missing (not "None")
+                            df[col] = df[col].where(df[col].isna(), df[col].astype(str))
+                        else:
+                            df[col] = df[col].astype(col_dtype)
             return df
 
         return pd.read_csv(path, dtype=dtype, sep=self.CSV_SEPARATOR, engine="python")
@@ -142,20 +152,50 @@ class GridData(object):
 
         dictionary must contain dataframes for keys:
         node, branch, dcbranch, generator, consumer, profiles, storval_time, storval_filling
+
+        ``storval_time`` and ``storval_filling`` may be None: no separate time table (the
+        time curves are profile columns) or no storage values at all.
+
+        and may contain ``inter_area_rules`` (a DataFrame or None), as
+        ``Database.get_grid_data`` returns it. A missing key means no inter-area rules.
         """
-        self.node = data_dict["node"].astype(self.dtypes["node"])
-        self.branch = data_dict["branch"].astype(self.dtypes["branch"])
-        self.dcbranch = data_dict["dcbranch"].astype(self.dtypes["dcbranch"])
-        self.generator = data_dict["generator"].astype(self.dtypes["generator"])
-        self.consumer = data_dict["consumer"].astype(self.dtypes["consumer"])
+        for name in ("node", "branch", "dcbranch", "generator", "consumer"):
+            setattr(self, name, self._astype_present(data_dict[name], self.dtypes[name]))
+        rules = data_dict.get("inter_area_rules")
+        self.inter_area_rules = None if rules is None else rules.astype(self.dtypes["inter_area_rules"])
+        for name in ("node", "branch", "dcbranch", "generator", "consumer"):
+            setattr(self, name, self._float_columns_from_nulls(name, getattr(self, name)))
         self.profiles = data_dict["profiles"]
         self.storagevalue_time = data_dict["storval_time"]
         self.storagevalue_filling = data_dict["storval_filling"]
         self.timeDelta = timedelta
         self.timerange = list(self.profiles.index)
 
+    @staticmethod
+    def _astype_present(table, dtypes):
+        """``table.astype(dtypes)`` for the columns it has: a database written before an
+        optional column (e.g. ``block_group``) was added lacks it, and gets its default later."""
+        return table.astype({col: dtype for col, dtype in dtypes.items() if col in table.columns})
+
+    @classmethod
+    def _float_columns_from_nulls(cls, name, table):
+        """Make all-missing columns with a float default float again.
+
+        SQLite stores NaN as NULL, which reads back as an ``object`` column of None, so a
+        column like ``gen_lat`` that is NaN throughout comes back from a database as ``object``.
+        """
+        for col, default in cls.keys_powergama[name].items():
+            if (
+                isinstance(default, float)
+                and col in table.columns
+                and table[col].dtype == object
+                and table[col].isna().all()
+            ):
+                table[col] = table[col].astype(float)
+        return table
+
     def readGridData(
-        self, nodes, ac_branches, dc_branches, generators, consumers, remove_extra_columns=False, inter_area_ntc=None
+        self, nodes, ac_branches, dc_branches, generators, consumers, remove_extra_columns=False, inter_area_rules=None
     ):
         """Read grid data from files into data variables
 
@@ -164,7 +204,7 @@ class GridData(object):
         dc_branches: filename or list of filenames or None
         generators: filename or list of filenames or None
         consumers: filename or list of filenames or Non
-        inter_area_ntc: filename or list of filenames or None (optional)
+        inter_area_rules: filename or list of filenames or None (optional)
         """
 
         self.node = self.read_csv_files(nodes, dataset="node")
@@ -172,8 +212,8 @@ class GridData(object):
         self.dcbranch = self.read_csv_files(dc_branches, dataset="dcbranch")
         self.generator = self.read_csv_files(generators, dataset="generator")
         self.consumer = self.read_csv_files(consumers, dataset="consumer")
-        if inter_area_ntc is not None:
-            self.inter_area_ntc = self.read_csv_files(inter_area_ntc, dataset="inter_area_ntc")
+        if inter_area_rules is not None:
+            self.inter_area_rules = self.read_csv_files(inter_area_rules, dataset="inter_area_rules")
 
         self._checkGridDataFields(self.keys_powergama)
         self._checkGridData()
@@ -215,11 +255,11 @@ class GridData(object):
         for k in keys["node"]:
             if k not in self.node.keys():
                 self.node[k] = keys["node"][k]
-        # Handle optional inter_area_ntc if loaded
-        if self.inter_area_ntc is not None:
-            for k in keys["inter_area_ntc"]:
-                if k not in self.inter_area_ntc.keys():
-                    self.inter_area_ntc[k] = keys["inter_area_ntc"][k]
+        # Handle optional inter_area_rules if loaded
+        if self.inter_area_rules is not None:
+            for k in keys["inter_area_rules"]:
+                if k not in self.inter_area_rules.keys():
+                    self.inter_area_rules[k] = keys["inter_area_rules"][k]
 
         # Discard extra columns (comments etc)
         if remove_extra_columns:
@@ -228,8 +268,8 @@ class GridData(object):
             self.dcbranch = self.dcbranch[list(keys["dcbranch"].keys())]
             self.generator = self.generator[list(keys["generator"].keys())]
             self.consumer = self.consumer[list(keys["consumer"].keys())]
-            if self.inter_area_ntc is not None:
-                self.inter_area_ntc = self.inter_area_ntc[list(keys["inter_area_ntc"].keys())]
+            if self.inter_area_rules is not None:
+                self.inter_area_rules = self.inter_area_rules[list(keys["inter_area_rules"].keys())]
 
     def _checkGridDataFields(self, keys):
         """check if all required columns are present
@@ -249,11 +289,11 @@ class GridData(object):
         for k, v in keys["consumer"].items():
             if v is None and k not in self.consumer:
                 raise Exception("Consumer input file must contain %s" % k)
-        # Only check inter_area_ntc if it was loaded
-        if self.inter_area_ntc is not None:
-            for k, v in keys["inter_area_ntc"].items():
-                if v is None and k not in self.inter_area_ntc:
-                    raise Exception("Inter-area NTC input file must contain %s" % k)
+        # Only check inter_area_rules if it was loaded
+        if self.inter_area_rules is not None:
+            for k, v in keys["inter_area_rules"].items():
+                if v is None and k not in self.inter_area_rules:
+                    raise Exception("Inter-area rules input file must contain %s" % k)
 
     def _checkConsistency(self):
         """Check consistency between default and provided values.
@@ -309,7 +349,36 @@ class GridData(object):
                 raise Exception("DC Branch to node does not exist: '%s'" % c)
 
     def _readProfileFromFile(self, filename, timerange):
+        """Profiles for *timerange* from one file, or from a list of files joined by column.
+
+        Each file is cut to *timerange* (row labels) on its own, so the files only need to
+        share those rows. Column names must be unique across the files.
+        """
+        if isinstance(filename, (list, tuple)):
+            if len(filename) == 0:
+                raise ValueError("Profile file list is empty")
+            frames = [self._readProfileFromFile(f, timerange) for f in filename]
+            seen = {}
+            duplicates = {}
+            for f, df in zip(filename, frames):
+                for col in df.columns:
+                    if col in seen:
+                        duplicates.setdefault(col, [seen[col]]).append(str(f))
+                    else:
+                        seen[col] = str(f)
+            if duplicates:
+                details = "; ".join(f"'{col}' in {', '.join(files)}" for col, files in sorted(duplicates.items()))
+                raise ValueError(f"Duplicate profile column names across profile files: {details}")
+            return pd.concat(frames, axis=1)
+
         profiles = self._read_tabular_file(filename)
+        missing = pd.Index(list(timerange)).difference(profiles.index)
+        if len(missing) > 0:
+            shown = ", ".join(str(m) for m in missing[:5]) + (" ..." if len(missing) > 5 else "")
+            raise ValueError(
+                f"Profile file '{filename}' has no rows for {len(missing)} timestep(s) of the timerange: {shown} "
+                f"(file has {len(profiles)} rows)"
+            )
         profiles = profiles.loc[timerange]
         profiles.index = range(len(timerange))
         return profiles
@@ -321,15 +390,36 @@ class GridData(object):
     def readProfileData(self, filename, timerange, storagevalue_filling=None, storagevalue_time=None, timedelta=1.0):
         """Read profile (timeseries) into numpy arrays
 
-        Storage values have both time dependence and filling level dependence
-        The dependence on filling level (0-100%), is given as an array with 101 elements
+        filename: a CSV or Parquet file, or a list of them. Each file is cut to
+        *timerange* (row labels), then the files are joined by column. A column name
+        that appears in more than one file, or a file that lacks rows of *timerange*,
+        raises ValueError.
+
+        Storage values have both time dependence and filling level dependence.
+
+        storagevalue_filling: the dependence on filling level, a file with 101 rows (0 to
+            100 % filling) and one column per curve (``storval_filling_ref``,
+            ``flex_storval_filling``).
+        storagevalue_time: deprecated. The time curves are ordinary profile columns: put
+            their file in *filename* and name the columns in ``storval_time_ref`` /
+            ``flex_storval_time``. If given, this separate file is read as before and every
+            time reference is a column of it instead (the two are not mixed).
         """
 
         self.profiles = self._readProfileFromFile(filename, timerange)
         self.timerange = timerange
         self.timeDelta = timedelta
-        if storagevalue_filling is not None:
+        self.storagevalue_time = None
+        if storagevalue_time is not None:
+            warnings.warn(
+                "readProfileData(storagevalue_time=...) is deprecated: the storage-value time curves are "
+                "ordinary profile columns. Add the file to 'filename' and name its columns in "
+                "storval_time_ref / flex_storval_time.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
             self.storagevalue_time = self._readProfileFromFile(storagevalue_time, timerange)
+        if storagevalue_filling is not None:
             self.storagevalue_filling = self._readStoragevaluesFromFile(storagevalue_filling)
         return
 
@@ -686,13 +776,11 @@ class GridData(object):
         return br_witharea
 
     def getDcBranchAreas(self):
-        br_witharea = self.dcbranch
-        br_witharea["area_from"] = self.dcbranch.merge(
-            right=self.node[["id", "area"]], how="left", left_on="node_from", right_on="id"
-        )["area"]
-        br_witharea["area_to"] = self.dcbranch.merge(
-            right=self.node[["id", "area"]], how="left", left_on="node_to", right_on="id"
-        )["area"]
+        """The DC branch table with ``area_from``/``area_to`` added: a copy, ``self.dcbranch`` is left as it is."""
+        node_area = self.node.drop_duplicates("id").set_index("id")["area"]
+        br_witharea = self.dcbranch.copy()
+        br_witharea["area_from"] = br_witharea["node_from"].map(node_area)
+        br_witharea["area_to"] = br_witharea["node_to"].map(node_area)
         return br_witharea
 
     def getInterAreaBranches(self, area_from=None, area_to=None, acdc="ac"):

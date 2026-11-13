@@ -38,7 +38,6 @@ class LpConfig:
     objective_mode: str = "single_period"
     horizon_hours: int = 24
     commit_hours: int = 24
-    storage_initial_fill_scale: float = 1.0
 
     @classmethod
     def from_args(
@@ -48,7 +47,6 @@ class LpConfig:
         objective_mode="single_period",
         horizon_hours=24,
         commit_hours=24,
-        storage_initial_fill_scale=1.0,
     ):
         """Normalise and validate the LpProblem constructor arguments."""
         mode = str(objective_mode).strip().lower()
@@ -70,7 +68,6 @@ class LpConfig:
             objective_mode=mode,
             horizon_hours=int(max(1, int(horizon_hours))),
             commit_hours=int(max(1, int(commit_hours))),
-            storage_initial_fill_scale=float(max(0.0, min(1.0, storage_initial_fill_scale))),
         )
 
     @property

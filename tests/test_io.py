@@ -51,7 +51,7 @@ def test_input():
         dc_branches=None,
         generators=datapath / "9busmod_generators.csv",
         consumers=datapath / "9busmod_consumers.csv",
-        inter_area_ntc=datapath / "ntc_interarea.csv",
+        inter_area_rules=datapath / "inter_area_rules.csv",
         remove_extra_columns=True,
     )
 

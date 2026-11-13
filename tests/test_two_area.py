@@ -31,7 +31,7 @@ def two_area_data() -> powergama.GridData:
         dc_branches=datapath / "dcbranches.csv",
         generators=datapath / "generators.csv",
         consumers=datapath / "consumers.csv",
-        inter_area_ntc=datapath / "inter_area_ntc.csv",
+        inter_area_rules=datapath / "inter_area_rules.csv",
     )
     data.readProfileData(
         filename=datapath / "profiles.csv",
@@ -67,10 +67,24 @@ def test_fixture_exercises_the_intended_features(two_area_data):
     assert len(data.getIdxGeneratorsWithPumping()) >= 1, "no pumping generator"
     assert len(data.getIdxGeneratorsWithStorage()) >= 1, "no storage generator"
     assert len(data.getIdxConsumersWithFlexibleLoad()) >= 1, "no flexible load"
-    assert data.inter_area_ntc is not None and len(data.inter_area_ntc) == 1
+    assert data.inter_area_rules is not None and len(data.inter_area_rules) == 1
 
 
-def test_inter_area_ntc_constraints_are_built_and_bind(tmp_path, two_area_data):
+def _stored_inter_area_rules(dbfile):
+    return powergama.database.Database(dbfile).get_grid_data()["inter_area_rules"]
+
+
+def test_inter_area_rules_round_trip_through_database(tmp_path, two_area_data):
+    """The table is stored as data_inter_area_rules and read back unchanged."""
+    dbfile = tmp_path / "two_area.sqlite"
+    powergama.Results(two_area_data, dbfile, replace=True)
+    with sqlite3.connect(dbfile) as con:
+        names = set(pd.read_sql("SELECT name FROM sqlite_master WHERE type='table'", con)["name"])
+    assert "data_inter_area_rules" in names
+    pd.testing.assert_frame_equal(_stored_inter_area_rules(dbfile), two_area_data.inter_area_rules)
+
+
+def test_inter_area_rules_constraints_are_built_and_bind(tmp_path, two_area_data):
     """The NTC rows must map onto real branches and actually constrain the transfer.
 
     The 9-bus NTC fixture produced zero constraints because its `OTHER_AREA` has no
@@ -82,8 +96,8 @@ def test_inter_area_ntc_constraints_are_built_and_bind(tmp_path, two_area_data):
     res = powergama.Results(data, tmp_path / "two_area.sqlite", replace=True)
 
     # The NTC bookkeeping must have found border branches in both directions.
-    assert hasattr(lp, "_inter_area_ntc_rows"), "NTC constraint bookkeeping was never built"
-    rows = lp._inter_area_ntc_rows
+    assert hasattr(lp, "_inter_area_rules_rows"), "NTC constraint bookkeeping was never built"
+    rows = lp._inter_area_rules_rows
     assert len(rows) == 1
     row = rows[0] if isinstance(rows, list) else next(iter(rows.values()))
     border = sum(len(row.get(k, [])) for k in ("ac_pos", "ac_neg", "dc_pos", "dc_neg"))
@@ -163,7 +177,7 @@ def two_area_multi_period_res(tmp_path, two_area_data):
     return data, res
 
 
-def test_multi_period_respects_inter_area_ntc(two_area_multi_period_res):
+def test_multi_period_respects_inter_area_rules(two_area_multi_period_res):
     data, res = two_area_multi_period_res
     tables = _tables(res)
     ac_border = tables["Res_Branches"].query("indx == 1").set_index("timestep")["flow"]
@@ -173,7 +187,7 @@ def test_multi_period_respects_inter_area_ntc(two_area_multi_period_res):
     assert (transfer <= NTC_FORWARD + TOL).all(), f"forward NTC exceeded: max {transfer.max()}"
     assert (transfer >= -NTC_BACKWARD - TOL).all(), f"backward NTC exceeded: min {transfer.min()}"
     assert transfer.max() > NTC_FORWARD - 1.0, "NTC never came close to binding"
-    assert len(data.inter_area_ntc) == 1
+    assert len(data.inter_area_rules) == 1
 
 
 def test_multi_period_pumping_and_storage_are_active(two_area_multi_period_res):

@@ -7,6 +7,40 @@ import sqlite3 as db
 
 import pandas as pd
 
+INDEX_LABEL = "index"
+"""The column a ``data_*`` table stores its row index in."""
+
+SHADOWED_INDEX_LABEL = "level_0"
+"""The row index column of a ``data_*`` table that has a column named ``index`` itself.
+
+pandas' ``to_sql`` writes the row index there in that case, so databases written before
+this was explicit have the same layout and read back the same way.
+"""
+
+
+def _write_data_table(frame: pd.DataFrame, table_name: str, con) -> None:
+    """Write a ``data_*`` table with its row index, under a label that cannot clash with a column."""
+    if SHADOWED_INDEX_LABEL in frame.columns:
+        raise ValueError(
+            f"{table_name}: a column named '{SHADOWED_INDEX_LABEL}' cannot be stored; PowerGAMA keeps "
+            f"the row index there when a table has a column named '{INDEX_LABEL}'. Rename the column."
+        )
+    label = SHADOWED_INDEX_LABEL if INDEX_LABEL in frame.columns else INDEX_LABEL
+    frame.to_sql(table_name, con, if_exists="replace", index=True, index_label=label)
+
+
+def _read_data_table(table_name: str, con, index_name=None) -> pd.DataFrame:
+    """Read a ``data_*`` table written by :func:`_write_data_table` (or by older versions).
+
+    The row index is the ``level_0`` column if the table also has an ``index`` column (that
+    one is then the table's own column), and the ``index`` column otherwise.
+    """
+    frame = pd.read_sql(f"SELECT * FROM {table_name}", con)  # nosec B608
+    shadowed = {INDEX_LABEL, SHADOWED_INDEX_LABEL} <= set(frame.columns)
+    frame = frame.set_index(SHADOWED_INDEX_LABEL if shadowed else INDEX_LABEL)
+    frame.index.name = index_name
+    return frame
+
 
 class DatabaseBaseClass(object):
     """
@@ -25,21 +59,32 @@ class DatabaseBaseClass(object):
         """Collect all profile references that SQL diagnostics may need."""
         refs: set[str] = set()
 
-        def _scan(df, cols):
+        def _scan(df, cols, const_means_none=False):
             if df is None:
                 return
             for col in cols:
                 if col in df.columns:
                     for ref in df[col].dropna().astype(str).unique():
                         v = ref.strip()
+                        if const_means_none and v == "const":
+                            # "const" means no profile here; it need not be a column
+                            continue
                         if v and v.lower() != "nan":
                             refs.add(v)
 
         _scan(getattr(data, "consumer", None), ["demand_ref", "rt_target_ref"])
-        _scan(
-            getattr(data, "generator", None),
-            ["inflow_ref", "pmin_ref", "pmax_ref", "rt_target_ref", "rt_pump_target_ref"],
-        )
+        _scan(getattr(data, "generator", None), ["inflow_ref", "rt_target_ref", "rt_pump_target_ref"])
+        _scan(getattr(data, "generator", None), ["pmin_ref", "pmax_ref", "storage_ini_ref"], const_means_none=True)
+        if getattr(data, "storagevalue_time", None) is None:
+            # The storage-value time curves are profile columns; the LP reads them for the
+            # generators with storage and the consumers with flexible load only.
+            generator = getattr(data, "generator", None)
+            if generator is not None and "storval_time_ref" in generator.columns:
+                _scan(generator.iloc[data.getIdxGeneratorsWithStorage()], ["storval_time_ref"], const_means_none=True)
+            consumer = getattr(data, "consumer", None)
+            if consumer is not None and "flex_storval_time" in consumer.columns:
+                flex = consumer.iloc[data.getIdxConsumersWithFlexibleLoad()]
+                _scan(flex, ["flex_storval_time"], const_means_none=True)
         return refs
 
     def _collect_optional_profile_utility_cols(self, data) -> set[str]:
@@ -104,15 +149,15 @@ class DatabaseBaseClass(object):
             ) from exc
         with con:
             # Write grid_data dataframes to database:
-            data.node.to_sql("data_node", con, if_exists="replace", index=True)
-            data.branch.to_sql("data_branch", con, if_exists="replace", index=True)
-            data.dcbranch.to_sql("data_dcbranch", con, if_exists="replace", index=True)
-            data.generator.to_sql("data_generator", con, if_exists="replace", index=True)
-            data.consumer.to_sql("data_consumer", con, if_exists="replace", index=True)
+            _write_data_table(data.node, "data_node", con)
+            _write_data_table(data.branch, "data_branch", con)
+            _write_data_table(data.dcbranch, "data_dcbranch", con)
+            _write_data_table(data.generator, "data_generator", con)
+            _write_data_table(data.consumer, "data_consumer", con)
             self._validate_profile_refs_exist(data)
             prof_cols = list(data.profiles.columns)
             if len(prof_cols) <= self.SQLITE_MAX_COLUMNS_SOFT:
-                data.profiles.to_sql("data_profiles", con, if_exists="replace", index=True)
+                _write_data_table(data.profiles, "data_profiles", con)
             else:
                 # Keep only analysis-relevant refs for SQL output.
                 # The full profile matrix is not needed for solving (solve uses in-memory grid),
@@ -138,12 +183,14 @@ class DatabaseBaseClass(object):
                 )
                 for chunk_idx, cols in enumerate(chunks):
                     table_name = self._profile_table_name(chunk_idx)
-                    data.profiles.loc[:, cols].to_sql(table_name, con, if_exists="replace", index=True)
-            if getattr(data, "inter_area_ntc", None) is not None:
-                data.inter_area_ntc.to_sql("data_inter_area_ntc", con, if_exists="replace", index=True)
+                    _write_data_table(data.profiles.loc[:, cols], table_name, con)
+            if getattr(data, "inter_area_rules", None) is not None:
+                _write_data_table(data.inter_area_rules, "data_inter_area_rules", con)
             if data.storagevalue_filling is not None:
-                data.storagevalue_filling.to_sql("data_storval_filling", con, if_exists="replace", index=True)
-                data.storagevalue_time.to_sql("data_storval_time", con, if_exists="replace", index=True)
+                _write_data_table(data.storagevalue_filling, "data_storval_filling", con)
+            if getattr(data, "storagevalue_time", None) is not None:
+                # deprecated separate time table; without it the time curves are profile columns
+                _write_data_table(data.storagevalue_time, "data_storval_time", con)
             # tables with integer indices - keep for backwards compatibility
             nodes.to_sql("Grid_Nodes", con, if_exists="replace", index=True, index_label="indx")
             branches.to_sql("Grid_Branches", con, if_exists="replace", index=True, index_label="indx")
@@ -195,8 +242,7 @@ class DatabaseBaseClass(object):
         data = {}
         with con:
             for k in ["node", "branch", "dcbranch", "generator", "consumer", "profiles"]:
-                data[k] = pd.read_sql(f"SELECT * FROM data_{k}", con, index_col="index")  # nosec B608
-                data[k].index.name = None
+                data[k] = _read_data_table(f"data_{k}", con)
 
             aux_tables = pd.read_sql(
                 "SELECT name FROM sqlite_master WHERE type='table' "
@@ -207,8 +253,7 @@ class DatabaseBaseClass(object):
             if not aux_tables.empty:
                 profiles = data["profiles"]
                 for table_name in aux_tables["name"].astype(str).tolist():
-                    aux = pd.read_sql(f"SELECT * FROM {table_name}", con, index_col="index")  # nosec B608
-                    aux.index.name = None
+                    aux = _read_data_table(table_name, con)
                     overlap = [c for c in aux.columns if c in profiles.columns]
                     if overlap:
                         aux = aux.drop(columns=overlap)
@@ -216,23 +261,21 @@ class DatabaseBaseClass(object):
                         profiles = profiles.join(aux, how="left")
                 data["profiles"] = profiles
 
-            df_ntc = pd.read_sql(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='data_inter_area_ntc'", con
+            data["inter_area_rules"] = None
+            df_rules = pd.read_sql(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='data_inter_area_rules'", con
             )
-            if not df_ntc.empty:
-                data["inter_area_ntc"] = pd.read_sql("SELECT * FROM data_inter_area_ntc", con, index_col="index")
-                data["inter_area_ntc"].index.name = None
-            else:
-                data["inter_area_ntc"] = None
+            if not df_rules.empty:
+                data["inter_area_rules"] = _read_data_table("data_inter_area_rules", con)
 
-            # Query to check if storage value tables exist
-            df = pd.read_sql("SELECT name FROM sqlite_master WHERE type='table' AND name='data_storval_time'", con)
-            if not df.empty:
-                data["storval_time"] = pd.read_sql("SELECT * FROM data_storval_time", con, index_col="index")
-                data["storval_filling"] = pd.read_sql("SELECT * FROM data_storval_filling", con, index_col="index")
-            else:
-                data["storval_time"] = None
-                data["storval_filling"] = None
+            # The storage value tables, each if it exists: a database written with the time
+            # curves as profile columns has no data_storval_time.
+            for key in ("storval_time", "storval_filling"):
+                table_name = f"data_{key}"
+                df = pd.read_sql(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name=?", con, params=(table_name,)
+                )
+                data[key] = None if df.empty else _read_data_table(table_name, con, index_name=INDEX_LABEL)
         return data
 
     def getTimerange(self):

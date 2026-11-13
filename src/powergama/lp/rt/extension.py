@@ -32,13 +32,12 @@ class RtExtension(ModelExtension):
     ----------
     balancing_fee_eur_per_mwh : float
         Flat fee per MWh of real-time redispatch, to discourage marginal deviations
-        (c0 in the WILLOW D4.5 annex).
+        (c0).
     res_curtailment_factor : float
         Penalty multiplier on real-time curtailment of variable renewable generation
-        (1 + delta_curt in the annex).
+        (1 + delta_curt).
     xborder_flow_penalty_eur_per_mwh : float
-        Penalty per MWh of deviation from day-ahead cross-border flows (c_xborder in
-        the annex).
+        Penalty per MWh of deviation from day-ahead cross-border flows (c_xborder).
     """
 
     supports_multi_period = False

@@ -37,6 +37,28 @@ from .formulation import extract as formulation_extract
 from .objective_trace import write_objective_trace
 
 
+def _storage_from_profile(grid, storage_ini_ref, storage_cap, storage):
+    """*storage* with the initial filling of generators that have a storage_ini_ref replaced.
+
+    The filling is `storage_cap` times the profile's value at the run's first timestep
+    (profile row 0), as a fraction. It is the start of a fresh run only: resuming with
+    `continue_from_last` reloads the storage state from the database.
+    """
+    has_ref = storage_ini_ref.ne("")
+    refs = storage_ini_ref[has_ref]
+    first = grid.profiles.iloc[0]
+    fraction = pd.to_numeric(first[refs.to_numpy()], errors="coerce").to_numpy(dtype=float)
+    nan = np.isnan(fraction)
+    if nan.any():
+        bad = [f"{i} ({r})" for i, r in zip(refs.index[nan], refs[nan])]
+        raise ValueError(
+            "storage_ini_ref profile has no value (NaN) at the first timestep for generator(s): " + ", ".join(bad)
+        )
+    storage = storage.copy()
+    storage.loc[refs.index] = fraction * storage_cap.loc[refs.index].to_numpy(dtype=float)
+    return storage
+
+
 class LpProblem:
     """LP problem formulation
 
@@ -69,9 +91,6 @@ class LpProblem:
         window advances. Equal to `horizon_hours` for non-overlapping windows; smaller
         for a rolling horizon with lookahead (e.g. 48h horizon committing 24h).
         Capped at `horizon_hours`. "multi_period" mode only.
-    storage_initial_fill_scale : float
-        Scales the initial storage filling level of hydro-with-pumping and battery
-        generators, relative to `storage_ini` in the grid data.
     extensions : list of ModelExtension
         Optional additions to the model, e.g.
         :class:`powergama.lp.rt.RtExtension` for balancing ("real-time") simulation.
@@ -91,7 +110,6 @@ class LpProblem:
         objective_mode="single_period",
         horizon_hours=24,
         commit_hours=24,
-        storage_initial_fill_scale=1.0,
         extensions=None,
     ):
         # 1. The Pyomo model. APPSI's incremental update and
@@ -128,7 +146,6 @@ class LpProblem:
             objective_mode=objective_mode,
             horizon_hours=horizon_hours,
             commit_hours=commit_hours,
-            storage_initial_fill_scale=storage_initial_fill_scale,
         )
         self._extensions = tuple(extensions or ())
         self._cfg.check_extensions(self._extensions)
@@ -148,21 +165,13 @@ class LpProblem:
         # self._fancy_progressbar = False
 
         # Initial values of marginal costs, storage and storage values
-        # Apply optional start-fill scaling only to pumped hydro and batteries.
-        _ini_fill_scale = self._cfg.storage_initial_fill_scale
-        _gen_type = (
-            grid.generator["type"].astype(str).str.lower()
-            if "type" in grid.generator.columns
-            else pd.Series("", index=grid.generator.index)
-        )
-        _pump_cap = pd.to_numeric(grid.generator.get("pump_cap", 0.0), errors="coerce").fillna(0.0)
         _storage_cap = pd.to_numeric(grid.generator.get("storage_cap", 0.0), errors="coerce").fillna(0.0)
-        _eligible_scaled_fill = ((_gen_type == "hydro") & (_pump_cap > 0.0)) | (_gen_type == "battery")
-        _fill_scale = pd.Series(1.0, index=grid.generator.index, dtype=float)
-        _fill_scale.loc[_eligible_scaled_fill] = _ini_fill_scale
         _storage_ini = pd.to_numeric(grid.generator.get("storage_ini", 0.0), errors="coerce").fillna(0.0)
+        _storage = (_storage_ini * _storage_cap).fillna(0)
+        if self._ctx.storage_ini_ref is not None:
+            _storage = _storage_from_profile(grid, self._ctx.storage_ini_ref, _storage_cap, _storage)
         self.set_storage_state(
-            storage=(_fill_scale * _storage_ini * _storage_cap).fillna(0),
+            storage=_storage,
             storage_flexload=(
                 grid.consumer["flex_storagelevel_init"]
                 * grid.consumer["flex_storage"]
@@ -388,7 +397,7 @@ class LpProblem:
         formulation_data.update_loss_parameters(self, aclossmultiplier, dclossmultiplier)
 
     def _flexload_storage_value(self, i, storage_level, timestep):
-        return storage_value.flexload_storage_value(self._grid, i, storage_level, timestep)
+        return storage_value.flexload_storage_value(self._grid, self._ctx, i, storage_level, timestep)
 
     def _get_fault_start(self, timestep):
         # Used by LpFaultProblem

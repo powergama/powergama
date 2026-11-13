@@ -1,7 +1,101 @@
 # Changes
 
 ## unpublished
+
+### Input data and grid
+2026-11-13
+
+Added
+- `readProfileData(filename=...)` accepts a list of CSV or Parquet files, each cut to
+  `timerange` and joined by column; a column name repeated across files, or a file without
+  the rows of `timerange`, raises
+- the generator columns `pmax_ref`, `pmin_ref` and the new `storage_ini_ref` are in
+  `keys_powergama` with default `"const"`, meaning no profile. `storage_ini_ref` sets the
+  initial filling to `storage_cap` times the profile at the first timestep, in place of
+  `storage_ini`
+- new optional generator column `block_group` (text, default `""`): the rows of one physical
+  unit (e.g. price blocks) share a value, `""` is a group of one. The model does not read it.
+  It survives the results database; databases written before read back with `""`.
+  `GridData.from_dict` converts only the typed columns a table has, and a text column read
+  from Parquet keeps a missing value missing (it became the text `"None"`)
+- the storage-value time curves are ordinary profile columns: with no `storagevalue_time`,
+  `storval_time_ref` (generators with storage) and `flex_storval_time` (consumers with
+  flexible load) name a column of `grid.profiles`, read at the same row as every other profile
+  reference; `"const"`, `""` and NaN are a factor of 1. Put the curve file in
+  `readProfileData(filename=[...])`. The curves of every valued row are resolved and checked
+  once when `LpProblem` is built (`GridContext.storval_*`), only for the rows the LP values
+- grid data round trip through the results database: `GridData.from_dict`, and so
+  `Results.from_existing`, keeps the inter-area table (`inter_area_rules`) that
+  `Database.get_grid_data` reads (it was silently dropped); a grid table with a column named
+  `index` survives (the row index is written under `index`, or `level_0` when the table has
+  an `index` column, and read back from `level_0` when a table has both; databases written
+  before read back the same way; a column named `level_0` raises); float columns missing
+  throughout (e.g. `gen_lat`, `ramp_up_pu`, stored as NULL) read back as float, not `object`
+  (`test_io::test_via_database` passes again); `Results.from_existing` adds missing optional
+  columns with their defaults, so databases written before `pmin_ref`, `pmax_ref`,
+  `storage_ini_ref` and `block_group` existed are read
+- the results database writes `data_storval_time` only when there is a separate time table,
+  and `Database.get_grid_data` / `GridData.from_dict` read a filling table without one. When
+  a wide profile table (more than 1800 columns) is reduced for SQLite, the time curves of the
+  storage rows and flexible consumers are kept with the other references, and an unknown one
+  raises when the database is created
+
+Removed and renamed
+- **breaking:** the inter-area table `inter_area_ntc` is renamed `inter_area_rules`
+  everywhere: the `readGridData(inter_area_rules=...)` keyword (no alias), the
+  `GridData.inter_area_rules` attribute and `keys_powergama` entry, and the LP names
+  `s_inter_area_rules` and `cInterAreaRulesForward`/`cInterAreaRulesBackward`. Its columns,
+  and the NTC limits on the summed flow between two areas, are unchanged. Results databases
+  store it as `data_inter_area_rules`
+- **breaking:** the `LpProblem` argument `storage_initial_fill_scale` is removed. It scaled
+  the initial filling level of generators by `type` (pumped hydro and batteries only); set
+  `storage_ini` (or `storage_ini_ref`) in the generator data instead
+- **breaking:** a `pmax_ref`, `pmin_ref` or `storage_ini_ref` that is neither `"const"`,
+  empty, nor a profile column raises when the `LpProblem` is constructed (it used to mean no
+  profile, silently)
+- **deprecation:** `readProfileData(storagevalue_time=...)` warns (`DeprecationWarning`). It
+  still works as before: every time reference is then a column of that table, for every row
+  (no mixing). `FullProfiles` (fault scenarios) reads it only when given
+- **breaking:** the filling curves (`storagevalue_filling`) must have the rows 0..100 and a
+  column for every `storval_filling_ref` of a generator with storage and every
+  `flex_storval_filling` of a consumer with flexible load; a grid with either and no filling
+  table raises too. An unknown time curve name raises `ValueError` when `LpProblem` is built
+  (it used to raise a `KeyError` at the first solve). No fallback
+- `GridData.getDcBranchAreas` returns a copy of `dcbranch` with `area_from`/`area_to` and no
+  longer adds them to `self.dcbranch`, so new results databases no longer store the two
+  columns in `data_dcbranch`. It maps areas by node id instead of aligning on row position,
+  which only differs for a DC branch table whose index is not `0..n-1`
+
+Changes results? Only in these cases; existing valid data give the same results:
+- a grid rebuilt from a results database (a re-run on `Results.from_existing(...).grid`) now
+  has the inter-area NTC constraints the original run had: on the two-area case a re-run
+  from the database reproduces the original objective, where it was lower without the NTC
+- a run that used `storage_initial_fill_scale` starts from `storage_ini` unless the data are
+  changed accordingly
+- the storage-value time curves as profile columns give bit-identical results to the
+  separate table on the two-area case; the strict references and checks only turn silent
+  mistakes into errors
+
+### Earlier
+2026-11-09
+- **breaking:** the inter-area table `inter_area_ntc` is renamed `inter_area_rules` everywhere:
+  the `readGridData(inter_area_rules=...)` keyword (no alias), the `GridData.inter_area_rules`
+  attribute and `keys_powergama` entry, and the LP names `s_inter_area_rules` and
+  `cInterAreaRulesForward`/`cInterAreaRulesBackward`. Its columns are unchanged. Results
+  databases store it as `data_inter_area_rules`
+- **breaking:** the `LpProblem` argument `storage_initial_fill_scale` is removed. It scaled the
+  initial filling level of generators by `type` (pumped hydro and batteries only); set
+  `storage_ini` in the generator data instead
+
 2026-10-21
+- `readProfileData(filename=...)` accepts a list of CSV or Parquet files, each cut to
+  `timerange` and joined by column; a column name repeated across files, or a file without
+  the rows of `timerange`, raises. The generator columns `pmax_ref`, `pmin_ref` and the new
+  `storage_ini_ref` are in `keys_powergama` with default `"const"`, meaning no profile.
+  **behaviour change:** any other value that is not a profile column now raises when the
+  `LpProblem` is constructed (it used to mean no profile, silently); empty cells still mean
+  no profile. `storage_ini_ref` sets the initial filling to `storage_cap` times the profile
+  at the first timestep, in place of `storage_ini`. Results are unchanged for existing data
 - **breaking:** RT storage is settled on its power, not its filling level. Pumping is tracked
   against the day-ahead schedule through a new `generator.rt_pump_target_ref` profile column
   (a fraction of `pump_cap`), priced at c0 ± (deadband − storage value × pump_efficiency),

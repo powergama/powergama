@@ -37,7 +37,7 @@ def two_area_data():
         dc_branches=datapath_two_area / "dcbranches.csv",
         generators=datapath_two_area / "generators.csv",
         consumers=datapath_two_area / "consumers.csv",
-        inter_area_ntc=datapath_two_area / "inter_area_ntc.csv",
+        inter_area_rules=datapath_two_area / "inter_area_rules.csv",
     )
     data.readProfileData(
         filename=datapath_two_area / "profiles.csv",
