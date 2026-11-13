@@ -65,6 +65,8 @@ A simulation is a pipeline of four objects:
   | [lp/objective_trace.py](src/powergama/lp/objective_trace.py) | optional per-timestep objective CSV (`POWERGAMA_OBJECTIVE_TRACE_CSV`) |
   | `lp/formulation/{build,data,extract}.py` | the LP over a window: the model, the data written into it for each window, and the results read out |
   | `lp/rt/{extension,context,build,data,locks,diagnostics}.py` | `RtExtension`, the balancing extension, and everything only it uses |
+  | [lp/rt/prepare.py](src/powergama/lp/rt/prepare.py) | `prepare_rt` / `target_columns` / `price_columns`: a DA run to the RT inputs (tables with `da_index` from `rt_tables_from_da`, `da_solution.parquet`, deviation prices) |
+  | [lp/rt/summary.py](src/powergama/lp/rt/summary.py) | `summarize_channels`: `channels.csv` and `prepare_rt_summary.md`, which RT rows use which DA-derived column how |
 
   **`cfg` and `ctx` are what make the builders plain functions.** Construction code reads nothing
   mutable, so it takes `(model, grid, ctx, cfg)` explicitly. The per-timestep updaters and the
@@ -114,10 +116,14 @@ A simulation is a pipeline of four objects:
 - **[Results.py](src/powergama/Results.py)** is a thin analysis/plotting layer over the database.
   `ResultsBaseClass` is the write path (no plotting, importable without heavy plot deps); `Results`
   adds the `get*`/`plot*` methods. `Results.from_existing(dbfile, timedelta)` reconstructs a full
-  `GridData` from a results database — grid data is persisted alongside results.
+  `GridData` from a results database — grid data is persisted alongside results, and the
+  round trip (`Database.get_grid_data` → `GridData.from_dict`) must give back the grid that
+  was written, `inter_area_rules` included (`tests/test_grid_roundtrip.py`).
 
 - **[database.py](src/powergama/database.py)** writes `Data_*` tables (grid + profiles, chunked into
-  `data_profiles`, `data_profiles_aux_N` to stay under sqlite's column limit) and `Res_*` tables
+  `data_profiles`, `data_profiles_aux_N` to stay under sqlite's column limit; through
+  `_write_data_table`/`_read_data_table`, which keep the row index in `index`, or `level_0` if
+  the table has an `index` column) and `Res_*` tables
   (`Res_Nodes`, `Res_Branches`, `Res_BranchesSens`, `Res_Generators`, `Res_Storage`, `Res_Pumping`,
   `Res_FlexibleLoad`, `Res_ObjFunc`). All result queries are raw SQL here; `Results` never touches
   sqlite directly.
@@ -133,8 +139,15 @@ Selected via `LpProblem` constructor arguments (see [usage.md](userguide/usage.m
    `horizon_hours=1`.
 3. **Balancing / real-time** (`extensions=[RtExtension(...)]`, from `powergama.lp.rt`) — a
    single-period solve with penalties on deviation from a day-ahead schedule supplied through
-   `rt_target_ref` / `rt_pump_target_ref` profile columns and the DA lock parquets
-   (`lp/rt/locks.py`). It is the second step after a day-ahead run, and not a third formulation:
+   `rt_target_ref` / `rt_pump_target_ref` profile columns and the border-flow lock parquets
+   (`lp/rt/locks.py`). The deviation prices are unit data, `rt_price_up`/`rt_price_down`
+   (`rt_pump_price_*` for pumping; consumers too) times an optional `*_ref` profile, resolved
+   in `RtContext._build_prices` (a tracked row without a price raises); the extension applies
+   no pricing rule but the split-sum guard. `prepare.price_columns` / `prepare_rt(prices=...)`
+   write them (c0 ± marginal cost, renewables −c0 / factor·c0, storage value at the DA
+   filling from `da_storage_values`), so `RtExtension` takes only
+   `xborder_flow_penalty_eur_per_mwh`. Pinned generators and fixed demand are not locks: they are
+   `pmin_ref = pmax_ref` and `demand_ref` profile columns. It is the second step after a day-ahead run, and not a third formulation:
    `RtExtension` plugs into the model through the `ModelExtension` hooks
    (`lp/extension.py`), including editing the objective's named terms of each hour. Windows of
    one timestep only (`supports_multi_period=False`). **The core never names RT** — RT settings, state, locks and
@@ -222,8 +235,11 @@ Test data sets:
 - `two_area` — covers exactly those gaps (two areas with a binding inter-area NTC, an HVDC link,
   a pumped-storage generator, a flexible load, ramp limits). Use this when touching NTC, pumping,
   flexible load or multi-period window logic. `tests/rt_case.py` builds the RT case on it: a
-  baseline run, then every kind of RT target and DA lock derived from it. Use that for RT work;
-  `test_rt_diagnostics.py` covers the JSONL debug stream with it.
+  baseline run, then every kind of RT target, a generator pin and a fixed demand (as
+  `pmin_ref`/`pmax_ref` and `demand_ref` profiles), the deviation prices (`add_prices`) and the border-flow
+  locks derived from it. Use that for RT work; `test_rt_diagnostics.py` covers the JSONL debug stream with it,
+  and `test_rt_prices.py` the prices (`test_data/two_area/rt_type_prices_no_storage` is the old type-based run it must
+  reproduce bit for bit).
 - `mount_synth` — small synthetic case where storage is needed to avoid load shedding.
 - `data_europe2014` — 1539 nodes; marked `slow`.
 

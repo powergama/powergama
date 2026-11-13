@@ -17,7 +17,7 @@ it is read via ``getattr`` with a default so ordinary grid data is unaffected.
 Each function takes the :class:`LpProblem` and the extension (``rt``) rather than being
 a method, to keep the (large) set of model attributes it reads explicit. It is a reader of
 most of the model: Pyomo components (``varGeneration``, the ``p_rt_*`` parameter family,
-the index sets, ``OBJ``), simulation state (``_storage``, ``_gen_prev``), the RT index
+the index sets, ``OBJ``), simulation state (``_storage``), the RT index
 sets and ``_grid``. That read surface is why this is instrumentation living alongside the
 model rather than an independent module.
 """
@@ -33,7 +33,6 @@ import pandas as pd
 import pyomo.environ as pyo
 
 from ... import constants as const
-from . import data as rt_data
 
 
 def append_payload(rt, payload, *, warning_context=""):
@@ -69,7 +68,6 @@ def initialize_debug_stream(rt, grid):
             # RT always minimises deviation; kept for readers of the header format.
             "dispatch_objective_mode": "deviation",
             "rt_target_tracking_active": True,
-            "rt_balancing_fee_eur_per_mwh": float(rt.balancing_fee_eur_per_mwh),
             "rt_xborder_flow_penalty_eur_per_mwh": float(rt.xborder_flow_penalty_eur_per_mwh),
         }
         append_payload(
@@ -123,106 +121,97 @@ def append_hourly_debug(lp, rt, timestep):
             return None
         return None
 
-    pump_rows = []
-    for i in sorted(int(ii) for ii in rt.ctx.pump_target_indices):
-        storage_cap = _val(lp._grid.generator.loc[i, "storage_cap"]) or 0.0
-        pre_storage = _val(lp._storage[i]) or 0.0
-        soc_rt = (pre_storage / storage_cap) if storage_cap > 0.0 else 0.0
-        ref_target = rt.ctx.pump_target_ref.iloc[int(i)]
-        eff = float(pd.to_numeric(lp._grid.generator.loc[i, "pump_efficiency"], errors="coerce") or 0.0)
-        row = {
-            "indx": int(i),
-            "node": str(lp._grid.generator.loc[i, "node"]),
-            "desc": str(lp._grid.generator.loc[i, "desc"]),
-            "type": str(lp._grid.generator.loc[i, "type"]),
-            "storage_cap_mwh": float(storage_cap),
-            "pre_storage_mwh": float(pre_storage),
-            "soc_rt": float(max(0.0, min(1.0, soc_rt))),
-            "gen_mw": _val(lp.model.varGeneration[i, 0]) or 0.0,
-            "gen_target_mw": _val(lp.model.p_rt_target[i]) or 0.0,
-            "pump_mw": _val(lp.model.varPump[i, 0]) or 0.0,
-            "pump_target_mw": _val(lp.model.p_rt_pump_target[i]) or 0.0,
-            "pump_dev_pos_mw": _val(lp.model.varRtPumpTargetDevPos[i]) or 0.0,
-            "pump_dev_neg_mw": _val(lp.model.varRtPumpTargetDevNeg[i]) or 0.0,
-            "coef_pump_pos": _val(lp.model.p_rt_deviation_price_pump_pos[i]) or 0.0,
-            "coef_pump_neg": _val(lp.model.p_rt_deviation_price_pump_neg[i]) or 0.0,
-            "gen_cost_mwh": rt_data.marginal_cost(lp, i),
-            # Net value of pumping 1 MWh: the storage value of what reaches storage,
-            # less the pumping cost.
-            "pump_credit_mwh": (_val(lp.model.p_storage_value[i]) or 0.0) * eff
-            - (_val(lp.model.p_genpump_cost[i]) or 0.0),
-            "rt_pump_target_ref": str(ref_target) if isinstance(ref_target, str) else "",
-            "pump_target_profile": _prof(timestep, ref_target),
-        }
-        pump_rows.append(row)
-
-    gas_rows = []
-    da_replay_unavoidable_gas_dev_cost_lb = 0.0
-    da_replay_infeasible_gas_count = 0
-    for i in sorted(
-        int(ii) for ii in rt.ctx.target_gen_indices if int(ii) in (rt.ctx.idx_normal_gas | rt.ctx.idx_peak_gen)
-    ):
+    # One row per tracked unit, with its prices and deviations: nothing is grouped by type.
+    gen_rows = []
+    for i in sorted(int(ii) for ii in rt.ctx.target_gen_indices):
         pmin_now = _val(lp.model.p_gen_pmin[i, 0])
         pmax_now = _val(lp.model.p_gen_pmax[i, 0])
         target_now = _val(lp.model.p_rt_target[i]) or 0.0
+        # What replaying the DA target costs at least: the part of it outside this
+        # timestep's limits (caps and ramps) must deviate.
         target_clipped = max(
             pmin_now if pmin_now is not None else 0.0,
             min(target_now, pmax_now if pmax_now is not None else target_now),
         )
         da_replay_pos_lb = max(0.0, target_clipped - target_now)
         da_replay_neg_lb = max(0.0, target_now - target_clipped)
-        coef_pos = _val(lp.model.p_rt_deviation_price_gen_pos[i]) or 0.0
-        coef_neg = _val(lp.model.p_rt_deviation_price_gen_neg[i]) or 0.0
-        da_replay_cost_lb = da_replay_pos_lb * coef_pos + da_replay_neg_lb * coef_neg
-        ramp_prev = float(lp._gen_prev[i]) if i < len(lp._gen_prev) and np.isfinite(lp._gen_prev[i]) else None
-        ramp_up = None
-        if lp._ramp_up_pu is not None:
-            rv = lp._ramp_up_pu[i]
-            ramp_up = float(rv) if np.isfinite(rv) else None
-        ramp_down = None
-        if lp._ramp_down_pu is not None:
-            rv = lp._ramp_down_pu[i]
-            ramp_down = float(rv) if np.isfinite(rv) else None
-        da_replay_reachable = (abs(da_replay_pos_lb) <= 1e-9) and (abs(da_replay_neg_lb) <= 1e-9)
-        if not da_replay_reachable:
-            da_replay_infeasible_gas_count += 1
-        da_replay_unavoidable_gas_dev_cost_lb += float(da_replay_cost_lb)
-        gas_rows.append(
+        price_up = _val(lp.model.p_rt_deviation_price_gen_pos[i]) or 0.0
+        price_down = _val(lp.model.p_rt_deviation_price_gen_neg[i]) or 0.0
+        dev_pos = _val(lp.model.varRtTargetDevPos[i]) or 0.0
+        dev_neg = _val(lp.model.varRtTargetDevNeg[i]) or 0.0
+        gen_rows.append(
             {
                 "indx": int(i),
                 "node": str(lp._grid.generator.loc[i, "node"]),
                 "desc": str(lp._grid.generator.loc[i, "desc"]),
-                "is_peak_rt_block": bool(int(i) in rt.ctx.idx_peak_gen),
+                "type": str(lp._grid.generator.loc[i, "type"]),
                 "gen_mw": _val(lp.model.varGeneration[i, 0]) or 0.0,
-                "gen_target_mw": _val(lp.model.p_rt_target[i]) or 0.0,
-                "gen_dev_pos_mw": _val(lp.model.varRtTargetDevPos[i]) or 0.0,
-                "gen_dev_neg_mw": _val(lp.model.varRtTargetDevNeg[i]) or 0.0,
-                "coef_gen_pos": coef_pos,
-                "coef_gen_neg": coef_neg,
-                "gen_cost_mwh": _val(lp.model.p_gen_cost[i]) or 0.0,
-                "da_replay_target_reachable": bool(da_replay_reachable),
-                "da_replay_prev_gen_mw": ramp_prev,
-                "da_replay_ramp_up_pu": ramp_up,
-                "da_replay_ramp_down_pu": ramp_down,
+                "gen_target_mw": target_now,
+                "gen_dev_pos_mw": dev_pos,
+                "gen_dev_neg_mw": dev_neg,
+                "price_up": price_up,
+                "price_down": price_down,
+                "dev_cost": float(dev_pos * price_up + dev_neg * price_down),
+                "da_replay_target_reachable": bool(da_replay_pos_lb <= 1e-9 and da_replay_neg_lb <= 1e-9),
                 "da_replay_feasible_pmin_mw": pmin_now,
                 "da_replay_feasible_pmax_mw": pmax_now,
                 "da_replay_target_clipped_mw": float(target_clipped),
-                "da_replay_unavoidable_dev_pos_mw": float(da_replay_pos_lb),
-                "da_replay_unavoidable_dev_neg_mw": float(da_replay_neg_lb),
-                "da_replay_unavoidable_dev_cost_lb": float(da_replay_cost_lb),
+                "da_replay_unavoidable_dev_cost_lb": float(da_replay_pos_lb * price_up + da_replay_neg_lb * price_down),
             }
         )
 
-    gas_actual_dev_cost = sum(
-        float(row["gen_dev_pos_mw"]) * float(row["coef_gen_pos"])
-        + float(row["gen_dev_neg_mw"]) * float(row["coef_gen_neg"])
-        for row in gas_rows
-    )
-    pump_actual_dev_cost = sum(
-        float(row["pump_dev_pos_mw"]) * float(row["coef_pump_pos"])
-        + float(row["pump_dev_neg_mw"]) * float(row["coef_pump_neg"])
-        for row in pump_rows
-    )
+    pump_rows = []
+    for i in sorted(int(ii) for ii in rt.ctx.pump_target_indices):
+        storage_cap = _val(lp._grid.generator.loc[i, "storage_cap"]) or 0.0
+        pre_storage = _val(lp._storage[i]) or 0.0
+        soc_rt = (pre_storage / storage_cap) if storage_cap > 0.0 else 0.0
+        ref_target = rt.ctx.pump_target_ref.iloc[int(i)]
+        price_up = _val(lp.model.p_rt_deviation_price_pump_pos[i]) or 0.0
+        price_down = _val(lp.model.p_rt_deviation_price_pump_neg[i]) or 0.0
+        dev_pos = _val(lp.model.varRtPumpTargetDevPos[i]) or 0.0
+        dev_neg = _val(lp.model.varRtPumpTargetDevNeg[i]) or 0.0
+        pump_rows.append(
+            {
+                "indx": int(i),
+                "node": str(lp._grid.generator.loc[i, "node"]),
+                "desc": str(lp._grid.generator.loc[i, "desc"]),
+                "type": str(lp._grid.generator.loc[i, "type"]),
+                "storage_cap_mwh": float(storage_cap),
+                "pre_storage_mwh": float(pre_storage),
+                "soc_rt": float(max(0.0, min(1.0, soc_rt))),
+                "pump_mw": _val(lp.model.varPump[i, 0]) or 0.0,
+                "pump_target_mw": _val(lp.model.p_rt_pump_target[i]) or 0.0,
+                "pump_dev_pos_mw": dev_pos,
+                "pump_dev_neg_mw": dev_neg,
+                "price_up": price_up,
+                "price_down": price_down,
+                "dev_cost": float(dev_pos * price_up + dev_neg * price_down),
+                "rt_pump_target_ref": str(ref_target) if isinstance(ref_target, str) else "",
+                "pump_target_profile": _prof(timestep, ref_target),
+            }
+        )
+
+    flex_rows = []
+    for j in sorted(int(jj) for jj in rt.ctx.consumer_target_indices):
+        price_up = _val(lp.model.p_rt_deviation_price_flex_pos[j]) or 0.0
+        price_down = _val(lp.model.p_rt_deviation_price_flex_neg[j]) or 0.0
+        dev_pos = _val(lp.model.varRtFlexLoadTargetDevPos[j]) or 0.0
+        dev_neg = _val(lp.model.varRtFlexLoadTargetDevNeg[j]) or 0.0
+        flex_rows.append(
+            {
+                "indx": int(j),
+                "node": str(lp._grid.consumer.loc[j, "node"]),
+                "flex_mw": _val(lp.model.varFlexLoad[j, 0]) or 0.0,
+                "flex_target_mw": _val(lp.model.p_rt_flexload_target[j]) or 0.0,
+                "flex_dev_pos_mw": dev_pos,
+                "flex_dev_neg_mw": dev_neg,
+                "price_up": price_up,
+                "price_down": price_down,
+                "dev_cost": float(dev_pos * price_up + dev_neg * price_down),
+            }
+        )
+
+    da_replay_infeasible = sum(1 for row in gen_rows if not row["da_replay_target_reachable"])
 
     be_balancing_dev = (
         _sum_expr(
@@ -258,95 +247,6 @@ def append_hourly_debug(lp, rt, timestep):
         )
     )
 
-    redispatch_cost_attribution_eur: dict[str, float] = {
-        "wind": 0.0,
-        "solar": 0.0,
-        "gas": 0.0,
-        "nuclear": 0.0,
-        "hydro_ror": 0.0,
-        "biomass": 0.0,
-        "fossil_other": 0.0,
-        "storage_generation": 0.0,
-        "other": 0.0,
-        "pump_dev": 0.0,
-        "flex_dev": 0.0,
-    }
-    redispatch_mw_attribution: dict[str, dict[str, float]] = {}
-
-    def _bucket_for_gen(ii: int) -> str:
-        if ii in rt.ctx.idx_storage_gens:
-            return "storage_generation"
-        if ii in rt.ctx.idx_wind:
-            return "wind"
-        if ii in rt.ctx.idx_solar:
-            return "solar"
-        if ii in (rt.ctx.idx_normal_gas | rt.ctx.idx_peak_gen):
-            return "gas"
-        if ii in rt.ctx.idx_nuclear:
-            return "nuclear"
-        if ii in rt.ctx.idx_hydro_ror:
-            return "hydro_ror"
-        if ii in rt.ctx.idx_biomass:
-            return "biomass"
-        if ii in rt.ctx.idx_fossil_other:
-            return "fossil_other"
-        return "other"
-
-    for i in lp.model.s_gen:
-        ii = int(i)
-        if ii not in rt.ctx.target_gen_indices:
-            continue
-        dev_pos = _val(lp.model.varRtTargetDevPos[i]) or 0.0
-        dev_neg = _val(lp.model.varRtTargetDevNeg[i]) or 0.0
-        coef_pos = _val(lp.model.p_rt_deviation_price_gen_pos[i]) or 0.0
-        coef_neg = _val(lp.model.p_rt_deviation_price_gen_neg[i]) or 0.0
-        this_cost = float(dev_pos * coef_pos + dev_neg * coef_neg)
-        bucket = _bucket_for_gen(ii)
-        redispatch_cost_attribution_eur[bucket] = float(redispatch_cost_attribution_eur.get(bucket, 0.0) + this_cost)
-        if bucket not in redispatch_mw_attribution:
-            redispatch_mw_attribution[bucket] = {
-                "abs_dev_mw": 0.0,
-                "signed_dev_mw": 0.0,
-                "up_dev_mw": 0.0,
-                "down_dev_mw": 0.0,
-            }
-        redispatch_mw_attribution[bucket]["abs_dev_mw"] += float(dev_pos + dev_neg)
-        redispatch_mw_attribution[bucket]["signed_dev_mw"] += float(dev_pos - dev_neg)
-        redispatch_mw_attribution[bucket]["up_dev_mw"] += float(dev_pos)
-        redispatch_mw_attribution[bucket]["down_dev_mw"] += float(dev_neg)
-
-    redispatch_cost_attribution_eur["pump_dev"] = float(pump_actual_dev_cost)
-    redispatch_cost_attribution_eur["flex_dev"] = _sum_expr(
-        lp.model.p_rt_deviation_price_flex_pos[j] * lp.model.varRtFlexLoadTargetDevPos[j]
-        + lp.model.p_rt_deviation_price_flex_neg[j] * lp.model.varRtFlexLoadTargetDevNeg[j]
-        for j in lp.model.s_load_flex
-        if int(j) in rt.ctx.consumer_target_indices
-    )
-
-    gen_dev_cost_total = _sum_expr(
-        lp.model.p_rt_deviation_price_gen_pos[i] * lp.model.varRtTargetDevPos[i]
-        + lp.model.p_rt_deviation_price_gen_neg[i] * lp.model.varRtTargetDevNeg[i]
-        for i in lp.model.s_gen
-        if int(i) in rt.ctx.target_gen_indices
-    )
-    redispatch_cost_attribution_eur["meta_be_gen_dev_cost_accounted"] = float(
-        sum(
-            redispatch_cost_attribution_eur.get(k, 0.0)
-            for k in [
-                "wind",
-                "solar",
-                "gas",
-                "nuclear",
-                "hydro_ror",
-                "biomass",
-                "fossil_other",
-                "storage_generation",
-                "other",
-            ]
-        )
-    )
-    redispatch_cost_attribution_eur["meta_model_gen_dev_cost_total"] = float(gen_dev_cost_total)
-
     payload = {
         "event": "rt_timestep_debug",
         "timestep": int(timestep),
@@ -360,39 +260,13 @@ def append_hourly_debug(lp, rt, timestep):
         "term_breakdown": {
             "loadshed": _sum_expr(const.loadshedcost * lp.model.varLoadShed[j, 0] for j in lp.model.s_load),
             "dumpload": _sum_expr(const.loadshedcost * lp.model.varDumpLoad[j, 0] for j in lp.model.s_load),
-            "gen_dev": _sum_expr(
-                lp.model.p_rt_deviation_price_gen_pos[i] * lp.model.varRtTargetDevPos[i]
-                + lp.model.p_rt_deviation_price_gen_neg[i] * lp.model.varRtTargetDevNeg[i]
-                for i in lp.model.s_gen
-                if int(i) in rt.ctx.target_gen_indices
-            ),
-            "flex_dev": _sum_expr(
-                lp.model.p_rt_deviation_price_flex_pos[j] * lp.model.varRtFlexLoadTargetDevPos[j]
-                + lp.model.p_rt_deviation_price_flex_neg[j] * lp.model.varRtFlexLoadTargetDevNeg[j]
-                for j in lp.model.s_load_flex
-                if int(j) in rt.ctx.consumer_target_indices
-            ),
-            "pump_dev": float(pump_actual_dev_cost),
+            "gen_dev": float(sum(row["dev_cost"] for row in gen_rows)),
+            "flex_dev": float(sum(row["dev_cost"] for row in flex_rows)),
+            "pump_dev": float(sum(row["dev_cost"] for row in pump_rows)),
         },
         "active_channels": {
             "rt_pump_target_count": int(len(rt.ctx.pump_target_indices)),
             "rt_target_gen_count": int(len(rt.ctx.target_gen_indices)),
-            "foreign_gen_lock_rows": int(
-                sum(
-                    1
-                    for i in lp.model.s_gen
-                    if rt.locks.foreign_gen_lock is not None
-                    and (int(timestep), int(i)) in rt.locks.foreign_gen_lock.index
-                )
-            ),
-            "foreign_cons_lock_rows": int(
-                sum(
-                    1
-                    for j in lp.model.s_load
-                    if rt.locks.foreign_cons_lock is not None
-                    and (int(timestep), int(j)) in rt.locks.foreign_cons_lock.index
-                )
-            ),
             "rt_io_target_active_ac": int(
                 sum(
                     int(_val(lp.model.p_rt_io_target_active_ac[b]) or 0)
@@ -408,19 +282,14 @@ def append_hourly_debug(lp, rt, timestep):
                 )
             ),
         },
-        "da_injection_check": {
-            "gas_da_injected_dev_cost": 0.0,
-            "da_replay_gas_reachable_count": int(len(gas_rows) - da_replay_infeasible_gas_count),
-            "da_replay_gas_infeasible_count": int(da_replay_infeasible_gas_count),
-            "da_replay_unavoidable_gas_dev_cost_lb": float(da_replay_unavoidable_gas_dev_cost_lb),
-            "actual_gas_rt_dev_cost": float(gas_actual_dev_cost),
-            "actual_pump_rt_dev_cost": float(pump_actual_dev_cost),
-            "actual_total_rt_dev_cost": float(gas_actual_dev_cost + pump_actual_dev_cost),
+        "da_replay_check": {
+            "reachable_count": int(len(gen_rows) - da_replay_infeasible),
+            "infeasible_count": int(da_replay_infeasible),
+            "unavoidable_dev_cost_lb": float(sum(row["da_replay_unavoidable_dev_cost_lb"] for row in gen_rows)),
         },
-        "redispatch_cost_attribution_eur": redispatch_cost_attribution_eur,
-        "redispatch_mw_attribution": redispatch_mw_attribution,
+        "rt_gen_rows": gen_rows,
         "rt_pump_rows": pump_rows,
-        "rt_gen_rows": gas_rows,
+        "rt_flex_rows": flex_rows,
     }
 
     append_payload(

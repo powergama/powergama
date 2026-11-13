@@ -19,10 +19,23 @@ class RtExtension(ModelExtension):
       ``generator.rt_pump_target_ref`` (pumping, fraction of pump_cap)
       and ``consumer.rt_target_ref`` (flexible load, fraction of demand_avg).
       Deviations from them are priced, not forbidden.
-    - **Hard locks**, as parquet files named by attributes on the GridData object
-      (see :data:`~powergama.lp.rt.locks.LOCK_ATTRS`): pinned foreign
-      generators, fixed foreign demand and border-flow windows, plus border-flow
-      targets.
+    - **Border-flow locks**, as parquet files named by attributes on the GridData
+      object (see :data:`~powergama.lp.rt.locks.LOCK_ATTRS`): border-flow windows
+      (hard) and border-flow targets (soft).
+    - **Pinned generators and fixed demand** are ordinary grid data, not locks:
+      ``pmin_ref = pmax_ref`` pointing at a profile column of the DA output
+      (fraction of pmax, with ``inflow_ref="const"`` and ``inflow_fac=1``), and
+      ``demand_ref`` pointing at one of the DA demand (fraction of demand_avg).
+      Caps win over ramps in the core, so a pinned generator follows its pin
+      whatever its ramp rates.
+
+    - **Deviation prices**, as unit data (EUR/MWh), like ``pmax``/``pmax_ref``: on
+      generators ``rt_price_up``/``rt_price_down`` (generation) and
+      ``rt_pump_price_up``/``rt_pump_price_down`` (pumping), on consumers
+      ``rt_price_up``/``rt_price_down`` (flexible demand), each with an optional profile
+      multiplier ``<column>_ref`` (default ``"const"``, a factor of 1). "Up" is more than
+      DA. Every tracked row needs both prices; :func:`~powergama.lp.rt.price_columns`
+      (or ``prepare_rt(prices=...)``) writes them from the usual rules.
 
     The objective drops the operating cost and minimises the priced deviations
     plus load shedding. Storage is settled on its power, generation and pumping,
@@ -30,26 +43,13 @@ class RtExtension(ModelExtension):
 
     Parameters
     ----------
-    balancing_fee_eur_per_mwh : float
-        Flat fee per MWh of real-time redispatch, to discourage marginal deviations
-        (c0).
-    res_curtailment_factor : float
-        Penalty multiplier on real-time curtailment of variable renewable generation
-        (1 + delta_curt).
     xborder_flow_penalty_eur_per_mwh : float
         Penalty per MWh of deviation from day-ahead cross-border flows (c_xborder).
     """
 
     supports_multi_period = False
 
-    def __init__(
-        self,
-        balancing_fee_eur_per_mwh=1.0,
-        res_curtailment_factor=2.0,
-        xborder_flow_penalty_eur_per_mwh=0.0,
-    ):
-        self.balancing_fee_eur_per_mwh = float(balancing_fee_eur_per_mwh)
-        self.res_curtailment_factor = float(res_curtailment_factor)
+    def __init__(self, *, xborder_flow_penalty_eur_per_mwh=0.0):
         self.xborder_flow_penalty_eur_per_mwh = max(0.0, float(xborder_flow_penalty_eur_per_mwh))
         # Set by prepare():
         self.locks = None
@@ -58,11 +58,7 @@ class RtExtension(ModelExtension):
         self.debug_session_id = ""
 
     def __repr__(self):
-        return (
-            f"RtExtension(balancing_fee_eur_per_mwh={self.balancing_fee_eur_per_mwh}, "
-            f"res_curtailment_factor={self.res_curtailment_factor}, "
-            f"xborder_flow_penalty_eur_per_mwh={self.xborder_flow_penalty_eur_per_mwh})"
-        )
+        return f"RtExtension(xborder_flow_penalty_eur_per_mwh={self.xborder_flow_penalty_eur_per_mwh})"
 
     # --- construction ---------------------------------------------------------
 

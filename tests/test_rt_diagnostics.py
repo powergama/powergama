@@ -11,7 +11,7 @@ import sqlite3
 
 import pandas as pd
 import pytest
-from rt_case import GEN_STORAGE, N_STEPS, build_rt_case, solve_rt_case
+from rt_case import CONS_FLEX, GEN_STORAGE, GEN_TARGET, N_STEPS, build_rt_case, solve_rt_case
 
 ENV = "POWERGAMA_RT_SOLVER_DEBUG_JSONL"
 TOL = 1e-6
@@ -56,7 +56,7 @@ def test_stream_has_header_solve_start_and_one_record_per_timestep(debug_run):
 
     header, start = records[0], records[1]
     assert header["debug_session_id"] == start["debug_session_id"] == rt.debug_session_id != ""
-    assert header["rt_balancing_fee_eur_per_mwh"] == rt.balancing_fee_eur_per_mwh
+    assert "rt_balancing_fee_eur_per_mwh" not in header  # the prices are unit data
     assert header["rt_xborder_flow_penalty_eur_per_mwh"] == rt.xborder_flow_penalty_eur_per_mwh
     assert start["n_timesteps"] == N_STEPS
     assert (start["first_timestep"], start["last_timestep"]) == (0, N_STEPS - 1)
@@ -70,14 +70,12 @@ def test_timestep_objective_matches_stored_result(debug_run):
 
 
 def test_active_channels_match_the_case(debug_run):
-    """Generator targets (one plain, one storage), a pump target, gen lock, consumer lock, AC and DC border target."""
+    """Generator targets (one plain, one storage), a pump target, AC and DC border target."""
     _, _, records = debug_run
     for r in records[2:]:
         assert r["active_channels"] == {
             "rt_pump_target_count": 1,
             "rt_target_gen_count": 2,
-            "foreign_gen_lock_rows": 1,
-            "foreign_cons_lock_rows": 1,
             "rt_io_target_active_ac": 1,
             "rt_io_target_active_dc": 1,
         }, f"timestep {r['timestep']}"
@@ -113,3 +111,26 @@ def test_no_stream_without_the_variable(tmp_path, monkeypatch):
     assert not list(tmp_path.rglob("*.jsonl"))
     rt.append_debug_event({"event": "ignored"})  # a no-op, not an error
     assert len(_objective(res)) == N_STEPS
+
+
+def test_rows_are_per_unit(debug_run):
+    """One row per tracked unit, with its prices; the cost terms are their sums. No type buckets."""
+    lp, _, records = debug_run
+    m = lp.model
+    last = records[-1]
+    assert "redispatch_cost_attribution_eur" not in last
+    gen_rows = last["rt_gen_rows"]
+    assert [row["indx"] for row in gen_rows] == sorted([GEN_TARGET, GEN_STORAGE])
+    assert [row["indx"] for row in last["rt_pump_rows"]] == [GEN_STORAGE]
+    assert [row["indx"] for row in last["rt_flex_rows"]] == [CONS_FLEX]
+    # the last record is the model's last timestep
+    for row in gen_rows:
+        i = row["indx"]
+        assert row["price_up"] == m.p_rt_deviation_price_gen_pos[i].value
+        assert row["price_down"] == m.p_rt_deviation_price_gen_neg[i].value
+    for r in records[2:]:
+        terms = r["term_breakdown"]
+        for key, rows in (("gen_dev", "rt_gen_rows"), ("pump_dev", "rt_pump_rows"), ("flex_dev", "rt_flex_rows")):
+            assert terms[key] == pytest.approx(sum(row["dev_cost"] for row in r[rows]), abs=TOL)
+        check = r["da_replay_check"]
+        assert check["reachable_count"] + check["infeasible_count"] == len(r["rt_gen_rows"])

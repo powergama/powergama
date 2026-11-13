@@ -2,6 +2,107 @@
 
 ## unpublished
 
+### DA to RT preparation
+2026-11-13
+
+Added
+- `powergama.lp.rt.prepare_rt(res_da, outdir)` turns a complete day-ahead run into the
+  inputs of the balancing run: the RT grid tables as CSV, each generator and consumer row
+  with `da_index` (its DA row), and `da_solution.parquet`, a profile file indexed by the
+  stored DA timestep with the target columns the tables reference: `da_gen_<d>` (DA output /
+  `pmax`), `da_pump_<d>` (DA pumping / `pump_cap`), `da_cons_<d>` (DA flexible demand /
+  `demand_avg`), clipped to [0, 1], and `rt_target_zero` for rows with no DA row. Every
+  generator with capacity gets a target; consumers without flexible load get none. It reads
+  only `res_da.grid` and `res_da.get_dispatch_frames()`, and raises unless
+  `res_da.is_complete()`. `target_columns(...)` is the same rule for RT tables built by the
+  caller, and `rt_tables_from_da(res_da)` the copy of the DA grid tables it starts from
+  (node, branch, dcbranch, generator, consumer and `inter_area_rules` if any, with
+  `da_index`; it drops `area_from`/`area_to` from `dcbranch`, which DA databases written
+  before carry), the same for the DA run's `Results` and one read back with
+  `Results.from_existing`
+- pins to DA: keyword-only `fix=`, `cap=`, `zero_pmin=` (boolean masks on the generator
+  rows) set `pmin_ref = pmax_ref = da_gen_<d>` (fix), `pmax_ref = da_gen_<d>` (cap) and
+  `pmin_ref = rt_target_zero` (cap with `zero_pmin`), sharing the target column;
+  `carry_curtailment=CarryCurtailment(mask, da_available, rt_available, pin, source=None)`
+  sets `pmax_ref` (and with `pin="fix"` also `pmin_ref`) to `da_carry_<d>` = (RT
+  availability + DA output − DA availability, within [0, `pmax`]) / `pmax`. Pinned rows get
+  `inflow_ref = "const"`, `inflow_fac = 1`. The rules on their own: `pin_columns`,
+  `carry_curtailment_columns`, joined with `combine_columns` and set with `apply_refs`;
+  `RefColumns` holds profile columns and references (`TargetColumns` is an alias);
+  `clear_refs(table, mask, columns, timesteps=...)` builds one that clears references (`""`)
+- RT start storage: keyword-only `initial_storage=` (a boolean mask on the generator
+  rows) sets `storage_ini_ref = da_storage_<d>`, the DA filling at the start of each DA
+  timestep / `storage_cap` (the DA initial filling at the DA run's first timestep,
+  `Res_Storage[t − 1] / storage_cap` after it). The rule on its own:
+  `initial_storage_columns`
+- peak tranches: `peak_tranches=PeakTranches(mask, price, ramp_pu=None,
+  source=None)` adds one RT row per unit (`block_group`, or the row alone) of the masked
+  generators: a copy of the unit's first row with `pmax` = the unit's summed `pmax`,
+  `fuelcost = price`, `da_index` NA (target `rt_target_zero`), `pmin_ref = ""`,
+  `inflow_ref = "const"`, `inflow_fac = 1` and `pmax_ref = da_headroom_<d>` =
+  `(cap − DA output of the unit) / cap`, clipped to [0, 1]; `ramp_up_pu` =
+  `ramp_down_pu` = `ramp_pu` (>= 0), or NaN, no ramp limit, when it is None (the default;
+  the unit's ramp limits are not inherited). The rule on its own: `peak_tranche_columns(frames, generator, mask, *, price, ...)`
+- channel summary: `prepare_rt` writes `channels.csv` (one row per DA-derived column:
+  family, formula, DA row, and the RT rows using it and how — `target`, `pump_target`,
+  `cons_target`, `fix`, `cap`, `pmin`, `storage_ini` — with their `desc`, `node`, `area`,
+  `type`) and `prepare_rt_summary.md` (per family: formula, source, counts by usage, area
+  and type; the rows without any channel). Keyword-only `summary=True`, `sources=`,
+  `summary_header=`. For RT tables the caller builds: `summarize_channels(...)` and
+  `write_channel_summary(...)` (`powergama.lp.rt.summary`)
+- RT deviation prices as unit data: every tracked row has `rt_price_up`/`rt_price_down`
+  (generators and consumers) or `rt_pump_price_up`/`rt_pump_price_down` (pumping), EUR/MWh,
+  each times an optional profile `<column>_ref` (default `"const"`).
+  `powergama.lp.rt.price_columns` writes them from c0, a renewables mask and its curtailment
+  factor, and a storage value per storage unit; `prepare_rt(prices=DeviationPrices(...))`
+  does it with the storage value at the DA filling level (`da_storage_values(res_da)`).
+  Time-varying prices are profile columns of the `da_price` family (`da_price_up_<d>`,
+  `da_pump_price_down_<d>`, `da_cons_price_up_<d>`, ...), listed in the channel summary
+- the results database treats the price refs (`rt_price_up_ref`, `rt_price_down_ref`,
+  `rt_pump_price_up_ref`, `rt_pump_price_down_ref`; consumer `rt_price_up_ref`,
+  `rt_price_down_ref`) like the other profile refs: writing the input tables raises on a ref
+  to a missing profile column, and with more than 1,800 profile columns the referenced
+  price columns are among those stored
+
+Removed and renamed
+- **breaking (RT):** `RtExtension` no longer takes `balancing_fee_eur_per_mwh` or
+  `res_curtailment_factor` (`xborder_flow_penalty_eur_per_mwh` is now keyword-only) and no
+  longer classifies
+  generators by type (`RtContext.idx_*` and `_build_classification` are gone). A tracked
+  row without a price, an unknown `*_ref` or a NaN in a referenced profile raises when the
+  `LpProblem` is built. Only the split-sum guard stays in the extension
+- **breaking (RT):** the lock files `foreign_gen_lock_parquet` and
+  `foreign_consumer_lock_parquet` are removed.
+  Pin a generator with `pmin_ref = pmax_ref` pointing at a profile column of its DA output
+  (fraction of `pmax`, with `inflow_ref = "const"`, `inflow_fac = 1`; caps win over ramps,
+  so it follows the pin), and fix a demand with `demand_ref` pointing at one of the DA
+  demand (fraction of `demand_avg`). `DaLocks` loses `foreign_gen_lock` /
+  `foreign_cons_lock`, `LOCK_ATTRS` the two attributes. The border-flow locks are unchanged
+- **breaking (RT):** setting `generator.rt_storage_target_ref` or the
+  `da_storage_marginalprice_parquet` attribute no longer raises an error; both have been
+  without effect since 2026-10-21
+- **breaking (RT diagnostics):** the JSONL debug stream reports per unit: `rt_gen_rows`
+  (every tracked generator, with `price_up`, `price_down`, `dev_cost` and the DA-replay
+  bounds), `rt_pump_rows`, `rt_flex_rows`, and `da_replay_check`. The type buckets
+  (`redispatch_cost_attribution_eur`, `redispatch_mw_attribution`), the gas-only
+  `da_injection_check`, the pump rows' `gen_cost_mwh`/`pump_credit_mwh`, the header's
+  `rt_balancing_fee_eur_per_mwh` and the `active_channels` counts `foreign_gen_lock_rows` /
+  `foreign_cons_lock_rows` are gone. `RtContext.idx_peak_gen` (`is_peak_rt_block`) takes the
+  `fossil_gas` rows without a DA row when the generator table has `da_index`, instead of
+  those with `[RT]` in `desc`
+
+Changes results? Day-ahead runs: no. RT runs:
+- storage units (generation, pumping, flexible load) are priced at the storage value of the
+  DA filling level instead of the RT filling level, so RT results change where a storage
+  unit is tracked. Other units keep their prices exactly (c0 ± fuelcost; −c0 / factor × c0
+  for renewables): an RT run without a tracked storage unit is bit-identical to before
+  (reference results in `tests/test_data/two_area/rt_type_prices_no_storage`)
+- the prices must now be given as unit data: an RT setup that passed
+  `balancing_fee_eur_per_mwh` writes the price columns (`price_columns`) instead
+- the foreign locks expressed as pins and fixed demand give the same RT results on the
+  two-area case
+- `prepare_rt` and the channel summary only write input files
+
 ### Results API
 2026-11-13
 

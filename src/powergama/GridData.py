@@ -51,7 +51,7 @@ class GridData(object):
             "pmax_ref": "const",
             "storage_ini_ref": "const",
             # Rows of one physical unit (e.g. price blocks) share a value; "" is a group of
-            # one. The model does not read it.
+            # one. Read only by prepare_rt's peak tranches.
             "block_group": "",
         },
         "consumer": {

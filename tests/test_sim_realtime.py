@@ -1,5 +1,5 @@
 """
-Real-time (balancing) mode: tracking of day-ahead targets and application of day-ahead locks.
+Real-time (balancing) mode: tracking of day-ahead targets, pins and fixed demand, and border-flow locks.
 """
 
 from pathlib import Path
@@ -9,14 +9,14 @@ import pandas as pd
 import pytest
 from rt_case import (
     BRANCH_BORDER,
+    CONS_FIXED,
     CONS_FLEX,
-    CONS_LOCKED,
     DCBRANCH_BORDER,
+    FIXED_DEMAND,
     FLOW_WINDOW,
-    GEN_LOCKED,
+    GEN_PINNED,
     GEN_STORAGE,
     GEN_TARGET,
-    LOCKED_DEMAND,
     build_rt_case,
     read_table,
     series,
@@ -25,7 +25,7 @@ from rt_case import (
 )
 
 import powergama
-from powergama.lp.rt import RtExtension
+from powergama.lp.rt import RtExtension, apply_refs, price_columns
 from powergama.lp.rt.locks import LOCK_ATTRS
 
 datapath = Path(__file__).parent / "test_data/data_9bus"
@@ -35,8 +35,9 @@ def test_rt_applies_locks_and_targets(tmp_path):
     data, da = build_rt_case(tmp_path)
     lp, res = solve_rt_case(data, tmp_path / "rt.sqlite")
 
+    # The pinned generator (pmin_ref = pmax_ref) stays on its baseline output.
     gen = read_table(res, "Res_Generators")
-    np.testing.assert_allclose(series(gen, GEN_LOCKED, "output").values, da["gen_lock"], atol=1e-6)
+    np.testing.assert_allclose(series(gen, GEN_PINNED, "output").values, da["gen_pin"], atol=1e-6)
 
     ac = series(read_table(res, "Res_Branches"), BRANCH_BORDER, "flow").values
     assert np.all(ac >= da["ac_flow"] - FLOW_WINDOW - 1e-6)
@@ -45,8 +46,8 @@ def test_rt_applies_locks_and_targets(tmp_path):
     assert np.all(dc >= da["dc_flow"] - FLOW_WINDOW - 1e-6)
     assert np.all(dc <= da["dc_flow"] + FLOW_WINDOW + 1e-6)
 
-    # The locked demand reached the power balance parameter.
-    assert lp.model.p_demand[CONS_LOCKED, 0].value == pytest.approx(LOCKED_DEMAND)
+    # The fixed demand reached the power balance parameter.
+    assert lp.model.p_demand[CONS_FIXED, 0].value == pytest.approx(FIXED_DEMAND)
 
     # Every kind of target produced a tracking constraint.
     assert set(lp.model.cRtTargetTracking) == {GEN_TARGET, GEN_STORAGE}
@@ -54,6 +55,14 @@ def test_rt_applies_locks_and_targets(tmp_path):
     assert set(lp.model.cRtFlexLoadTargetTracking) == {CONS_FLEX}
     assert set(lp.model.cRtIoTargetTrackingAc) == {BRANCH_BORDER}
     assert set(lp.model.cRtIoTargetTrackingDc) == {DCBRANCH_BORDER}
+
+
+def _price_coal(data, i, fee):
+    """The deviation prices of a thermal unit, c0 +/- fuelcost (price_columns' rule)."""
+    fuel = float(data.generator.loc[i, "fuelcost"])
+    data.generator["rt_price_up"] = np.nan
+    data.generator["rt_price_down"] = np.nan
+    data.generator.loc[i, ["rt_price_up", "rt_price_down"]] = [fee + fuel, fee - fuel]
 
 
 def test_rt_tracks_dispatch_target_when_deviations_are_expensive(tmp_path, testcase_9bus_data):
@@ -71,11 +80,9 @@ def test_rt_tracks_dispatch_target_when_deviations_are_expensive(tmp_path, testc
 
     data.profiles["rt_lock_coal"] = expected_dispatch / data.generator.loc[ind_coal_plant, "pmax"]
     data.generator.loc[ind_coal_plant, "rt_target_ref"] = "rt_lock_coal"
+    _price_coal(data, ind_coal_plant, fee=100.0)
 
-    lp = powergama.LpProblem(
-        data,
-        extensions=[RtExtension(balancing_fee_eur_per_mwh=100)],
-    )
+    lp = powergama.LpProblem(data, extensions=[RtExtension()])
     res = powergama.Results(data, tmp_path / "test_rt.sqlite")
     lp.solve(res, solver="appsi_highs", solve_args={})
 
@@ -99,11 +106,9 @@ def test_rt_target_can_be_violated_if_economic(tmp_path, testcase_9bus_data):
 
     data.profiles["rt_lock_coal"] = expected_dispatch / data.generator.loc[ind_coal_plant, "pmax"]
     data.generator.loc[ind_coal_plant, "rt_target_ref"] = "rt_lock_coal"
+    _price_coal(data, ind_coal_plant, fee=1.0)
 
-    lp = powergama.LpProblem(
-        data,
-        extensions=[RtExtension(balancing_fee_eur_per_mwh=1)],
-    )
+    lp = powergama.LpProblem(data, extensions=[RtExtension()])
     res = powergama.Results(data, tmp_path / "test_rt.sqlite")
     lp.solve(res, solver="appsi_highs", solve_args={})
 
@@ -120,6 +125,7 @@ def test_rt_pump_deviation_prices():
     Pumping 1 MWh more and generating eff MWh more leaves the storage level where it
     was. That round trip costs c0 (1 + eff) + deadband, plus the fuel cost of what is
     generated, whatever the storage value (761d88f), so cycling never pays in RT.
+    The storage value is the caller's (here a constant one; prepare_rt takes the DA one).
     """
     data = two_area_data()
     data.profiles["rt_gen_hydro"] = 0.0
@@ -128,15 +134,26 @@ def test_rt_pump_deviation_prices():
     data.generator.loc[GEN_STORAGE, "rt_target_ref"] = "rt_gen_hydro"
     data.generator["rt_pump_target_ref"] = ""
     data.generator.loc[GEN_STORAGE, "rt_pump_target_ref"] = "rt_pump_hydro"
-    fee = 10.0
-    lp = powergama.LpProblem(data, extensions=[RtExtension(balancing_fee_eur_per_mwh=fee)])
+    for name in ("generator", "consumer"):
+        getattr(data, name)["da_index"] = pd.array(getattr(data, name).index, dtype="Int64")
+    fee, storage_value = 10.0, 25.0
+    steps = list(data.timerange)
+    refs = price_columns(
+        data.generator,
+        data.consumer,
+        fee=fee,
+        storage_value=pd.DataFrame({GEN_STORAGE: storage_value}, index=steps),
+        flex_value=pd.DataFrame({CONS_FLEX: 0.0}, index=steps),
+    )
+    data.generator = apply_refs(data.generator, refs.generator)
+    data.consumer = apply_refs(data.consumer, refs.consumer)
+    data.profiles = pd.concat([data.profiles, refs.profiles.set_axis(data.profiles.index)], axis=1)
+    lp = powergama.LpProblem(data, extensions=[RtExtension()])
     lp._updateLpProblem([0])
     m = lp.model
 
     eff = data.generator.loc[GEN_STORAGE, "pump_efficiency"]
     deadband = data.generator.loc[GEN_STORAGE, "pump_deadband"]
-    storage_value = m.p_storage_value[GEN_STORAGE].value
-    assert storage_value > 0
     credit = storage_value * eff - deadband
     assert m.p_rt_deviation_price_pump_pos[GEN_STORAGE].value == pytest.approx(fee - credit)
     assert m.p_rt_deviation_price_pump_neg[GEN_STORAGE].value == pytest.approx(fee + credit)
@@ -148,16 +165,6 @@ def test_rt_pump_deviation_prices():
     assert set(m.cRtPumpTargetTracking) == {GEN_STORAGE}
 
 
-def test_rt_storage_level_target_was_removed():
-    """Storage is settled on its power, so a filling-level target is rejected, not ignored."""
-    data = two_area_data()
-    data.profiles["rt_storage_hydro"] = 0.5
-    data.generator["rt_storage_target_ref"] = ""
-    data.generator.loc[GEN_STORAGE, "rt_storage_target_ref"] = "rt_storage_hydro"
-    with pytest.raises(ValueError, match="rt_storage_target_ref was removed"):
-        powergama.LpProblem(data, extensions=[RtExtension()])
-
-
 def test_pin_wins_over_ramp(tmp_path):
     """A pin that jumps by more than the ramp limit is followed exactly, in RT and in a plain run.
 
@@ -167,39 +174,33 @@ def test_pin_wins_over_ramp(tmp_path):
     conflict (a pin with consistent data needs NaN ramps), so each timestep warns.
     """
     data = two_area_data()
-    pmax = data.generator.loc[GEN_LOCKED, "pmax"]
-    ramp_mw = data.generator.loc[GEN_LOCKED, "ramp_up_pu"] * pmax
+    pmax = data.generator.loc[GEN_PINNED, "pmax"]
+    ramp_mw = data.generator.loc[GEN_PINNED, "ramp_up_pu"] * pmax
     pin = pd.Series([50.0, 300.0] * (len(data.timerange) // 2), index=data.profiles.index)
     assert pin.diff().abs().max() > ramp_mw
     data.profiles["rt_pin_gas"] = pin / pmax
-    data.generator.loc[GEN_LOCKED, ["pmin_ref", "pmax_ref", "inflow_ref"]] = ["rt_pin_gas", "rt_pin_gas", "const"]
-    data.generator.loc[GEN_LOCKED, "inflow_fac"] = 1.0
+    data.generator.loc[GEN_PINNED, ["pmin_ref", "pmax_ref", "inflow_ref"]] = ["rt_pin_gas", "rt_pin_gas", "const"]
+    data.generator.loc[GEN_PINNED, "inflow_fac"] = 1.0
 
     for name, extensions in [("rt", [RtExtension()]), ("plain", [])]:
         lp = powergama.LpProblem(data, extensions=extensions)
         res = powergama.Results(data, tmp_path / f"{name}.sqlite", replace=True)
         with pytest.warns(UserWarning, match="inconsistent caps"):
             lp.solve(res, solver="appsi_highs", solve_args={})
-        output = series(read_table(res, "Res_Generators"), GEN_LOCKED, "output").values
+        output = series(read_table(res, "Res_Generators"), GEN_PINNED, "output").values
         np.testing.assert_allclose(output, pin.values, atol=1e-6, err_msg=name)
-        kinds = [kind for _, i, kind, _ in lp.cap_ramp_conflicts if i == GEN_LOCKED]
+        kinds = [kind for _, i, kind, _ in lp.cap_ramp_conflicts if i == GEN_PINNED]
         assert kinds == ["floor_up", "ceiling_down"] * (len(pin) // 2 - 1) + ["floor_up"]
         assert [mw for *_, mw in lp.cap_ramp_conflicts] == pytest.approx([300.0 - 50.0 - ramp_mw] * (len(pin) - 1))
 
 
-def test_rt_da_storage_price_was_removed(tmp_path):
-    data = two_area_data()
-    data.da_storage_marginalprice_parquet = str(tmp_path / "storage_price.parquet")
-    with pytest.raises(ValueError, match="da_storage_marginalprice_parquet was removed"):
-        powergama.LpProblem(data, extensions=[RtExtension()])
-
-
 @pytest.mark.parametrize("mode", ["single_period", "multi_period"])
 def test_run_without_rt_extension_ignores_rt_inputs(tmp_path, mode):
-    """Without RtExtension, RT targets and DA locks are neither built nor applied.
+    """Without RtExtension, RT targets and border-flow locks are neither built nor applied.
 
-    The day-ahead locks and targets are inputs to the RT step only. A grid carrying
-    them in a normal run gets the same results as one without them.
+    The border-flow locks and the targets are inputs to the RT step only. A grid carrying
+    them in a normal run gets the same results as one without them. (The pin and the
+    fixed demand are ordinary grid data, and apply in both runs.)
     """
     data, _ = build_rt_case(tmp_path)
     lp = powergama.LpProblem(data, objective_mode=mode)

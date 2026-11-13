@@ -2,7 +2,7 @@
 
 This is project-specific rather than general-purpose: the tables are produced by a
 downstream "prepare-rt" step and reach the model through attributes injected onto
-the :class:`~powergama.GridData` object (``foreign_gen_lock_parquet`` and friends),
+the :class:`~powergama.GridData` object (``border_ac_flow_lock_parquet`` and friends),
 none of which appear in ``GridData.keys_powergama``. A grid built from plain CSV has
 none of them, every path below is skipped, and every field stays at its default.
 
@@ -12,7 +12,7 @@ core library at all is an open question, deliberately not answered here -- movin
 the loader into one place is what makes the question askable.
 
 These are inputs to the real-time step only: a day-ahead run produces them, and
-the RT simulation is pinned to them. :class:`~powergama.lp.rt.RtExtension` loads
+the RT simulation is held to them. :class:`~powergama.lp.rt.RtExtension` loads
 them, and :func:`powergama.lp.rt.data.apply_da_locks` applies them.
 """
 
@@ -24,13 +24,12 @@ import pandas as pd
 
 # The GridData attributes the prepare-rt step sets, each a path to a parquet file.
 LOCK_ATTRS = (
-    "foreign_gen_lock_parquet",
-    "foreign_consumer_lock_parquet",
     "border_ac_flow_lock_parquet",
     "border_dc_flow_lock_parquet",
     "border_ac_flow_bounds_parquet",
     "border_dc_flow_bounds_parquet",
 )
+
 
 
 @dataclass
@@ -41,8 +40,6 @@ class DaLocks:
     means the artifact was absent or unreadable, which is the ordinary case.
     """
 
-    foreign_gen_lock: pd.Series | None = None
-    foreign_cons_lock: pd.Series | None = None
     border_ac_flow_lock: pd.Series | None = None
     border_dc_flow_lock: pd.Series | None = None
     border_ac_flow_lb: pd.Series | None = None
@@ -85,48 +82,18 @@ def _be_oriented_sign(branch_df, branch_idx: int) -> float:
 
 
 def load_da_locks(grid) -> DaLocks:
-    """Load optional foreign DA lock tables from parquet artifacts.
+    """Load the optional DA border-flow lock tables from parquet artifacts.
 
     Expected long format:
-    - generators: timestep, indx, output
-    - consumers: timestep, indx, demand
+    - border flow locks: timestep, indx, flow
+    - border flow bounds: timestep, indx, flow_lb, flow_ub
     """
-    if getattr(grid, "da_storage_marginalprice_parquet", ""):
-        raise ValueError(
-            "da_storage_marginalprice_parquet was removed: RT prices storage deviations at the current storage value"
-        )
     locks = DaLocks()
 
-    gen_path = getattr(grid, "foreign_gen_lock_parquet", "")
-    con_path = getattr(grid, "foreign_consumer_lock_parquet", "")
     ac_border_path = getattr(grid, "border_ac_flow_lock_parquet", "")
     dc_border_path = getattr(grid, "border_dc_flow_lock_parquet", "")
     ac_border_bounds_path = getattr(grid, "border_ac_flow_bounds_parquet", "")
     dc_border_bounds_path = getattr(grid, "border_dc_flow_bounds_parquet", "")
-
-    if gen_path:
-        p = Path(str(gen_path))
-        if p.exists():
-            try:
-                gdf = pd.read_parquet(p)
-                gdf["timestep"] = pd.to_numeric(gdf["timestep"], errors="coerce").fillna(-1).astype(int)
-                gdf["indx"] = pd.to_numeric(gdf["indx"], errors="coerce").fillna(-1).astype(int)
-                gdf["output"] = pd.to_numeric(gdf["output"], errors="coerce").fillna(0.0)
-                locks.foreign_gen_lock = gdf.set_index(["timestep", "indx"])["output"]
-            except Exception as exc:
-                warnings.warn(f"Failed reading foreign generator DA lock parquet '{p}': {exc}", UserWarning)
-
-    if con_path:
-        p = Path(str(con_path))
-        if p.exists():
-            try:
-                cdf = pd.read_parquet(p)
-                cdf["timestep"] = pd.to_numeric(cdf["timestep"], errors="coerce").fillna(-1).astype(int)
-                cdf["indx"] = pd.to_numeric(cdf["indx"], errors="coerce").fillna(-1).astype(int)
-                cdf["demand"] = pd.to_numeric(cdf["demand"], errors="coerce").fillna(0.0)
-                locks.foreign_cons_lock = cdf.set_index(["timestep", "indx"])["demand"]
-            except Exception as exc:
-                warnings.warn(f"Failed reading foreign consumer DA lock parquet '{p}': {exc}", UserWarning)
 
     if ac_border_path:
         p = Path(str(ac_border_path))
