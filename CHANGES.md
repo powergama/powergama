@@ -2,6 +2,27 @@
 
 ## unpublished
 
+### Results API
+2026-11-13
+
+Added
+- `Results.get_dispatch_frames(timeMaxMin)` returns the dispatch as wide frames (index =
+  stored timestep, columns = element index): `generator_output`, `pumping`,
+  `flexload_demand`, `storage`, `branch_flow` and `dcbranch_flow`, with a column for every
+  element of each kind and NaN where nothing is stored (never filled)
+- `Results.is_complete(timerange)` tells whether the stored timesteps are exactly the run's
+  time range (or the one given), e.g. to check that a run finished before reading it
+- `Database.getResultFrame(table, column, timeMaxMin)` reads one result variable as such a
+  frame; only the result tables with one value per element and timestep are accepted
+  (`Database.RESULT_FRAME_COLUMNS`)
+- `Results.from_existing(databasefile, timedelta, *, timerange=None)` takes the profile rows
+  the run used, for runs that did not start at row 0 (the database stores the profiles
+  already cut to the run's time range). A `timerange` whose length differs from the stored
+  profiles raises `ValueError`
+
+Changes results? No. These functions only read a results database; nothing written by a run
+changes. Without `timerange`, `from_existing` behaves as before.
+
 ### Ramps and caps
 2026-11-13
 

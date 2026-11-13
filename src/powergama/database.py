@@ -442,6 +442,49 @@ class Database(DatabaseBaseClass):
     Class for storing results from PowerGAMA in sqlite databse
     """
 
+    # Result tables with one value per element and timestep, and their value columns.
+    # getResultFrame only reads these, so table and column never come from outside.
+    RESULT_FRAME_COLUMNS = {
+        "Res_Nodes": ("angle", "nodalprice", "loadshed", "dumpload"),
+        "Res_Branches": ("flow", "loss"),
+        "Res_BranchesSens": ("cap_sensitivity",),
+        "Res_DcBranches": ("flow", "cap_sensitivity", "loss"),
+        "Res_Generators": ("output", "inflow_spilled"),
+        "Res_Storage": ("storage", "marginalprice"),
+        "Res_Pumping": ("output",),
+        "Res_FlexibleLoad": ("demand", "storage", "value"),
+    }
+
+    def getResultFrame(self, table, column, timeMaxMin):
+        """One result variable as a wide frame: index = timestep, columns = element index.
+
+        Parameters
+        ==========
+        table : str
+            result table, e.g. "Res_Generators" (see RESULT_FRAME_COLUMNS)
+        column : str
+            value column of that table, e.g. "output"
+        timeMaxMin : [start, end]
+            time window start <= t < end
+
+        Only the stored (timestep, indx) pairs are read: the index holds the timesteps
+        and the columns the elements that have at least one stored value, sorted, and a
+        value that is not stored is NaN.
+        """
+        if column not in self.RESULT_FRAME_COLUMNS.get(table, ()):
+            raise ValueError(f"({table!r}, {column!r}) is not a result table and column with one value per element")
+        con = db.connect(self.filename)
+        try:
+            df = pd.read_sql_query(
+                f"SELECT timestep, indx, {column} FROM {table} WHERE timestep>=? AND timestep<?",  # nosec B608 - whitelisted
+                con,
+                params=(int(timeMaxMin[0]), int(timeMaxMin[-1])),
+            )
+        finally:
+            con.close()
+        frame = df.pivot(index="timestep", columns="indx", values=column)
+        return frame.astype("float64")
+
     def getGridBranches(self):
         """Get branch indices as a list"""
         con = db.connect(self.filename)

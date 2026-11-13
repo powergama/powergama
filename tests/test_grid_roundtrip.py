@@ -20,7 +20,7 @@ import powergama
 
 def _reopen(data, dbfile):
     powergama.Results(data, dbfile, replace=True)
-    return powergama.Results.from_existing(dbfile, timedelta=data.timeDelta)
+    return powergama.Results.from_existing(dbfile, timedelta=data.timeDelta, timerange=data.timerange)
 
 
 def _solve(data, dbfile):
@@ -72,7 +72,7 @@ def test_rerun_from_database_has_the_inter_area_constraints(tmp_path):
     """
     data = two_area_data()
     original = _solve(data, tmp_path / "original.sqlite")
-    grid = powergama.Results.from_existing(original.db.filename, timedelta=1.0).grid
+    grid = powergama.Results.from_existing(original.db.filename, timedelta=1.0, timerange=data.timerange).grid
     lp = powergama.LpProblem(grid)
     assert len(lp._inter_area_rules_rows) == 1
     assert len(lp.model.cInterAreaRulesForward) > 0
@@ -229,7 +229,7 @@ def test_database_without_block_group_reads_default(tmp_path):
     powergama.Results(data, dbfile, replace=True)
     with sqlite3.connect(dbfile) as con:
         data.generator.drop(columns="block_group").to_sql("data_generator", con, if_exists="replace", index=True)
-    grid = powergama.Results.from_existing(dbfile, timedelta=1.0).grid
+    grid = powergama.Results.from_existing(dbfile, timedelta=1.0, timerange=data.timerange).grid
     assert list(grid.generator["block_group"]) == [""] * len(data.generator)
 
 
