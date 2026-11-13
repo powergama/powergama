@@ -47,7 +47,6 @@ class GridData(object):
             "gen_lon": numpy.nan,
             "ramp_up_pu": numpy.nan,
             "ramp_down_pu": numpy.nan,
-            "ramp_daily_reset": False,
             "pmin_ref": "const",
             "pmax_ref": "const",
             "storage_ini_ref": "const",
@@ -72,7 +71,7 @@ class GridData(object):
         "node": {"id": str, "area": str},
         "branch": {"node_from": str, "node_to": str, "capacity": float},
         "dcbranch": {"node_from": str, "node_to": str, "capacity": float},
-        "generator": {"node": str, "type": str, "pmax": float, "ramp_daily_reset": bool, "block_group": str},
+        "generator": {"node": str, "type": str, "pmax": float, "block_group": str},
         "consumer": {"node": str},
         "inter_area_rules": {"area_from": str, "area_to": str, "ntc_forward": float, "ntc_backward": float},
     }

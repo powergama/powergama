@@ -154,11 +154,17 @@ raises, with no alias.
   freezes `v` for the window, so it does not respond to the level within a window.
 - **Flexible load is a bounded reservoir**, `varFlexStorage` in `[0, capacity]` (no floor where
   `flex_on_off > 1`), valued per MWh consumed by `lp/storage_value.py`.
-- **Ramp limits for energy-limited generators.** The first hour of a window applies
-  `pmin_now = min(pmin_now, pmax_now)`, dropping the ramp-down floor when the availability bound
-  is tighter; later hours have a ramp-down slack priced at `loadshedcost` (`varRampSlack`). Scope
-  ramp tests to energy-unlimited generators. `ramp_daily_reset` releases at absolute midnight in
-  both modes, whatever `commit_hours` is.
+- **Caps always win over ramps.** The first hour of a window clips the ramp window into the cap
+  interval (`pmax' = clip(prev + up, pmin, pmax)`, `pmin' = clip(prev − down, pmin, pmax)`, the caps
+  from `pmin`/`pmax`, the `*_ref` profiles, inflow and storage), so a unit goes to a rising floor or
+  a falling ceiling and a pinned unit follows its pin. Later hours lift the ramp limit into an hour
+  to the cap's step where the cap moves faster (`max(up, pmin[h] − pmin[h−1])`,
+  `max(down, pmax[h−1] − pmax[h])`, in `data._update_ramp_limits`), so ramps alone can't make a
+  window infeasible; a ramp-down slack priced at `loadshedcost` (`varRampSlack`) remains. Every
+  place a cap wins is a conflict in the input data: recorded in `lp.cap_ramp_conflicts`
+  `(timestep, generator, kind, MW)` and warned once per window (`data._report_cap_ramp_conflicts`).
+  Scope ramp tests to energy-unlimited generators. There is no daily reset: a unit that may change its
+  level quickly needs ramp rates that allow it.
 - **Multi-period results are only unique up to ties.** A window LP often has several equally
   cheap dispatches, and adding or reordering columns changes which one the solver returns. Pin
   window objectives and prices in multi-period tests, not flows.
@@ -260,6 +266,3 @@ updated per release together with the version in `pyproject.toml`.
 - `main` is the default branch; feature work happens on branches with PRs into `main`.
 - The README ends with a workspace-specific note pointing at WILLOW T45 runbooks in a sibling
   `../willow` directory — that is not part of this package.
-- `lp/context.py` reads one project-specific environment variable,
-  `T45_NUCLEAR_OPERATIONAL_LIMITS`, which relaxes nuclear ramp/daily-reset constraints when
-  `pmax_ref`/`pmin_ref` profile bounds would otherwise make the day-joint model infeasible.

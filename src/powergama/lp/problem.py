@@ -149,7 +149,6 @@ class LpProblem:
         )
         self._extensions = tuple(extensions or ())
         self._cfg.check_extensions(self._extensions)
-        self._exempt_pinned_from_ramp = any(ext.exempt_pinned_from_ramp for ext in self._extensions)
         self._grid = grid
         self.timeDelta = grid.timeDelta
         self._timestep_day_hour: dict[int, tuple[int, int]] = {}
@@ -162,6 +161,10 @@ class LpProblem:
         self._ctx = GridContext.from_grid(grid, self._Bbus, self._DA, self.refnodes)
         # Previous-timestep generation dispatch; NaN signals first timestep (no ramp constraint).
         self._gen_prev = np.full(len(grid.generator), np.nan)
+        # Every place a cap moved faster than a ramp allows, as (timestep, generator, kind, MW),
+        # kind "floor_up" or "ceiling_down". The cap wins (formulation.data); each window
+        # with any also warns. Consistent input data has none.
+        self.cap_ramp_conflicts: list[tuple[int, int, str, float]] = []
         # self._fancy_progressbar = False
 
         # Initial values of marginal costs, storage and storage values

@@ -2,6 +2,51 @@
 
 ## unpublished
 
+### Ramps and caps
+2026-11-13
+
+Added
+- caps always win over ramps. In the first hour of a window the ramp window is clipped into
+  the cap interval: `pmax' = clip(prev + ramp_up·pmax, pmin, pmax)` and
+  `pmin' = clip(prev − ramp_down·pmax, pmin, pmax)`, the caps being the bounds from
+  `pmin`/`pmax`, the `pmin_ref`/`pmax_ref` profiles, inflow and storage. It replaces the
+  one-sided guard `pmin' = min(pmin', pmax')`, under which a falling ceiling won over the
+  ramp but the ramp won over a rising floor
+- in multi-period windows, caps win over ramps in the later hours too: the ramp limits into
+  hour `h` are lifted where a cap moves faster than the ramp,
+  `max(ramp_up·pmax, pmin[h] − pmin[h−1])` and `max(ramp_down·pmax, pmax[h−1] − pmax[h])`,
+  with the bounds of each hour as written into `p_gen_pmin`/`p_gen_pmax`. No new variable
+- cap/ramp conflict report: wherever a cap wins over a ramp (the first-hour clip moves a
+  bound, or a later hour's limit is lifted), which consistent input data never need,
+  `LpProblem` records it in `cap_ramp_conflicts` as `(timestep, generator, kind, MW)` (kind
+  `"floor_up"` or `"ceiling_down"`) and warns once per window (`UserWarning`, up to ten
+  conflicts listed). A storage unit running out of energy is not counted. A pinned unit
+  with ramp rates conflicts at every jump of its pin; give it NaN ramps
+
+Removed
+- **breaking:** `ramp_daily_reset` is removed. It released a generator's ramp limit at every
+  midnight, so a unit with zero ramp rates picked a level at midnight and held it all day.
+  Give the unit its real ramp rates in `ramp_up_pu`/`ramp_down_pu` instead (NaN for no limit)
+- **breaking:** the project-specific environment variable `T45_NUCLEAR_OPERATIONAL_LIMITS` is
+  no longer read. It exempted nuclear generators with matching `pmax_ref`/`pmin_ref`
+  profiles from their ramp limits (and their daily reset); the ramp limits now apply to
+  every generator with ramp rates. A unit fully pinned by its profiles should have NaN ramp
+  rates
+- **breaking:** `ModelExtension.exempt_pinned_from_ramp` (and `RtExtension`'s setting of it)
+  is removed. A pinned generator (`pmin_ref = pmax_ref`) follows its pin because caps win
+  over ramps, in RT and in a plain run alike
+
+Changes results? Yes, where the data have caps that move faster than the ramps:
+- a unit now goes to a floor that rises faster than its ramp-up allows (it used to stay
+  below it); a multi-period window with such a floor used to be infeasible and now solves
+- a ceiling falling faster than the ramp-down is followed at no cost instead of through the
+  priced `varRampSlack`
+- a pinned generator with ramp rates follows its pin in a plain run too (it used to be held
+  back by the ramp; in RT it was already exempt)
+- units with `ramp_daily_reset` or covered by `T45_NUCLEAR_OPERATIONAL_LIMITS` are held to
+  their ramp rates all day; data that relied on either must be changed
+- units whose caps do not conflict with their ramps are unchanged
+
 ### Input data and grid
 2026-11-13
 

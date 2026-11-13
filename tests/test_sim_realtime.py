@@ -158,6 +158,35 @@ def test_rt_storage_level_target_was_removed():
         powergama.LpProblem(data, extensions=[RtExtension()])
 
 
+def test_pin_wins_over_ramp(tmp_path):
+    """A pin that jumps by more than the ramp limit is followed exactly, in RT and in a plain run.
+
+    The pin (pmin_ref = pmax_ref) is a cap, and caps always win over ramps: the ramp
+    window is clipped into the cap interval, which for a pin is a single point. No
+    extension needs to exempt the generator from its ramp. Every jump is a cap/ramp
+    conflict (a pin with consistent data needs NaN ramps), so each timestep warns.
+    """
+    data = two_area_data()
+    pmax = data.generator.loc[GEN_LOCKED, "pmax"]
+    ramp_mw = data.generator.loc[GEN_LOCKED, "ramp_up_pu"] * pmax
+    pin = pd.Series([50.0, 300.0] * (len(data.timerange) // 2), index=data.profiles.index)
+    assert pin.diff().abs().max() > ramp_mw
+    data.profiles["rt_pin_gas"] = pin / pmax
+    data.generator.loc[GEN_LOCKED, ["pmin_ref", "pmax_ref", "inflow_ref"]] = ["rt_pin_gas", "rt_pin_gas", "const"]
+    data.generator.loc[GEN_LOCKED, "inflow_fac"] = 1.0
+
+    for name, extensions in [("rt", [RtExtension()]), ("plain", [])]:
+        lp = powergama.LpProblem(data, extensions=extensions)
+        res = powergama.Results(data, tmp_path / f"{name}.sqlite", replace=True)
+        with pytest.warns(UserWarning, match="inconsistent caps"):
+            lp.solve(res, solver="appsi_highs", solve_args={})
+        output = series(read_table(res, "Res_Generators"), GEN_LOCKED, "output").values
+        np.testing.assert_allclose(output, pin.values, atol=1e-6, err_msg=name)
+        kinds = [kind for _, i, kind, _ in lp.cap_ramp_conflicts if i == GEN_LOCKED]
+        assert kinds == ["floor_up", "ceiling_down"] * (len(pin) // 2 - 1) + ["floor_up"]
+        assert [mw for *_, mw in lp.cap_ramp_conflicts] == pytest.approx([300.0 - 50.0 - ramp_mw] * (len(pin) - 1))
+
+
 def test_rt_da_storage_price_was_removed(tmp_path):
     data = two_area_data()
     data.da_storage_marginalprice_parquet = str(tmp_path / "storage_price.parquet")

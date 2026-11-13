@@ -41,9 +41,6 @@ class RtExtension(ModelExtension):
     """
 
     supports_multi_period = False
-    # Generators pinned by profile limits (e.g. nuclear with pmin_ref == pmax_ref) would
-    # otherwise be clipped by the ramp, causing gas backoff and spurious load shedding.
-    exempt_pinned_from_ramp = True
 
     def __init__(
         self,
