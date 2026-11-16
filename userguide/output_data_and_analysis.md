@@ -8,21 +8,23 @@ To re-open and analyse a system previously simulated and stored in a sqlite data
 ```
 And then use the analysis
 
-The database stores the profiles already cut to the time range of the run, so a reopened
-run assumes that its time range starts at 0. For a run on other rows of the profile files,
-pass them: `Results.from_existing("results.sqlite3", timedelta=1.0, timerange=range(24, 48))`.
+The database stores only the rows of the profiles the run used, renumbered from 0. If the
+run did not start at the first row of the profile files, give its time range when you
+reopen it, so that the timesteps keep their original numbers:
+`Results.from_existing("results.sqlite3", timedelta=1.0, timerange=range(24, 48))`.
 
-The grid read back is the grid that was written: the node, branch, DC branch, generator and
-consumer tables, the profiles, the storage-value tables and the inter-area rules
-(`inter_area_rules`), so a new `LpProblem` on `pg_res.grid` has the inter-area constraints
-of the original run. A grid table may have a column named `index` of its own: the database
-then keeps the row index in a column `level_0`, and reads it back from there (a column
-named `level_0` cannot be stored and raises).
+`pg_res.grid` is the grid that was written: the node, branch, DC branch, generator and
+consumer tables, the profiles, the storage-value tables and the inter-area rules. A new
+`LpProblem` on it therefore has the same constraints as the original run, the limits on
+exchanges between areas included. (A grid table may have its own column named `index`:
+the database then keeps the row numbers in a column `level_0` instead. A table with a
+column named `level_0` cannot be stored, and writing it raises an error.)
 
 ## Reading the dispatch as frames
 
-`Results.get_dispatch_frames(timeMaxMin=None)` returns the dispatch of a run as a dictionary of
-pandas DataFrames, one per kind of element:
+To work with the dispatch of a run in pandas, `Results.get_dispatch_frames(timeMaxMin=None)`
+returns it as a dictionary of tables (pandas DataFrames), one per kind of element, with
+one row per timestep and one column per element:
 
 | key | values | columns |
 |---|---|---|
@@ -33,15 +35,16 @@ pandas DataFrames, one per kind of element:
 | `branch_flow` | AC branch flow (MW) | every AC branch |
 | `dcbranch_flow` | DC branch flow (MW) | every DC branch |
 
-The columns are the element indices (the row index of `grid.generator`, `grid.consumer`,
-...). The index is the stored timestep, which is `timerange[0]` plus the timestep within the
-run: the row of the profile files the timestep was read from. A run on
-`timerange=range(24, 48)` therefore gives frames indexed 24..47. `timeMaxMin = [start, end]`
-selects `start <= timestep < end`; by default the whole time range of the run.
+The columns are the row numbers of the elements in the grid tables (`grid.generator`,
+`grid.consumer`, ...). The rows are the timesteps, numbered like the rows of the profile
+files they were read from: a run on `timerange=range(24, 48)` gives rows 24 to 47.
+`timeMaxMin = [start, end]` selects the timesteps from `start` up to, but not including,
+`end`; by default, the whole run.
 
-The values are exactly the stored ones. A value that is not stored, for instance because the
-run stopped early, is NaN and is never filled. `Results.is_complete(timerange=None)` tells
-whether the stored timesteps are exactly the time range of the run (or the one given):
+The values are exactly the stored ones. A value that was never stored, for instance because
+the run stopped early, is NaN; it is never filled in. To check that a run is complete,
+`Results.is_complete(timerange=None)` tells whether every timestep of its time range (or of
+the one given) is stored:
 
 ```python
 res = powergama.Results.from_existing("da.sqlite3", timedelta=1.0)
@@ -51,10 +54,11 @@ frames = res.get_dispatch_frames()
 output = frames["generator_output"]  # index = timestep, columns = generator index
 ```
 
-Other result variables can be read the same way, one at a time, with
-`res.db.getResultFrame(table, column, timeMaxMin)`, e.g.
-`res.db.getResultFrame("Res_Nodes", "nodalprice", [0, 24])`. Only the result tables with one
-value per element and timestep are accepted (see `Database.RESULT_FRAME_COLUMNS`).
+Other results can be read the same way, one variable at a time, with
+`res.db.getResultFrame(table, column, timeMaxMin)`, for example the nodal prices of the
+first day: `res.db.getResultFrame("Res_Nodes", "nodalprice", [0, 24])`. This works for the
+result tables that hold one value per element and timestep (listed in
+`Database.RESULT_FRAME_COLUMNS`).
 
 ## Output data format
 The results of the simulation is saved in a sqlite3 database file

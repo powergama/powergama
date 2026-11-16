@@ -150,7 +150,7 @@ The generator model is described by the following parameters:
 -   Power inflow ($P_\text{inflow}$)
 -   Energy storage capacity ($E_\text{max}$)
 -   Energy in storage ($E$)
--   Generator capacity ($P_\text{max}$)
+-   Installed generator capacity ($P_\text{installed}$, column `pmax`)
 -   Generator minimum production ($P_\text{min}$). Normally, this is
     value is zero.
 -   Generator output ($P_\text{output}$)
@@ -178,9 +178,9 @@ generator output is given as
 $$\begin{aligned}
     \text{No storage generators:} \quad && P_\text{limit} = P_\text{avail},
     \\
-    \text{Non-zero storage generators:} \quad && P_\text{limit} = \min[P_\text{avail}, P_\text{max}],
+    \text{Non-zero storage generators:} \quad && P_\text{limit} = \min[P_\text{avail}, P_\text{installed}],
     \\
-    \text{Infinite storage generators:} \quad && P_\text{limit} = P_\text{max}.\end{aligned}$$
+    \text{Infinite storage generators:} \quad && P_\text{limit} = P_\text{installed}.\end{aligned}$$
 
 The constraint on generator power output can then be written
 
@@ -190,8 +190,8 @@ $$P_\text{min} \le P_\text{output} \le P_\text{limit}.$$
 
 The available capacity and the minimum output can vary in time, through
 profiles that replace the static values: the available capacity becomes
-$P_\text{max} \times \text{profile}(t)$ (`pmax_ref`) and the minimum
-output $P_\text{max} \times \text{profile}(t)$ (`pmin_ref`), both
+$P_\text{installed} \times \text{profile}(t)$ (`pmax_ref`) and the minimum
+output $P_\text{installed} \times \text{profile}(t)$ (`pmin_ref`), both
 fractions of the installed capacity. Typical uses are planned outages and
 availability of thermal plants, or a must-run level. Giving both the same
 profile **pins** the output to that profile, for example a nuclear plant
@@ -209,7 +209,7 @@ the next, and absorb renewable surges at no cost. A generator may
 therefore have ramp limits, as a fraction of its installed capacity per
 time step:
 
-$$-r_\text{down} P_\text{max} \le P_\text{output}(t) - P_\text{output}(t-1) \le r_\text{up} P_\text{max}.$$
+$$-r_\text{down} P_\text{installed} \le P_\text{output}(t) - P_\text{output}(t-1) \le r_\text{up} P_\text{installed}.$$
 
 They apply in both modes: in single-period mode around the output of the
 previous time step, and in multi-period mode also between the time steps

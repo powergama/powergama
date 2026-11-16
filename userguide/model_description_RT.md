@@ -74,18 +74,19 @@ Renewable units are priced differently:
 
 $$c^+_\text{RES} = -c_0, \qquad c^-_\text{RES} = f\, c_0, \quad f > 1.$$
 
-When there is more wind or sun than forecast, producing it is profitable ($-c_0$), so the
-RT run uses it rather than keeping to the lower schedule. Reducing a renewable unit below
+When there is more wind or sun available than forecast, using it all should be profitable ($-c_0$), so the
+RT run uses it rather than keeping to the lower DA schedule. Reducing a renewable unit below
 its schedule costs more than any other downward option ($f\,c_0 > c_0 - c_i$), so
 curtailment comes last. During a surplus, the resulting order is, for example: reduce the
 flexible thermal units within their ramp limits, charge storage and use flexible demand,
 export within what the borders allow (see below), and only then curtail renewables. Dump
 load, at the cost of load shedding, should never be needed.
 
-## Units that cannot balance
+## Hard limits on what units may do in real time
 
-Some units cannot change their schedule at short notice, and some deviations are decided
-elsewhere. These are inputs to the RT run, not prices:
+Prices set the order in which units deviate. Some units, however, cannot change their
+schedule at short notice, and some decisions were already taken at the day-ahead stage.
+These are expressed as hard limits on the units in the RT run, not as prices:
 
 - **Pinned units** produce exactly their day-ahead output (minimum and maximum output both
   set to it), or at most it (they can go down but not up). Typical examples are inflexible
@@ -109,18 +110,18 @@ elsewhere. These are inputs to the RT run, not prices:
 Cross-border capacity cannot be freely re-allocated at short notice: the day-ahead market
 settles the commercial exchanges between areas up to their net transfer capacities (NTC),
 and in real time only a residual margin is available for balancing across borders. An RT
-run can represent this per inter-area rule, on the **net transfer** $T$ between two areas,
-the same quantity the NTC limits:
+run can represent this via inter-area rules on the **net transfer** $T$ between two areas
+(the same quantity the NTC limits):
 
 - a **lock** keeps $T$ within a corridor around its day-ahead value,
   $\text{DA}(t) - (1-\lambda)\,\text{NTC}_{B\to A} \le T \le \text{DA}(t) + (1-\lambda)\,\text{NTC}_{A\to B}$,
   where the lock share $\lambda$ is the part of the NTC held to the day-ahead exchange
   ($\lambda = 1$: no change; $\lambda = 0$: the full NTC is available);
-- a **penalty** $p$ per MWh of $|T - \text{DA}(t)|$, which makes the RT run balance within
+- a **penalty** $p$ per MWh of $|T - \text{DA}(t)|$, which makes the RT run prioritise balancing within
   an area before it uses its borders.
 
 Both act on the net transfer, not on each branch: flow may move between the parallel
-branches of a border (an AC line and an HVDC link, say) as long as the net transfer keeps
+branches of a border (an AC line and an HVDC link, say) as long as the summed net transfer keeps
 to the corridor. The NTC itself still holds.
 
 ## Formulation
@@ -155,4 +156,4 @@ are unit data: c⁺_i(t) = `rt_price_up` × profile(t) of `rt_price_up_ref` (1 f
 the one guard c⁺ + c⁻ ≥ 1e-6 (the smaller is raised). Nothing in the extension depends on
 the unit's type, cost or filling level; `price_columns` writes c0 ± marginal cost, with the
 storage value at the DA filling level (see
-[Usage_RT.md](Usage_RT.md), section 4, "Deviation prices").
+[Usage_RT.md](Usage_RT.md), section 2, "Deviation prices").
