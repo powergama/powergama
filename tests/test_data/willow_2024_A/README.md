@@ -20,8 +20,19 @@ to 2024-10-06 23:00 UTC (row 47).
 | `storval_filling_da.csv`, `storval_filling_rt.csv` | storage-value filling curves of the day-ahead and the real-time run |
 
 The tables are the inputs PowerGAMA received in the WILLOW study for this window, after the
-study's own processing (written with `T45/tools/export_powergama_example.py`).
+study's own processing.
 
 ## Data sources
 
-To be completed.
+- **Grid model:** the European grid model built in WILLOW Task 4.2 (deliverable D4.2) and
+  updated in the DeCOOP project, then processed for the 2024 case of WILLOW Task 4.5
+  (deliverable D4.5).
+- **Generation capacities, demand, wind, solar, hydro inflow and reservoir levels, nuclear
+  availability, cross-border flows:** the [ENTSO-E Transparency
+  Platform](https://transparency.entsoe.eu) (for Belgium, data published by Elia through
+  ENTSO-E). The day-ahead profiles use its day-ahead forecasts, the real-time profiles its
+  actual values.
+- **Net transfer capacities between areas:** [Ember, Europe electricity interconnection
+  data tool](https://ember-energy.org/data/europe-electricity-interconnection-data-tool/).
+
+Reuse of the data is subject to the terms of these providers.
