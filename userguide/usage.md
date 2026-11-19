@@ -1,12 +1,15 @@
 # PowerGAMA usage
 
-PowerGAMA was built to study grid capacity and long-term investments: it optimises the
-dispatch of a whole power system **timestep by timestep**, each timestep a DC optimal power
-flow, with storage carried from one timestep to the next through storage values. This is
-the default, and still the right tool for that purpose.
+PowerGAMA is a lightweight maket model that may be used in different ways for different
+types of analyses. A typical use case has been to investigate future power system 
+scenarios and their implications on timestep by timestape operations.
 
-Two extensions, aimed at studying grid **operation**, build on it:
+Recently, it has been extended to allow more realistic representation of power system 
+operations, and there are now three main ways set up PowerGAMA simulations:
 
+- **Timestep-by-timestep optimisation** (section 1) optimises each timestep using
+  linearised power flow equations and generator dispatch based on marginal costs. This is
+  the default setup and has been the only option in PowerGAMA versions prior to 1.6.
 - **Multi-period optimisation with a rolling horizon** (section 2) optimises a window of
   several timesteps at once, for example 24 hours, and keeps part of it before moving on.
   It was introduced to mimic the day-ahead (DA) market, where the dispatch of a whole day
@@ -51,10 +54,7 @@ Two extensions, aimed at studying grid **operation**, build on it:
     
     For example:
     ```python
-    powergama.plots.plotMap(
-        pg_data=data, pg_res=res, nodetype="nodalprice", branchtype="capacity",
-        zoom_start=5
-    )
+    powergama.plots.plotMap(pg_data=data, pg_res=res, nodetype="nodalprice", branchtype="capacity", zoom_start=5)
     ```
 
 The storage-value time curves of this example come from a separate file

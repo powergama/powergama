@@ -31,8 +31,7 @@ pip install powergama
 Prerequisite: 
 - [Poetry](https://python-poetry.org/docs/#installation)
 - [Pre-commit](https://pre-commit.com/)
-- An LP solver, e.g. the free [CBC solver](https://projects.coin-or.org/Cbc).
-Clone or download the code and install it as a python package. The tests rely on the [GLPK solver](https://www.gnu.org/software/glpk/).
+- An LP solver, The HIGHS solver is included in the package, but other solvers can also be used.
 
 
 ### Install 
@@ -62,12 +61,4 @@ You are welcome to contribute to the improvement of the code.
 [Harald G Svendsen](https://www.sintef.no/en/all-employees/employee/?empid=3414)  
 SINTEF Energy Research
 
-## Project-Specific Workflow Note (This Workspace)
-
-If you are running the WILLOW T45 scenario workflows from this repository workspace, use the T45 runbooks instead of generic package commands:
-
-- `../willow/T45/README.md`
-- `../willow/T45/workflow/README.md`
-
-These documents provide copy-paste commands for the maintained scenario (`2023_I_A_A`), environment setup (`willow-py311`), and weekly storage-value sensitivity runs.
 
