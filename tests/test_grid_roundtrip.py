@@ -2,9 +2,9 @@
 
 ``Results`` writes the grid tables into the database and ``Results.from_existing`` (through
 ``Database.get_grid_data`` and ``GridData.from_dict``) rebuilds a ``GridData`` from them.
-That grid is what a re-run from a database starts from, so it must be the grid that was
-written: the inter-area rules included, a table with a column named ``index`` intact, and no
-columns that the run itself added.
+That grid is what a re-run from a database and ``prepare_rt`` on a DA database start from,
+so it must be the grid that was written: the inter-area rules included, a table with a
+column named ``index`` intact, and no columns that the run itself added.
 """
 
 import sqlite3
@@ -16,6 +16,8 @@ from conftest import _load_9bus
 from rt_case import datapath_two_area, two_area_data
 
 import powergama
+from powergama.lp.rt import prepare_rt, rt_tables_from_da
+from powergama.lp.rt.prepare import DA_INDEX, GRID_TABLES
 
 
 def _reopen(data, dbfile):
@@ -165,7 +167,52 @@ def test_database_dcbranch_has_no_area_columns(tmp_path):
     assert not {"area_from", "area_to"} & set(stored.columns)
 
 
-# --- 4. block_group ---------------------------------------------------------------------
+# --- 4. rt_tables_from_da -----------------------------------------------------------------
+
+
+def test_rt_tables_from_da_same_from_run_and_database(tmp_path):
+    data = two_area_data()
+    da = powergama.Results(data, tmp_path / "da.sqlite", replace=True)
+    reopened = powergama.Results.from_existing(da.db.filename, timedelta=1.0, timerange=data.timerange)
+    live = rt_tables_from_da(da)
+    stored = rt_tables_from_da(reopened)
+    assert set(live) == set(stored) == {*GRID_TABLES, "inter_area_rules"}
+    for name in live:
+        pd.testing.assert_frame_equal(stored[name], live[name], check_dtype=False)
+    for name in ("generator", "consumer"):
+        assert live[name][DA_INDEX].dtype == "Int64"
+        assert list(live[name][DA_INDEX]) == list(live[name].index)
+    # copies: adding rows does not touch the DA grid
+    live["generator"].loc[99] = live["generator"].iloc[0]
+    assert 99 not in da.grid.generator.index
+    assert DA_INDEX not in da.grid.generator.columns
+
+
+def test_rt_tables_from_da_drops_legacy_dcbranch_area_columns(tmp_path):
+    """DA databases written before getDcBranchAreas was side-effect free carry area_from/area_to."""
+    data = two_area_data()
+    dbfile = tmp_path / "old_da.sqlite"
+    powergama.Results(data, dbfile, replace=True)
+    with sqlite3.connect(dbfile) as con:
+        data.getDcBranchAreas().to_sql("data_dcbranch", con, if_exists="replace", index=True)
+    reopened = powergama.Results.from_existing(dbfile, timedelta=1.0, timerange=data.timerange)
+    assert "area_from" in reopened.grid.dcbranch.columns
+    tables = rt_tables_from_da(reopened)
+    pd.testing.assert_frame_equal(tables["dcbranch"], data.dcbranch, check_dtype=False)
+
+
+def test_prepare_rt_from_database_writes_inter_area_rules(tmp_path):
+    data = two_area_data()
+    da = _solve(data, tmp_path / "da.sqlite")
+    reopened = powergama.Results.from_existing(da.db.filename, timedelta=1.0, timerange=data.timerange)
+    prepared = prepare_rt(reopened, tmp_path / "rt_inputs", summary=False)
+    assert "inter_area_rules" in prepared.files
+    assert "inter_area_rules" in prepared.grid_files()
+    pd.testing.assert_frame_equal(prepared.tables["inter_area_rules"], data.inter_area_rules)
+    assert not {"area_from", "area_to"} & set(prepared.tables["dcbranch"].columns)
+
+
+# --- 5. block_group ---------------------------------------------------------------------
 
 
 GENERATORS_CSV = datapath_two_area / "generators.csv"
@@ -216,10 +263,12 @@ def test_block_group_read_as_text(tmp_path):
     assert data.generator["block_group"].map(type).eq(str).all()
 
 
-def test_block_group_survives_database(tmp_path):
+def test_block_group_survives_database_and_rt_tables(tmp_path):
     data = _two_area_with_blocks(tmp_path)
     reopened = _reopen(data, tmp_path / "blocks.sqlite")
     pd.testing.assert_series_equal(reopened.grid.generator["block_group"], data.generator["block_group"])
+    tables = rt_tables_from_da(reopened)
+    assert list(tables["generator"]["block_group"]) == list(data.generator["block_group"])
 
 
 def test_database_without_block_group_reads_default(tmp_path):

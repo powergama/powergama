@@ -75,6 +75,16 @@ class DatabaseBaseClass(object):
         _scan(getattr(data, "consumer", None), ["demand_ref", "rt_target_ref"])
         _scan(getattr(data, "generator", None), ["inflow_ref", "rt_target_ref", "rt_pump_target_ref"])
         _scan(getattr(data, "generator", None), ["pmin_ref", "pmax_ref", "storage_ini_ref"], const_means_none=True)
+        # RT deviation-price multipliers: the LP checks them on every row, so they are
+        # required here too, and an RT database must keep them to be reopened.
+        _scan(
+            getattr(data, "generator", None),
+            ["rt_price_up_ref", "rt_price_down_ref", "rt_pump_price_up_ref", "rt_pump_price_down_ref"],
+            const_means_none=True,
+        )
+        _scan(getattr(data, "consumer", None), ["rt_price_up_ref", "rt_price_down_ref"], const_means_none=True)
+        # The DA summed flow of an inter-area rule, read by the RT balancing penalty and lock.
+        _scan(getattr(data, "inter_area_rules", None), ["da_flow_ref"], const_means_none=True)
         if getattr(data, "storagevalue_time", None) is None:
             # The storage-value time curves are profile columns; the LP reads them for the
             # generators with storage and the consumers with flexible load only.
@@ -93,8 +103,6 @@ class DatabaseBaseClass(object):
         optional = {
             "const",
             "flexdemand",
-            "be_da_net_export_mw",
-            "be_da_lock_share",
             "rt_residual_pos_cap_mw",
             "rt_residual_neg_cap_mw",
         }
@@ -224,8 +232,8 @@ class DatabaseBaseClass(object):
     def _select_profiles_for_sql(self, data):
         """Select profile columns that are required for SQL-based diagnostics.
 
-        Keep demand and inflow references (used by postprocessing), lock-transfer and
-        residual-cap helper columns, generator/consumer constraint references, and
+        Keep demand and inflow references (used by postprocessing), residual-cap helper
+        columns, generator/consumer constraint references, and
         common constants.
         """
         profile_cols = list(data.profiles.columns)
