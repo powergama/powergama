@@ -18,7 +18,7 @@ the variable index, and Skip costs nothing in the written LP.
 import pyomo.environ as pyo
 
 
-def add_params(model):
+def add_params(model, rt):
     """Mutable parameters holding this timestep's DA targets and deviation prices."""
     model.p_rt_target = pyo.Param(model.s_gen, within=pyo.Reals, default=0, mutable=True)
     model.p_rt_deviation_price_gen_pos = pyo.Param(model.s_gen, within=pyo.Reals, default=0, mutable=True)
@@ -30,24 +30,18 @@ def add_params(model):
     model.p_rt_pump_target = pyo.Param(model.s_gen_pump, within=pyo.NonNegativeReals, default=0, mutable=True)
     model.p_rt_deviation_price_pump_pos = pyo.Param(model.s_gen_pump, within=pyo.Reals, default=0, mutable=True)
     model.p_rt_deviation_price_pump_neg = pyo.Param(model.s_gen_pump, within=pyo.Reals, default=0, mutable=True)
-    model.p_rt_io_target_ac = pyo.Param(model.s_branch_ac, within=pyo.Reals, default=0, mutable=True)
-    model.p_rt_io_target_dc = pyo.Param(model.s_branch_dc, within=pyo.Reals, default=0, mutable=True)
-    model.p_rt_io_target_active_ac = pyo.Param(model.s_branch_ac, within=pyo.Binary, default=0, mutable=True)
-    model.p_rt_io_target_active_dc = pyo.Param(model.s_branch_dc, within=pyo.Binary, default=0, mutable=True)
+    add_rule_params(model, rt)
 
 
 def add_deviation_vars(model):
-    """Deviations from the DA targets: generators, flexible load, pumping, border flows."""
+    """Deviations from the DA targets: generators, flexible load, pumping, inter-area summed flows."""
     model.varRtTargetDevPos = pyo.Var(model.s_gen, within=pyo.NonNegativeReals)
     model.varRtTargetDevNeg = pyo.Var(model.s_gen, within=pyo.NonNegativeReals)
     model.varRtFlexLoadTargetDevPos = pyo.Var(model.s_load_flex, within=pyo.NonNegativeReals)
     model.varRtFlexLoadTargetDevNeg = pyo.Var(model.s_load_flex, within=pyo.NonNegativeReals)
     model.varRtPumpTargetDevPos = pyo.Var(model.s_gen_pump, within=pyo.NonNegativeReals)
     model.varRtPumpTargetDevNeg = pyo.Var(model.s_gen_pump, within=pyo.NonNegativeReals)
-    model.varRtIoTargetDevPosAc = pyo.Var(model.s_branch_ac, within=pyo.NonNegativeReals)
-    model.varRtIoTargetDevNegAc = pyo.Var(model.s_branch_ac, within=pyo.NonNegativeReals)
-    model.varRtIoTargetDevPosDc = pyo.Var(model.s_branch_dc, within=pyo.NonNegativeReals)
-    model.varRtIoTargetDevNegDc = pyo.Var(model.s_branch_dc, within=pyo.NonNegativeReals)
+    add_rule_deviation_vars(model)
 
 
 def add_target_tracking(model, grid, ctx, rt):
@@ -101,29 +95,6 @@ def add_pump_target_tracking(model, grid, ctx, rt):
     model.cRtPumpTargetTracking = pyo.Constraint(model.s_gen_pump, rule=rt_pump_target_rule)
 
 
-def add_border_flow_target_tracking(model, grid, ctx, rt):
-    """Constraint: DA BE border flow target deviation accounting for AC/DC branches."""
-
-    def _ac_rule(model, b):
-        if int(b) not in rt.ctx.idx_border_ac:
-            return pyo.Constraint.Skip
-        return (
-            model.p_rt_io_target_active_ac[b] * (model.varAcBranchFlow[b, 0] - model.p_rt_io_target_ac[b])
-            == model.varRtIoTargetDevPosAc[b] - model.varRtIoTargetDevNegAc[b]
-        )
-
-    def _dc_rule(model, b):
-        if int(b) not in rt.ctx.idx_border_dc:
-            return pyo.Constraint.Skip
-        return (
-            model.p_rt_io_target_active_dc[b] * (model.varDcBranchFlow[b, 0] - model.p_rt_io_target_dc[b])
-            == model.varRtIoTargetDevPosDc[b] - model.varRtIoTargetDevNegDc[b]
-        )
-
-    model.cRtIoTargetTrackingAc = pyo.Constraint(model.s_branch_ac, rule=_ac_rule)
-    model.cRtIoTargetTrackingDc = pyo.Constraint(model.s_branch_dc, rule=_dc_rule)
-
-
 def edit_objective_terms(model, rt, terms):
     """Turn the cost-minimising objective into a deviation-minimising one.
 
@@ -157,17 +128,79 @@ def deviation_cost(model, rt):
         for i in model.s_gen_pump
         if int(i) in rt.ctx.pump_target_indices
     )
-    if rt.xborder_flow_penalty_eur_per_mwh > 0.0:
-        cost += rt.xborder_flow_penalty_eur_per_mwh * (
-            sum(
-                model.varRtIoTargetDevPosAc[b] + model.varRtIoTargetDevNegAc[b]
-                for b in model.s_branch_ac
-                if int(b) in rt.ctx.idx_border_ac
-            )
-            + sum(
-                model.varRtIoTargetDevPosDc[b] + model.varRtIoTargetDevNegDc[b]
-                for b in model.s_branch_dc
-                if int(b) in rt.ctx.idx_border_dc
-            )
-        )
+    cost += sum(
+        rt.ctx.rules[int(r)].balancing_penalty * (model.varRtRuleDevPos[r] + model.varRtRuleDevNeg[r])
+        for r in model.s_rt_rule_penalised
+    )
     return cost
+
+
+def _rule_sets(rt):
+    rules = rt.ctx.rules
+    return (
+        sorted(rules),
+        sorted(r for r, t in rules.items() if t.balancing_penalty > 0.0),
+        sorted(r for r, t in rules.items() if t.lock_share is not None),
+        sorted(r for r, t in rules.items() if t.width_forward is not None),
+        sorted(r for r, t in rules.items() if t.width_backward is not None),
+    )
+
+
+def add_rule_params(model, rt):
+    """The inter-area rules RT holds to their DA summed flow, and that flow (MW) this timestep."""
+    tracked, penalised, locked, lock_ub, lock_lb = _rule_sets(rt)
+    model.s_rt_rule = pyo.Set(initialize=tracked, ordered=True)
+    model.s_rt_rule_penalised = pyo.Set(initialize=penalised, ordered=True)
+    model.s_rt_rule_locked = pyo.Set(initialize=locked, ordered=True)
+    # The locked rules with a bound on that side: an infinite NTC leaves a side open.
+    model.s_rt_rule_lock_ub = pyo.Set(initialize=lock_ub, ordered=True)
+    model.s_rt_rule_lock_lb = pyo.Set(initialize=lock_lb, ordered=True)
+    model.p_rt_rule_da_flow = pyo.Param(model.s_rt_rule, within=pyo.Reals, default=0, mutable=True)
+    model.p_rt_rule_lock_ub = pyo.Param(model.s_rt_rule_lock_ub, within=pyo.Reals, default=0, mutable=True)
+    model.p_rt_rule_lock_lb = pyo.Param(model.s_rt_rule_lock_lb, within=pyo.Reals, default=0, mutable=True)
+
+
+def add_rule_deviation_vars(model):
+    """Deviations of a penalised rule's summed flow from DA, above and below."""
+    model.varRtRuleDevPos = pyo.Var(model.s_rt_rule_penalised, within=pyo.NonNegativeReals)
+    model.varRtRuleDevNeg = pyo.Var(model.s_rt_rule_penalised, within=pyo.NonNegativeReals)
+
+
+def rule_transfer(model, row, h=0):
+    """The summed flow of an inter-area rule, area_from -> area_to: the NTC constraint's expression."""
+    return (
+        sum(model.varAcBranchFlow[b, h] for b in row["ac_pos"])
+        - sum(model.varAcBranchFlow[b, h] for b in row["ac_neg"])
+        + sum(model.varDcBranchFlow[b, h] for b in row["dc_pos"])
+        - sum(model.varDcBranchFlow[b, h] for b in row["dc_neg"])
+    )
+
+
+def add_rule_flow_tracking(model, grid, ctx, rt):
+    """Constraint: deviation of a penalised rule's summed flow from its DA summed flow."""
+
+    def rule(model, r):
+        row = ctx.inter_area_rules_rows[int(r)]
+        return (
+            rule_transfer(model, row) - model.p_rt_rule_da_flow[r]
+            == model.varRtRuleDevPos[r] - model.varRtRuleDevNeg[r]
+        )
+
+    model.cRtRuleFlowTracking = pyo.Constraint(model.s_rt_rule_penalised, rule=rule)
+
+
+def add_rule_flow_lock(model, grid, ctx, rt):
+    """Constraint: a locked rule's summed flow within DA - width_backward and DA + width_forward.
+
+    The bounds are parameters, written each timestep by
+    :func:`~powergama.lp.rt.data.update_rule_flows`; the widths are (1 - lock_share) x NTC.
+    """
+
+    def upper(model, r):
+        return rule_transfer(model, ctx.inter_area_rules_rows[int(r)]) <= model.p_rt_rule_lock_ub[r]
+
+    def lower(model, r):
+        return rule_transfer(model, ctx.inter_area_rules_rows[int(r)]) >= model.p_rt_rule_lock_lb[r]
+
+    model.cRtRuleLockForward = pyo.Constraint(model.s_rt_rule_lock_ub, rule=upper)
+    model.cRtRuleLockBackward = pyo.Constraint(model.s_rt_rule_lock_lb, rule=lower)

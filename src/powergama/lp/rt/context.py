@@ -1,4 +1,4 @@
-"""Everything the real-time extension derives once from the grid and the DA locks.
+"""Everything the real-time extension derives once from the grid.
 
 The RT counterpart of :class:`~powergama.lp.context.GridContext`, held by the
 extension rather than the core, so a normal run never computes any of it.
@@ -23,7 +23,7 @@ PRICE_COLUMNS = {
 
 @dataclass
 class RtContext:
-    """RT target references, deviation prices and border branches. Built once."""
+    """RT target references, deviation prices and inter-area rule targets. Built once."""
 
     # --- day-ahead target references and the entities that carry one --------
     target_ref: object = None
@@ -42,23 +42,17 @@ class RtContext:
     cons_price_up: object = None
     cons_price_down: object = None
 
-    # --- border branches, identified by the DA lock tables --------------------
-    idx_border_ac: set = field(default_factory=set)
-    idx_border_dc: set = field(default_factory=set)
-    border_ac_sign: dict = field(default_factory=dict)
-    border_dc_sign: dict = field(default_factory=dict)
+    # --- inter-area rules held to their DA summed flow, by position in the table ----
+    # Each is a RuleTarget: a rule with a da_flow_ref and a balancing penalty or a lock.
+    rules: dict = field(default_factory=dict)
 
     @classmethod
-    def from_grid(cls, grid, ctx, locks):
-        """Derive the RT lookups from *grid*, the core *ctx* and the loaded *locks*."""
-        rt_ctx = cls(
-            idx_border_ac=locks.idx_border_ac,
-            idx_border_dc=locks.idx_border_dc,
-            border_ac_sign=locks.border_ac_sign,
-            border_dc_sign=locks.border_dc_sign,
-        )
+    def from_grid(cls, grid, ctx):
+        """Derive the RT lookups from *grid* and the core *ctx*."""
+        rt_ctx = cls()
         rt_ctx._build_target_refs(grid, ctx)
         rt_ctx._build_prices(grid)
+        rt_ctx.rules = build_rule_targets(grid, ctx)
         return rt_ctx
 
     def _build_target_refs(self, grid, ctx):
@@ -180,3 +174,96 @@ def _price_refs(table, table_name, column, rows, target, profiles, problems):
                 f"{table_name} {column}_ref profile '{n}' has NaN, for row(s) {_who(table, list(names.index[names.eq(n)]))}"
             )
     return PriceRefs(rows=np.asarray(rows, dtype=int), constant=constant, position=position)
+
+
+@dataclass
+class RuleTarget:
+    """One inter-area rule RT holds to its DA summed flow.
+
+    ``position`` is the rule's position in ``grid.inter_area_rules`` (the core's
+    ``inter_area_rules_rows`` key); ``column`` the profile column of the DA summed flow
+    (``da_flow_ref``) and ``profile_position`` its position in ``grid.profiles``.
+    ``balancing_penalty`` is EUR/MWh (0: none); ``lock_share`` is lambda (None: no lock);
+    ``width_forward`` / ``width_backward`` are the lock window either side of DA, MW
+    (None: that side open).
+    """
+
+    position: int
+    area_from: str
+    area_to: str
+    column: str
+    profile_position: int
+    balancing_penalty: float
+    lock_share: float | None
+    width_forward: float | None
+    width_backward: float | None
+
+
+def _lock_width(share: float, ntc: float) -> float | None:
+    """(1 - share) x ntc; lambda = 1 is a width of 0 whatever the NTC, an infinite NTC no bound."""
+    if share >= 1.0:
+        return 0.0
+    if not np.isfinite(ntc):
+        return None
+    return (1.0 - share) * max(0.0, ntc)
+
+
+def build_rule_targets(grid, ctx) -> dict[int, RuleTarget]:
+    """The inter-area rules with a ``da_flow_ref`` and a balancing penalty or a lock, by position.
+
+    A rule without ``da_flow_ref`` gets neither, whatever its ``balancing_penalty`` and
+    ``lock_share``. Raises ``ValueError`` on a ``da_flow_ref``
+    that is not a profile column, NaN in a referenced column, a negative balancing penalty, a lock share outside [0, 1], or a rule with a
+    ``da_flow_ref`` and no branch across its boundary.
+    """
+    rules = grid.inter_area_rules
+    if rules is None or len(rules) == 0:
+        return {}
+    refs = override_profile_refs(rules, "da_flow_ref")
+    if refs is None:
+        return {}
+    profiles = grid.profiles
+    profile_cols = profiles.columns if profiles is not None else pd.Index([])
+    nan = pd.Series(np.nan, index=rules.index)
+    penalty = pd.to_numeric(
+        rules["balancing_penalty"] if "balancing_penalty" in rules.columns else nan, errors="coerce"
+    )
+    share = pd.to_numeric(rules["lock_share"] if "lock_share" in rules.columns else nan, errors="coerce")
+    problems = []
+    out = {}
+    for position, k in enumerate(rules.index):
+        name = refs.loc[k]
+        if name == "":
+            continue
+        who = f"inter_area_rules row {k} ({rules.at[k, 'area_from']} -> {rules.at[k, 'area_to']})"
+        p = 0.0 if np.isnan(penalty.loc[k]) else float(penalty.loc[k])
+        x = None if np.isnan(share.loc[k]) else float(share.loc[k])
+        if name not in profile_cols:
+            problems.append(f"{who}: da_flow_ref '{name}' is not a profile column")
+            continue
+        if profiles[name].isna().any():
+            problems.append(f"{who}: profile '{name}' (da_flow_ref) has NaN")
+        if not np.isfinite(p) or p < 0.0:
+            problems.append(f"{who}: balancing_penalty must be >= 0, not {p}")
+        if x is not None and not 0.0 <= x <= 1.0:
+            problems.append(f"{who}: lock_share must be within [0, 1], not {x}")
+        row = ctx.inter_area_rules_rows[position]
+        if not (row["ac_pos"] or row["ac_neg"] or row["dc_pos"] or row["dc_neg"]):
+            problems.append(f"{who}: has a da_flow_ref but no branch across its boundary")
+            continue
+        if p == 0.0 and x is None:
+            continue
+        out[position] = RuleTarget(
+            position=position,
+            area_from=str(rules.at[k, "area_from"]),
+            area_to=str(rules.at[k, "area_to"]),
+            column=name,
+            profile_position=int(profile_cols.get_loc(name)),
+            balancing_penalty=p,
+            lock_share=x,
+            width_forward=None if x is None else _lock_width(x, row["ntc_forward"]),
+            width_backward=None if x is None else _lock_width(x, row["ntc_backward"]),
+        )
+    if problems:
+        raise ValueError("RT inter-area rules:\n  " + "\n  ".join(problems))
+    return out

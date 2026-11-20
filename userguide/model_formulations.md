@@ -37,7 +37,7 @@ In single-period mode `h` is always 0.
 | pumping, storage, flexible load | `s_gen_pump`, `s_gen_storage`, `s_load_flex` |
 | hours in the window | `s_h` |
 | (generator, hour) pairs with a ramp limit to the hour before | `s_ramp_up`, `s_ramp_dn` — hours ≥ 1 only |
-| NTC rows | `s_inter_area_ntc` |
+| NTC rows | `s_inter_area_rules` |
 
 They are initialised from the lists [`GridContext`](../src/powergama/lp/context.py)
 holds.
@@ -63,7 +63,7 @@ holds.
 | nodal power balance | `cPowerbalance` |
 | flow vs. angle difference, reference node | `cFlowAngle`, `cReferenceNode` |
 | branch capacity | `cMaxFlowAc`, `cMaxFlowDc` — two-sided rows, whose duals are the capacity sensitivities |
-| inter-area NTC | `cInterAreaNtcForward`/`Backward` |
+| inter-area NTC | `cInterAreaRulesForward`/`Backward` |
 | generator output limits | `cGenMaxLimit`/`cGenMinLimit`, against `p_gen_pmax`/`p_gen_pmin` |
 | pumping | `cPump`, against `p_pump_pmax` |
 | flexible load | `cFlexload`; reservoir `cFlexStorCont`, with capacity and floor as variable bounds |
@@ -79,22 +79,57 @@ before the solve and writes into `Param`s:
 
 - `p_storage_prev` and `p_flex_storage_prev`, the levels the window starts from;
 - the generator bounds `p_gen_pmin[i, 0]`/`p_gen_pmax[i, 0]`, which include the
-  availability from storage and the ramp limits around the previous dispatch. Where
-  a generator cannot keep to its ramp-down limit — a CSP plant that runs empty — the
-  floor is dropped (`pmin = min(pmin, pmax)`) rather than making the LP infeasible;
+  availability from storage and the ramp limits around the previous dispatch.
+  **Caps always win over ramps:** the ramp window is clipped into the cap interval,
+  `pmax' = clip(prev + ramp_up, pmin, pmax)` and `pmin' = clip(prev − ramp_down, pmin, pmax)`,
+  where `pmin`/`pmax` are the bounds from the input data, the `*_ref` profiles, inflow
+  and storage. A cap floor rising faster than the ramp-up puts the unit on the floor,
+  a cap ceiling (a CSP plant that runs empty) falling faster than the ramp-down puts
+  it on the ceiling, and a pinned unit (`pmin = pmax`) follows its pin;
 - `p_pump_pmax[i, 0]`, limited by the room left in the storage.
+
+The generator bounds start from the input data of each hour: installed `pmax`
+times the `pmax_ref` profile, and `pmin`, or installed `pmax` times the
+`pmin_ref` profile, where a generator has those references (`"const"`, the
+default, means none). The inflow is the available capacity times `inflow_fac`
+times the `inflow_ref` profile, so `pmax_ref` scales it too. Both formulations
+read them the same way (`formulation.data._generator_limits`). The references are
+checked against the profile columns once, when the `LpProblem` is constructed
+(`GridContext._build_profile_refs`), and so is `storage_ini_ref`, which sets the
+initial storage level as a fraction of `storage_cap` at the first timestep.
 
 Later hours depend on the hour before, which is solved together with them, so the
 same limits are constraints on its variables: `cStorCont` and `cFlexStorCont` chain
 the levels, `cGenUbStorAvail` limits generation from storage to what the hour
 before left, `cPumpRoom` limits pumping to the room it left, and `cRampUp`/`cRampDn`
-limit the change in output. A ramp-down limit that cannot be kept has a slack,
-`varRampSlack`, priced like load shedding, so a window is never infeasible. None of
+limit the change in output. Caps win here too, through the data: the limits written
+into `p_ramp_up_mw`/`p_ramp_dn_mw` for hour `h` are
+
+    ramp_up_eff[h] = max(ramp_up·pmax, pmin[h] − pmin[h−1])
+    ramp_dn_eff[h] = max(ramp_down·pmax, pmax[h−1] − pmax[h])
+
+with `pmin`/`pmax` the bounds of each hour as written into `p_gen_pmin`/`p_gen_pmax`
+(the first hour's after its ramp clip). Where a floor rises or a ceiling falls faster
+than the ramp allows, the limit into that hour is lifted to the cap's step, and the
+unit follows the cap at no cost; elsewhere the ramps are unchanged. The lifted limit
+is a step size, not a target: a unit below the old floor may end above the new one.
+With `pmin ≤ pmax` in every hour the ramps alone can never make a window infeasible:
+from any output `g` in hour `h−1`, `g + ramp_up_eff ≥ pmin[h]` and
+`g − ramp_dn_eff ≤ pmax[h]`. A ramp-down limit that cannot be kept for another reason
+(availability from storage, which is a constraint and not a bound in these hours) has
+a slack, `varRampSlack`, priced like load shedding. None of
 these exist in a window of one timestep.
 
-A generator with `ramp_daily_reset` is free to change its output at midnight
-(`timestep % 24 == 0`): in the first hour its previous dispatch is forgotten, and
-in later hours its ramp limit into midnight is lifted.
+**Cap/ramp conflicts are reported.** With consistent input data a cap never moves
+faster than the unit's ramp allows, so wherever the cap wins — the first hour's clip
+moves a bound because the cap lies outside `[prev − ramp_down, prev + ramp_up]`, or a
+later hour's limit is widened — the data are inconsistent. Each such place is
+recorded in `LpProblem.cap_ramp_conflicts` as `(timestep, generator, kind, MW)`, kind
+`"floor_up"` or `"ceiling_down"` and MW how far the cap's step goes beyond the ramp,
+and each window with any emits one `UserWarning` listing up to ten of them. A storage
+unit running out of energy is not a conflict: its ceiling is checked without the
+availability from storage. A pinned unit (`pmin_ref = pmax_ref`) with ramp rates
+conflicts at every jump of its pin; give it NaN ramps.
 
 ## Objective
 
@@ -107,6 +142,10 @@ Storage is valued only at the end of the window: nothing per MWh generated from
 storage, and the energy left in it valued at the storage value. That value is
 fixed for the window from the filling level at its start, so in a multi-period
 window it does not respond to the level within the window.
+
+**RT run (`RtExtension`).** The extension replaces the operating cost and the storage
+value by priced deviations from the day-ahead schedule; its terms and rows are in
+[model_description_RT.md](model_description_RT.md), "Formulation".
 
 Every term is a cost rate in EUR/h; the terminal storage value is an amount in EUR
 and is divided by `dt`. The objective stored for each timestep is that hour's

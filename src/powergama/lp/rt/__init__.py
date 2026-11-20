@@ -11,27 +11,28 @@ problem::
 
 RT is the second step of a two-step workflow. A day-ahead run produces a
 schedule; a prepare-rt step (:func:`prepare_rt` for the tables and the soft
-targets) turns it into RT inputs -- hard border-flow windows (parquet
-files), pins and fixed demand (``pmin_ref``/``pmax_ref`` and ``demand_ref``
-profile columns, ordinary grid data) and soft targets (``rt_target_ref`` / ``rt_pump_target_ref`` profile
-columns, border-flow targets) whose deviations are penalised at the units' deviation
-prices (``rt_price_up``/``rt_price_down`` and the pumping equivalents, unit data written
-by :func:`price_columns`).
+targets) turns it into RT inputs -- pins and fixed demand (``pmin_ref``/``pmax_ref``
+and ``demand_ref`` profile columns, ordinary grid data), soft targets
+(``rt_target_ref`` / ``rt_pump_target_ref`` profile columns) whose deviations are
+penalised at the units' deviation prices (``rt_price_up``/``rt_price_down`` and the
+pumping equivalents, unit data written by :func:`price_columns`), and the inter-area
+rules' DA summed flows (``inter_area_rules.da_flow_ref``), held to with a ``balancing_penalty``
+(soft) and a ``lock_share`` window (hard).
 Everything else is optimised freely.
 
 The core never names RT. Everything here is reached through the hooks of
 :class:`~powergama.lp.extension.ModelExtension`, so without the extension the
-lock files are not read, no RT context is derived and no RT parameter, variable
+RT columns are not read, no RT context is derived and no RT parameter, variable
 or constraint is declared. ``tests/test_rt_isolation.py`` keeps it that way.
 
 =========================  ==================================================
 module                     holds
 =========================  ==================================================
 :mod:`.extension`          :class:`RtExtension`, wiring the pieces to the hooks
-:mod:`.context`            :class:`RtContext`, derived once from the grid and locks
+:mod:`.context`            :class:`RtContext`, derived once from the grid
 :mod:`.build`              RT parameters, deviation variables, tracking
                            constraints and the objective edit
-:mod:`.data`               per-timestep locks, targets and deviation prices
+:mod:`.data`               per-timestep targets, deviation prices and DA flows
 :mod:`.diagnostics`        the optional JSONL debug stream
 :mod:`.prepare`            :func:`prepare_rt`, from a day-ahead run to the RT
                            inputs (tables and the DA-solution profile file);
@@ -46,6 +47,7 @@ from .prepare import (
     ZERO_TARGET,
     CarryCurtailment,
     DeviationPrices,
+    InterAreaFlows,
     PeakTranches,
     PreparedRt,
     RefColumns,
@@ -54,6 +56,7 @@ from .prepare import (
     carry_curtailment_columns,
     clear_refs,
     combine_columns,
+    da_flow_columns,
     da_storage_values,
     initial_storage_columns,
     peak_tranche_columns,
@@ -70,6 +73,7 @@ __all__ = [
     "ZERO_TARGET",
     "CarryCurtailment",
     "DeviationPrices",
+    "InterAreaFlows",
     "PeakTranches",
     "PreparedRt",
     "RefColumns",
@@ -79,6 +83,7 @@ __all__ = [
     "channel_family",
     "clear_refs",
     "combine_columns",
+    "da_flow_columns",
     "da_storage_values",
     "initial_storage_columns",
     "peak_tranche_columns",

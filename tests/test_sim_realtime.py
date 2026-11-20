@@ -1,5 +1,6 @@
 """
-Real-time (balancing) mode: tracking of day-ahead targets, pins and fixed demand, and border-flow locks.
+Real-time (balancing) mode: tracking of day-ahead targets, pins and fixed demand, and the
+inter-area lock.
 """
 
 from pathlib import Path
@@ -13,10 +14,11 @@ from rt_case import (
     CONS_FLEX,
     DCBRANCH_BORDER,
     FIXED_DEMAND,
-    FLOW_WINDOW,
     GEN_PINNED,
     GEN_STORAGE,
     GEN_TARGET,
+    LOCK_WIDTH_BACKWARD,
+    LOCK_WIDTH_FORWARD,
     build_rt_case,
     read_table,
     series,
@@ -26,7 +28,6 @@ from rt_case import (
 
 import powergama
 from powergama.lp.rt import RtExtension, apply_refs, price_columns
-from powergama.lp.rt.locks import LOCK_ATTRS
 
 datapath = Path(__file__).parent / "test_data/data_9bus"
 
@@ -39,12 +40,12 @@ def test_rt_applies_locks_and_targets(tmp_path):
     gen = read_table(res, "Res_Generators")
     np.testing.assert_allclose(series(gen, GEN_PINNED, "output").values, da["gen_pin"], atol=1e-6)
 
+    # The summed inter-area flow stays within the lock window around DA.
     ac = series(read_table(res, "Res_Branches"), BRANCH_BORDER, "flow").values
-    assert np.all(ac >= da["ac_flow"] - FLOW_WINDOW - 1e-6)
-    assert np.all(ac <= da["ac_flow"] + FLOW_WINDOW + 1e-6)
     dc = series(read_table(res, "Res_DcBranches"), DCBRANCH_BORDER, "flow").values
-    assert np.all(dc >= da["dc_flow"] - FLOW_WINDOW - 1e-6)
-    assert np.all(dc <= da["dc_flow"] + FLOW_WINDOW + 1e-6)
+    da_sum = da["ac_flow"] + da["dc_flow"]
+    assert np.all(ac + dc >= da_sum - LOCK_WIDTH_BACKWARD - 1e-6)
+    assert np.all(ac + dc <= da_sum + LOCK_WIDTH_FORWARD + 1e-6)
 
     # The fixed demand reached the power balance parameter.
     assert lp.model.p_demand[CONS_FIXED, 0].value == pytest.approx(FIXED_DEMAND)
@@ -53,8 +54,8 @@ def test_rt_applies_locks_and_targets(tmp_path):
     assert set(lp.model.cRtTargetTracking) == {GEN_TARGET, GEN_STORAGE}
     assert set(lp.model.cRtPumpTargetTracking) == {GEN_STORAGE}
     assert set(lp.model.cRtFlexLoadTargetTracking) == {CONS_FLEX}
-    assert set(lp.model.cRtIoTargetTrackingAc) == {BRANCH_BORDER}
-    assert set(lp.model.cRtIoTargetTrackingDc) == {DCBRANCH_BORDER}
+    assert set(lp.model.cRtRuleFlowTracking) == {0}
+    assert set(lp.model.cRtRuleLockForward) == set(lp.model.cRtRuleLockBackward) == {0}
 
 
 def _price_coal(data, i, fee):
@@ -196,9 +197,10 @@ def test_pin_wins_over_ramp(tmp_path):
 
 @pytest.mark.parametrize("mode", ["single_period", "multi_period"])
 def test_run_without_rt_extension_ignores_rt_inputs(tmp_path, mode):
-    """Without RtExtension, RT targets and border-flow locks are neither built nor applied.
+    """Without RtExtension, RT targets, border-flow windows and rule targets are neither built nor applied.
 
-    The border-flow locks and the targets are inputs to the RT step only. A grid carrying
+    The inter-area rules' da_flow_ref/balancing_penalty/lock_share and the
+    targets are inputs to the RT step only. A grid carrying
     them in a normal run gets the same results as one without them. (The pin and the
     fixed demand are ordinary grid data, and apply in both runs.)
     """
@@ -210,8 +212,7 @@ def test_run_without_rt_extension_ignores_rt_inputs(tmp_path, mode):
     rt_names = [c.name for c in lp.model.component_objects() if c.name.startswith(("p_rt_", "varRt", "cRt"))]
     assert rt_names == []
 
-    for attr in LOCK_ATTRS:
-        setattr(data, attr, "")
+    data.inter_area_rules.loc[0, ["da_flow_ref", "balancing_penalty", "lock_share"]] = ["", 0.0, np.nan]
     lp_plain = powergama.LpProblem(data, objective_mode=mode)
     res_plain = powergama.Results(data, tmp_path / "without_locks.sqlite", replace=True)
     lp_plain.solve(res_plain, solver="appsi_highs", solve_args={})

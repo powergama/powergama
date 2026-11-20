@@ -4,7 +4,6 @@ from ..extension import ModelExtension
 from . import build as rt_build
 from . import data as rt_data
 from . import diagnostics as rt_diagnostics
-from . import locks as rt_locks
 from .context import RtContext
 
 
@@ -19,9 +18,13 @@ class RtExtension(ModelExtension):
       ``generator.rt_pump_target_ref`` (pumping, fraction of pump_cap)
       and ``consumer.rt_target_ref`` (flexible load, fraction of demand_avg).
       Deviations from them are priced, not forbidden.
-    - **Border-flow locks**, as parquet files named by attributes on the GridData
-      object (see :data:`~powergama.lp.rt.locks.LOCK_ATTRS`): border-flow windows
-      (hard) and border-flow targets (soft).
+    - **Inter-area rules**, the optional ``inter_area_rules`` columns ``da_flow_ref``
+      (profile column with the DA summed flow of the rule, MW, area_from -> area_to),
+      ``balancing_penalty`` (the cross-border balancing penalty, EUR per MWh of deviation of
+      the RT summed flow from it, soft) and
+      ``lock_share`` (lambda in [0, 1]: the RT summed flow stays within
+      DA - (1 - lambda) x ntc_backward and DA + (1 - lambda) x ntc_forward, hard). The
+      summed flow is the NTC constraint's: the same branches with the same signs.
     - **Pinned generators and fixed demand** are ordinary grid data, not locks:
       ``pmin_ref = pmax_ref`` pointing at a profile column of the DA output
       (fraction of pmax, with ``inflow_ref="const"`` and ``inflow_fac=1``), and
@@ -41,34 +44,28 @@ class RtExtension(ModelExtension):
     plus load shedding. Storage is settled on its power, generation and pumping,
     not on its filling level. Windows of one timestep only (single-period mode).
 
-    Parameters
-    ----------
-    xborder_flow_penalty_eur_per_mwh : float
-        Penalty per MWh of deviation from day-ahead cross-border flows (c_xborder).
+    ``RtExtension()`` takes no argument.
     """
 
     supports_multi_period = False
 
-    def __init__(self, *, xborder_flow_penalty_eur_per_mwh=0.0):
-        self.xborder_flow_penalty_eur_per_mwh = max(0.0, float(xborder_flow_penalty_eur_per_mwh))
+    def __init__(self):
         # Set by prepare():
-        self.locks = None
         self.ctx = None
         self.debug_path = None
         self.debug_session_id = ""
 
     def __repr__(self):
-        return f"RtExtension(xborder_flow_penalty_eur_per_mwh={self.xborder_flow_penalty_eur_per_mwh})"
+        return "RtExtension()"
 
     # --- construction ---------------------------------------------------------
 
     def prepare(self, lp, grid):
-        self.locks = rt_locks.load_da_locks(grid)
-        self.ctx = RtContext.from_grid(grid, lp._ctx, self.locks)
+        self.ctx = RtContext.from_grid(grid, lp._ctx)
         rt_diagnostics.initialize_debug_stream(self, grid)
 
     def add_parameters(self, model, grid, ctx):
-        rt_build.add_params(model)
+        rt_build.add_params(model, self)
 
     def add_variables(self, model, grid, ctx):
         rt_build.add_deviation_vars(model)
@@ -81,18 +78,17 @@ class RtExtension(ModelExtension):
         rt_build.add_target_tracking(model, grid, ctx, self)
         rt_build.add_flexload_target_tracking(model, grid, ctx, self)
         rt_build.add_pump_target_tracking(model, grid, ctx, self)
-        rt_build.add_border_flow_target_tracking(model, grid, ctx, self)
+        rt_build.add_rule_flow_tracking(model, grid, ctx, self)
+        rt_build.add_rule_flow_lock(model, grid, ctx, self)
 
     # --- simulation -----------------------------------------------------------
 
     def update_timestep(self, lp, timestep):
-        # Locks first: they override the limits and demand the core has just written.
-        rt_data.apply_da_locks(lp, self, timestep)
         rt_data.update_generator_targets(lp, self, timestep)
         rt_data.update_pump_targets(lp, self, timestep)
         rt_data.update_flexload_targets(lp, self, timestep)
         rt_data.update_deviation_prices(lp, self, timestep)
-        rt_data.update_border_flow_targets(lp, self, timestep)
+        rt_data.update_rule_flows(lp, self, timestep)
 
     def on_solve_start(self, lp, timesteps, continue_from_last, results):
         rt_diagnostics.append_solve_start(lp, self, timesteps, continue_from_last, results)
