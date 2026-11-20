@@ -13,7 +13,6 @@ import numpy
 import pandas as pd
 import scipy.sparse
 
-
 class GridData(object):
     """
     Class for grid data storage and import
@@ -25,7 +24,19 @@ class GridData(object):
         "node": {"id": None, "area": None, "zone": "", "lat": None, "lon": None},
         "branch": {"node_from": None, "node_to": None, "reactance": None, "capacity": None, "resistance": 0.0},
         "dcbranch": {"node_from": None, "node_to": None, "capacity": None, "resistance": 0.0},
-        "inter_area_rules": {"area_from": None, "area_to": None, "ntc_forward": None, "ntc_backward": None},
+        "inter_area_rules": {
+            "area_from": None,
+            "area_to": None,
+            "ntc_forward": None,
+            "ntc_backward": None,
+            # Read only by the RT extension (powergama.lp.rt), on the summed flow of the rule:
+            # the DA summed flow (profile column, MW, area_from -> area_to), the cross-border
+            # balancing penalty per MWh of deviation from it, and the share of the NTC locked
+            # around it (NaN: no lock).
+            "balancing_penalty": 0.0,
+            "lock_share": numpy.nan,
+            "da_flow_ref": "",
+        },
         "generator": {
             "type": None,
             "desc": "",
@@ -51,7 +62,7 @@ class GridData(object):
             "pmax_ref": "const",
             "storage_ini_ref": "const",
             # Rows of one physical unit (e.g. price blocks) share a value; "" is a group of
-            # one. The model does not read it.
+            # one. Read only by prepare_rt's peak tranches.
             "block_group": "",
         },
         "consumer": {
@@ -73,7 +84,14 @@ class GridData(object):
         "dcbranch": {"node_from": str, "node_to": str, "capacity": float},
         "generator": {"node": str, "type": str, "pmax": float, "block_group": str},
         "consumer": {"node": str},
-        "inter_area_rules": {"area_from": str, "area_to": str, "ntc_forward": float, "ntc_backward": float},
+        "inter_area_rules": {
+            "area_from": str,
+            "area_to": str,
+            "ntc_forward": float,
+            "ntc_backward": float,
+            "balancing_penalty": float,
+            "lock_share": float,
+        },
     }
 
     def __init__(self):
@@ -161,7 +179,7 @@ class GridData(object):
         for name in ("node", "branch", "dcbranch", "generator", "consumer"):
             setattr(self, name, self._astype_present(data_dict[name], self.dtypes[name]))
         rules = data_dict.get("inter_area_rules")
-        self.inter_area_rules = None if rules is None else rules.astype(self.dtypes["inter_area_rules"])
+        self.inter_area_rules = None if rules is None else self._astype_present(rules, self.dtypes["inter_area_rules"])
         for name in ("node", "branch", "dcbranch", "generator", "consumer"):
             setattr(self, name, self._float_columns_from_nulls(name, getattr(self, name)))
         self.profiles = data_dict["profiles"]

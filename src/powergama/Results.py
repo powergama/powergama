@@ -61,12 +61,25 @@ class ResultsBaseClass(object):
         self.db = db.Database(databasefile)
 
     @classmethod
-    def from_existing(cls, databasefile, timedelta):
-        """Get PowerGAMA Result object from existing sqlite database file"""
+    def from_existing(cls, databasefile, timedelta, *, timerange=None):
+        """Get PowerGAMA Result object from existing sqlite database file
+
+        timerange : the rows of the profile files the run used (the ``timerange`` given to
+            ``readProfileData``). The database stores the profiles already cut to it, so
+            without this the time range is taken to start at 0, which is only right for a
+            run that started at the first row.
+        """
         res_db = db.Database(databasefile)
         data_dict = res_db.get_grid_data()
         grid_data = powergama.GridData()
         grid_data.from_dict(data_dict, timedelta=timedelta)
+        if timerange is not None:
+            timerange = list(timerange)
+            if len(timerange) != len(grid_data.profiles):
+                raise ValueError(
+                    f"timerange has {len(timerange)} timesteps, the stored profiles {len(grid_data.profiles)}"
+                )
+            grid_data.timerange = timerange
         # TODO: replace this with grid_data.validate() or something similar
         # A database written before an optional column was added to keys_powergama lacks it:
         # add it with its default before filling empty cells.
@@ -221,6 +234,62 @@ class Results(ResultsBaseClass):
             # list is non-empty, get the last value:
             time_last = timerange[-1]
         return time_last
+
+    # get_dispatch_frames: key -> (result table, value column, element indices getter)
+    DISPATCH_FRAMES = {
+        "generator_output": ("Res_Generators", "output", lambda grid: list(grid.generator.index)),
+        "pumping": ("Res_Pumping", "output", lambda grid: grid.getIdxGeneratorsWithPumping()),
+        "flexload_demand": ("Res_FlexibleLoad", "demand", lambda grid: grid.getIdxConsumersWithFlexibleLoad()),
+        "storage": ("Res_Storage", "storage", lambda grid: grid.getIdxGeneratorsWithStorage()),
+        "branch_flow": ("Res_Branches", "flow", lambda grid: list(grid.branch.index)),
+        "dcbranch_flow": ("Res_DcBranches", "flow", lambda grid: list(grid.dcbranch.index)),
+    }
+
+    def get_dispatch_frames(self, timeMaxMin=None):
+        """The dispatch of the run as wide frames, one per kind of element.
+
+        Parameters
+        ----------
+        timeMaxMin : [start, end], optional
+            time window start <= t < end; default the run's time range
+
+        Returns
+        -------
+        dict of pandas.DataFrame, with keys
+
+        - ``generator_output``: output of every generator (MW)
+        - ``pumping``: pumping of every generator with pumping (MW)
+        - ``flexload_demand``: flexible demand of every consumer with flexible load (MW)
+        - ``storage``: storage filling of every generator with storage (MWh)
+        - ``branch_flow``: flow on every AC branch (MW)
+        - ``dcbranch_flow``: flow on every DC branch (MW)
+
+        Each frame has index = the stored timesteps in the window (``timerange[0]`` + the
+        timestep within the run, i.e. the row of the profile files) and columns = the
+        element indices of its kind. Values are the stored ones; a value that is not
+        stored (an incomplete run) is NaN, never filled.
+        """
+        if timeMaxMin is None:
+            timeMaxMin = [self.timerange[0], self.timerange[-1] + 1]
+        start, end = int(timeMaxMin[0]), int(timeMaxMin[-1])
+        steps = pd.Index(
+            sorted({t for t in self.db.getTimerange() if start <= t < end}), name="timestep", dtype="int64"
+        )
+        frames = {}
+        for key, (table, column, elements) in self.DISPATCH_FRAMES.items():
+            cols = pd.Index(elements(self.grid), name="indx", dtype="int64")
+            frame = self.db.getResultFrame(table, column, [start, end])
+            frames[key] = frame.reindex(index=steps, columns=cols).astype("float64")
+        return frames
+
+    def is_complete(self, timerange=None):
+        """Whether the stored timesteps are exactly *timerange* (default: the run's time range).
+
+        A run that stopped early, or a database that was cut short, is not complete.
+        """
+        if timerange is None:
+            timerange = self.timerange
+        return self.db.getTimerange() == list(timerange)
 
     def getAverageBranchFlows(self, timeMaxMin=None, branchtype="ac"):
         """

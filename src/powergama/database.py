@@ -75,6 +75,16 @@ class DatabaseBaseClass(object):
         _scan(getattr(data, "consumer", None), ["demand_ref", "rt_target_ref"])
         _scan(getattr(data, "generator", None), ["inflow_ref", "rt_target_ref", "rt_pump_target_ref"])
         _scan(getattr(data, "generator", None), ["pmin_ref", "pmax_ref", "storage_ini_ref"], const_means_none=True)
+        # RT deviation-price multipliers: the LP checks them on every row, so they are
+        # required here too, and an RT database must keep them to be reopened.
+        _scan(
+            getattr(data, "generator", None),
+            ["rt_price_up_ref", "rt_price_down_ref", "rt_pump_price_up_ref", "rt_pump_price_down_ref"],
+            const_means_none=True,
+        )
+        _scan(getattr(data, "consumer", None), ["rt_price_up_ref", "rt_price_down_ref"], const_means_none=True)
+        # The DA summed flow of an inter-area rule, read by the RT balancing penalty and lock.
+        _scan(getattr(data, "inter_area_rules", None), ["da_flow_ref"], const_means_none=True)
         if getattr(data, "storagevalue_time", None) is None:
             # The storage-value time curves are profile columns; the LP reads them for the
             # generators with storage and the consumers with flexible load only.
@@ -93,8 +103,6 @@ class DatabaseBaseClass(object):
         optional = {
             "const",
             "flexdemand",
-            "be_da_net_export_mw",
-            "be_da_lock_share",
             "rt_residual_pos_cap_mw",
             "rt_residual_neg_cap_mw",
         }
@@ -224,8 +232,8 @@ class DatabaseBaseClass(object):
     def _select_profiles_for_sql(self, data):
         """Select profile columns that are required for SQL-based diagnostics.
 
-        Keep demand and inflow references (used by postprocessing), lock-transfer and
-        residual-cap helper columns, generator/consumer constraint references, and
+        Keep demand and inflow references (used by postprocessing), residual-cap helper
+        columns, generator/consumer constraint references, and
         common constants.
         """
         profile_cols = list(data.profiles.columns)
@@ -441,6 +449,49 @@ class Database(DatabaseBaseClass):
     """
     Class for storing results from PowerGAMA in sqlite databse
     """
+
+    # Result tables with one value per element and timestep, and their value columns.
+    # getResultFrame only reads these, so table and column never come from outside.
+    RESULT_FRAME_COLUMNS = {
+        "Res_Nodes": ("angle", "nodalprice", "loadshed", "dumpload"),
+        "Res_Branches": ("flow", "loss"),
+        "Res_BranchesSens": ("cap_sensitivity",),
+        "Res_DcBranches": ("flow", "cap_sensitivity", "loss"),
+        "Res_Generators": ("output", "inflow_spilled"),
+        "Res_Storage": ("storage", "marginalprice"),
+        "Res_Pumping": ("output",),
+        "Res_FlexibleLoad": ("demand", "storage", "value"),
+    }
+
+    def getResultFrame(self, table, column, timeMaxMin):
+        """One result variable as a wide frame: index = timestep, columns = element index.
+
+        Parameters
+        ==========
+        table : str
+            result table, e.g. "Res_Generators" (see RESULT_FRAME_COLUMNS)
+        column : str
+            value column of that table, e.g. "output"
+        timeMaxMin : [start, end]
+            time window start <= t < end
+
+        Only the stored (timestep, indx) pairs are read: the index holds the timesteps
+        and the columns the elements that have at least one stored value, sorted, and a
+        value that is not stored is NaN.
+        """
+        if column not in self.RESULT_FRAME_COLUMNS.get(table, ()):
+            raise ValueError(f"({table!r}, {column!r}) is not a result table and column with one value per element")
+        con = db.connect(self.filename)
+        try:
+            df = pd.read_sql_query(
+                f"SELECT timestep, indx, {column} FROM {table} WHERE timestep>=? AND timestep<?",  # nosec B608 - whitelisted
+                con,
+                params=(int(timeMaxMin[0]), int(timeMaxMin[-1])),
+            )
+        finally:
+            con.close()
+        frame = df.pivot(index="timestep", columns="indx", values=column)
+        return frame.astype("float64")
 
     def getGridBranches(self):
         """Get branch indices as a list"""
