@@ -15,7 +15,7 @@ worth more during a refactor than tidier names.
 One thing is computed here that used to be computed elsewhere, because it is
 a pure function of the grid:
 
-``inter_area_ntc_rows``
+``inter_area_rules_rows``
     was a side effect of building the single-period NTC constraint, which the
     multi-period builder then read back behind a ``hasattr`` guard. That made
     multi-period silently depend on the single-period model having been built
@@ -24,16 +24,39 @@ a pure function of the grid:
 ``_get_powerbalance_rhs`` deliberately does *not* move here despite also being
 keyed on the B matrix: it builds Pyomo expressions over ``varVoltageAngle``, so
 it needs a model and belongs with the single-period builder.
-
-``T45_NUCLEAR_OPERATIONAL_LIMITS`` is read here. It is project-specific, and
-the flag it produces is consumed by the ramp rules of both formulations.
 """
 
-import os
 from dataclasses import dataclass, field, fields
 
 import numpy as np
 import pandas as pd
+
+# Generator columns naming a profile that overrides a static value, and the value
+# that means "no profile". Unlike inflow_ref, "const" need not exist as a column.
+OVERRIDE_PROFILE_REFS = ("pmax_ref", "pmin_ref", "storage_ini_ref")
+CONST_PROFILE_REF = "const"
+
+
+def override_profile_refs(generator, name):
+    """Column *name* of *generator* as profile names, "" where there is no profile.
+
+    None if the column is absent (grid data read from an older results database).
+    "const", empty strings and NaN (also the string "nan") all mean no profile.
+    """
+    if name not in generator.columns:
+        return None
+    col = generator[name]
+    refs = col.astype(object).where(col.notna(), "").astype(str).str.strip()
+    # "nan" is what a NaN cell becomes after a round trip through astype(str).
+    return refs.mask(refs.eq(CONST_PROFILE_REF) | refs.str.lower().eq("nan"), "")
+
+
+def _span(index) -> str:
+    return "none" if len(index) == 0 else f"{index[0]}..{index[-1]}"
+
+
+def _rows(rows) -> str:
+    return ", ".join(str(r) for r in rows[:10]) + (f" ... (+{len(rows) - 10} more)" if len(rows) > 10 else "")
 
 
 @dataclass
@@ -78,22 +101,36 @@ class GridContext:
     flex_storage_cap: dict = field(default_factory=dict)
     flex_has_floor: dict = field(default_factory=dict)
 
-    # --- optional profile references for time-varying bounds ---------------
+    # --- generator profile references that override a static value ---------
+    # Each is a Series of profile column names indexed like grid.generator, with
+    # "" where the generator has no profile ("const", empty or NaN in the data),
+    # or None when no generator has one. Validated against grid.profiles once.
     pmax_ref: object = None
     pmin_ref: object = None
+    storage_ini_ref: object = None
+
+    # --- storage values (lp/storage_value.py) -------------------------------
+    # The time factor of a storage generator / flexible-load consumer is a column of
+    # grid.profiles (position; -1 = no profile, a factor of 1), or, with the deprecated
+    # separate table grid.storagevalue_time (storval_time_legacy), a column of that. The
+    # filling-level factor is a column of grid.storagevalue_filling (position). Keyed by
+    # generator / consumer id, only for the rows the LP values. Validated once.
+    storval_time_legacy: bool = False
+    storval_time_pos: dict = field(default_factory=dict)
+    storval_filling_pos: dict = field(default_factory=dict)
+    storval_flex_time_pos: dict = field(default_factory=dict)
+    storval_flex_filling_pos: dict = field(default_factory=dict)
 
     # --- ramping ------------------------------------------------------------
     ramp_up_pu: object = None
     ramp_down_pu: object = None
     ramp_cap_mw: object = None
-    ramp_daily_reset: object = None
-    disable_nuclear_ramp_profile_conflict: object = None
 
     # --- branch flow bounds and NTC ----------------------------------------
     default_ac_flow_bounds: dict = field(default_factory=dict)
     default_dc_flow_bounds: dict = field(default_factory=dict)
-    inter_area_ntc: object = None
-    inter_area_ntc_rows: dict = field(default_factory=dict)
+    inter_area_rules: object = None
+    inter_area_rules_rows: dict = field(default_factory=dict)
 
     @classmethod
     def from_grid(cls, grid, Bbus, DA, refnodes):
@@ -107,9 +144,10 @@ class GridContext:
         ctx._build_index_sets(grid)
         ctx._build_flexload(grid)
         ctx._build_profile_refs(grid)
+        ctx._build_storage_values(grid)
         ctx._build_ramping(grid)
         ctx._build_flow_bounds(grid)
-        ctx._build_inter_area_ntc(grid)
+        ctx._build_inter_area_rules(grid)
         return ctx
 
     # ------------------------------------------------------------------
@@ -165,11 +203,108 @@ class GridContext:
         return min(max(level, 0.0), cap) if self.flex_has_floor[j] else min(level, cap)
 
     def _build_profile_refs(self, grid):
-        # Optional profile references for time-varying dispatch bounds.
-        # pmax_ref scales installed pmax (availability factor), pmin_ref sets a
-        # profile-driven floor as a fraction of installed pmax.
-        self.pmax_ref = grid.generator["pmax_ref"] if "pmax_ref" in grid.generator.columns else None
-        self.pmin_ref = grid.generator["pmin_ref"] if "pmin_ref" in grid.generator.columns else None
+        """Resolve the generator profile references that override a static value.
+
+        pmax_ref scales installed pmax (availability factor), pmin_ref sets the floor
+        as a fraction of installed pmax, storage_ini_ref sets the initial filling as a
+        fraction of storage_cap. "const" (the default), an empty cell or NaN means no
+        profile. Anything else must name a column of grid.profiles, checked here once
+        rather than silently ignored every timestep.
+        """
+        profile_cols = set(grid.profiles.columns) if grid.profiles is not None else set()
+        problems = []
+        for name in OVERRIDE_PROFILE_REFS:
+            refs = override_profile_refs(grid.generator, name)
+            if refs is None:
+                setattr(self, name, None)
+                continue
+            unknown = refs[refs.ne("") & ~refs.isin(profile_cols)]
+            if len(unknown) > 0:
+                if "desc" in grid.generator.columns:
+                    who = [f"{i} ({grid.generator.at[i, 'desc']})" for i in unknown.index]
+                else:
+                    who = [str(i) for i in unknown.index]
+                shown = ", ".join(who[:10]) + (f" ... (+{len(who) - 10} more)" if len(who) > 10 else "")
+                problems.append(f"{name}: no profile column(s) {sorted(unknown.unique())} for generator(s) {shown}")
+            setattr(self, name, refs if refs.ne("").any() else None)
+        if problems:
+            raise ValueError(
+                "Generator profile references name missing profile columns "
+                f'(use "{CONST_PROFILE_REF}" for no profile):\n  ' + "\n  ".join(problems)
+            )
+
+    def _build_storage_values(self, grid):
+        """Resolve the storage-value curves of the generators with storage and the consumers
+        with flexible load (the rows the LP values), and check them once.
+
+        - ``storagevalue_filling`` must have the rows 0..100 (one per percent of filling) and
+          a column for every ``storval_filling_ref`` / ``flex_storval_filling`` of those rows.
+        - Without ``storagevalue_time``, ``storval_time_ref`` / ``flex_storval_time`` name a
+          column of ``grid.profiles``; ``"const"``, an empty cell or NaN is a factor of 1.
+        - With the deprecated ``storagevalue_time``, they name a column of that table, for
+          every row (the two are not mixed).
+
+        Rows the LP does not value are not checked. Anything else raises ``ValueError``.
+        """
+        gens = list(self.idx_generatorsWithStorage)
+        flex = list(self.idx_consumersWithFlexLoad)
+        if not gens and not flex:
+            return
+        filling = grid.storagevalue_filling
+        if filling is None:
+            raise ValueError(
+                "Storage values: the grid has generators with storage or consumers with flexible load, but no "
+                "storage-value filling curves (readProfileData(..., storagevalue_filling=...))"
+            )
+        if not filling.index.equals(pd.RangeIndex(101)):
+            raise ValueError(
+                "Storage values: the filling curves (storagevalue_filling) must have the rows 0..100, one per "
+                f"percent of filling; they have {len(filling.index)} rows ({_span(filling.index)})"
+            )
+        legacy = grid.storagevalue_time is not None
+        self.storval_time_legacy = legacy
+        time_table = grid.storagevalue_time if legacy else grid.profiles
+        time_where = "storagevalue_time" if legacy else "the profiles"
+        problems = []
+
+        def resolve(table, what, ids, column, columns, where, const_is_one):
+            if column not in table.columns:
+                problems.append(f"the {what} table has no '{column}' column")
+                return {}
+            if const_is_one:
+                names = override_profile_refs(table, column)
+            else:
+                names = table[column].astype(object).where(table[column].notna(), "").astype(str)
+            out = {}
+            unknown = {}
+            for i in ids:
+                name = names.loc[i]
+                if const_is_one and name == "":
+                    out[i] = -1
+                    continue
+                pos = int(columns.get_indexer([name])[0])
+                if pos < 0:
+                    unknown.setdefault(name, []).append(i)
+                out[i] = pos
+            for name, rows in unknown.items():
+                problems.append(f"{what} {column} '{name}' is not a column of {where}, for {what}(s) {_rows(rows)}")
+            return out
+
+        fill_cols = filling.columns
+        time_cols = time_table.columns
+        gen, cons = grid.generator, grid.consumer
+        self.storval_filling_pos = resolve(
+            gen, "generator", gens, "storval_filling_ref", fill_cols, "storagevalue_filling", False
+        )
+        self.storval_time_pos = resolve(gen, "generator", gens, "storval_time_ref", time_cols, time_where, not legacy)
+        self.storval_flex_filling_pos = resolve(
+            cons, "consumer", flex, "flex_storval_filling", fill_cols, "storagevalue_filling", False
+        )
+        self.storval_flex_time_pos = resolve(
+            cons, "consumer", flex, "flex_storval_time", time_cols, time_where, not legacy
+        )
+        if problems:
+            raise ValueError("Storage values:\n  " + "\n  ".join(problems))
 
     def _build_ramping(self, grid):
         # Ramp-rate limits in per-unit of installed generator capacity. NaN means unconstrained.
@@ -178,56 +313,6 @@ class GridContext:
             grid.generator["ramp_down_pu"].values.copy() if "ramp_down_pu" in grid.generator.columns else None
         )
         self.ramp_cap_mw = pd.to_numeric(grid.generator["pmax"], errors="coerce").fillna(0.0).values
-        # If True for a generator, the ramp constraint is released at the start of every 24-hour
-        # block (timestep % 24 == 0).  This models plant types (e.g. nuclear) whose output level
-        # is decided day-ahead but is held constant throughout the day.
-        # NOTE: Assumes simulations start at hour 0 (midnight).  Timestep indices from
-        # continue_from_last runs preserve the original numbering so midnight detection remains valid.
-        if "ramp_daily_reset" in grid.generator.columns:
-            self.ramp_daily_reset = grid.generator["ramp_daily_reset"].fillna(False).astype(bool).values
-        else:
-            self.ramp_daily_reset = None
-
-        # Optional bypass for nuclear ramp/daily-reset when nuclear operational
-        # profile limits are active (pmax_ref/pmin_ref runtime binding).
-        # This avoids infeasible day-joint intersections where a constant
-        # intra-day ramp policy conflicts with hour-varying profile bounds.
-        _nuclear_limits_active = str(os.environ.get("T45_NUCLEAR_OPERATIONAL_LIMITS", "")).strip().lower() not in {
-            "",
-            "0",
-            "false",
-            "off",
-            "no",
-        }
-        self.disable_nuclear_ramp_profile_conflict = np.zeros(len(grid.generator), dtype=bool)
-        if _nuclear_limits_active and ("type" in grid.generator.columns):
-            _gtype = grid.generator["type"].astype(str).str.lower().str.strip()
-            _is_nuclear = _gtype.eq("nuclear")
-            _has_pmax_ref = pd.Series(False, index=grid.generator.index)
-            _has_pmin_ref = pd.Series(False, index=grid.generator.index)
-            if self.pmax_ref is not None:
-                _has_pmax_ref = self.pmax_ref.astype(str).str.strip().ne("")
-            if self.pmin_ref is not None:
-                _has_pmin_ref = self.pmin_ref.astype(str).str.strip().ne("")
-            if "nuclear_fully_constrained" in grid.generator.columns:
-                _fully_constrained = grid.generator["nuclear_fully_constrained"].fillna(False).astype(bool)
-            else:
-                # Backward-compatible fallback: matching non-empty pmax/pmin refs
-                # typically indicate a fully pinned nuclear profile.
-                _pmax_txt = (
-                    self.pmax_ref.astype(str).str.strip()
-                    if self.pmax_ref is not None
-                    else pd.Series("", index=grid.generator.index)
-                )
-                _pmin_txt = (
-                    self.pmin_ref.astype(str).str.strip()
-                    if self.pmin_ref is not None
-                    else pd.Series("", index=grid.generator.index)
-                )
-                _fully_constrained = _pmax_txt.ne("") & _pmax_txt.eq(_pmin_txt)
-            _disable = _is_nuclear & _has_pmax_ref & _has_pmin_ref & _fully_constrained
-            if _disable.any():
-                self.disable_nuclear_ramp_profile_conflict[_disable.values] = True
 
     def _build_flow_bounds(self, grid):
         for b in grid.branch.index:
@@ -243,23 +328,23 @@ class GridContext:
             else:
                 self.default_dc_flow_bounds[int(b)] = (None, None)
 
-    def _build_inter_area_ntc(self, grid):
+    def _build_inter_area_rules(self, grid):
         """Resolve each NTC row to the branches crossing that area boundary.
 
         Both formulations need this. It used to be built as a side effect of the
         single-period constraint builder, so multi-period depended on construction
         order to see it at all.
         """
-        self.inter_area_ntc = grid.inter_area_ntc
-        if self.inter_area_ntc is None or self.inter_area_ntc.shape[0] == 0:
+        self.inter_area_rules = grid.inter_area_rules
+        if self.inter_area_rules is None or self.inter_area_rules.shape[0] == 0:
             return
-        for cidx, (_, row) in enumerate(self.inter_area_ntc.iterrows()):
+        for cidx, (_, row) in enumerate(self.inter_area_rules.iterrows()):
             area_from = row["area_from"]
             area_to = row["area_to"]
             # Get branches between the two areas
             br_ac = grid.getInterAreaBranches(area_from=area_from, area_to=area_to, acdc="ac")
             br_dc = grid.getInterAreaBranches(area_from=area_from, area_to=area_to, acdc="dc")
-            self.inter_area_ntc_rows[cidx] = {
+            self.inter_area_rules_rows[cidx] = {
                 "ac_pos": list(br_ac["branches_pos"]),
                 "ac_neg": list(br_ac["branches_neg"]),
                 "dc_pos": list(br_dc["branches_pos"]),

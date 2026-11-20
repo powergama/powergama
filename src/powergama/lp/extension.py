@@ -29,7 +29,7 @@ Construction hooks follow the same rules as the core builders: inside a
 constraint rule, Pyomo components come off the rule's ``model`` argument and
 everything else off ``ctx``, ``grid`` or the extension itself.
 
-Two class attributes describe the extension to the core:
+One class attribute describes the extension to the core:
 
 ``supports_multi_period``
     Whether the extension works in windows longer than one timestep. Combining one
@@ -37,10 +37,6 @@ Two class attributes describe the extension to the core:
     ``horizon_hours > 1`` raises, rather than solving a problem the extension was
     not written for. Model components are indexed by hour ``h`` of the window
     (``model.varGeneration[i, h]``); in a window of one timestep, ``h`` is 0.
-``exempt_pinned_from_ramp``
-    Skip ramp-rate clipping for generators whose limits pin them to one output
-    (pmin ≈ pmax). Clipping such a generator lowers pmax below pmin, and the
-    guard that follows then lowers pmin, moving it off the pinned output.
 """
 
 
@@ -48,7 +44,6 @@ class ModelExtension:
     """Base class for an optional addition to the model."""
 
     supports_multi_period = False
-    exempt_pinned_from_ramp = False
 
     def prepare(self, lp, grid):
         pass

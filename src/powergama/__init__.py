@@ -41,10 +41,8 @@ Import grid model and time series data from files
 >>>                   dc_branches="hvdc.csv",
 >>>                   generators="generators.csv",
 >>>                   consumers="consumers.csv")
->>> data.readProfileData(inflow="inflow.csv",
->>>                      demand="demand.csv",
+>>> data.readProfileData(filename=["profiles.csv", "profile_storval_time.csv"],
 >>>                      storagevalue_filling="profile_storval_filling.csv",
->>>                      storagevalue_time="profile_storval_time.csv",
 >>>                      timerange=timerange,
 >>>                      timedelta=timedelta)
 

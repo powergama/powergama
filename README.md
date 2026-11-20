@@ -14,7 +14,7 @@ PowerGAMA is an open-source Python package for power system grid and market anal
 
 Since some generators may have an energy storage (hydro power with reservoir and concentrated solar power with thermal storage) the optimal solution in one timestep depends on the previous timestep, and the problem should therefore be solved sequentially. A realistic utilisation of energy storage is ensured through the use of storage values.
 
-PowerGAMA does not include any power market subtleties (such as start-up costs, limited ramp rates, forecast errors, unit commitments) and as such will tend to overestimate the ability to accommodate large amounts of variable renewable energy. Essentially it assumes a perfect market based on nodal pricing without barriers between different countries. This is naturally a gross oversimplification of the real power system, but gives nonetheless very useful information to guide the planning of grid developments and to assess broadly the impacts of new generation and new interconnections.
+In its basic form, PowerGAMA does not include power market subtleties (such as start-up costs, limited ramp rates, forecast errors, unit commitments) and as such will tend to overestimate the ability to accommodate large amounts of variable renewable energy. Two extensions address part of this for studies of grid operation: multi-period optimisation with a rolling horizon, with ramp limits, mimics the day-ahead market, and the real-time (RT) extension corrects its schedule for forecast errors (see the [user guide](userguide/usage.md)). Essentially it assumes a perfect market based on nodal pricing without barriers between different countries. This is naturally a gross oversimplification of the real power system, but gives nonetheless very useful information to guide the planning of grid developments and to assess broadly the impacts of new generation and new interconnections.
 
 ## Documentation
 
@@ -31,8 +31,7 @@ pip install powergama
 Prerequisite: 
 - [Poetry](https://python-poetry.org/docs/#installation)
 - [Pre-commit](https://pre-commit.com/)
-- An LP solver, e.g. the free [CBC solver](https://projects.coin-or.org/Cbc).
-Clone or download the code and install it as a python package. The tests rely on the [GLPK solver](https://www.gnu.org/software/glpk/).
+- An LP solver, The HIGHS solver is included in the package, but other solvers can also be used.
 
 
 ### Install 
@@ -62,12 +61,4 @@ You are welcome to contribute to the improvement of the code.
 [Harald G Svendsen](https://www.sintef.no/en/all-employees/employee/?empid=3414)  
 SINTEF Energy Research
 
-## Project-Specific Workflow Note (This Workspace)
-
-If you are running the WILLOW T45 scenario workflows from this repository workspace, use the T45 runbooks instead of generic package commands:
-
-- `../willow/T45/README.md`
-- `../willow/T45/workflow/README.md`
-
-These documents provide copy-paste commands for the maintained scenario (`2023_I_A_A`), environment setup (`willow-py311`), and weekly storage-value sensitivity runs.
 

@@ -46,7 +46,7 @@ def build_model(model, grid, ctx, cfg, H, extensions=()):
     objective_by_hour = create_objective(model, grid, ctx, cfg, H, extensions)
     powerbalance_rhs = get_powerbalance_rhs(model, ctx)
     create_constraint_powerflow_limit(model, grid, ctx, cfg)
-    create_constraint_inter_area_ntc(model, grid, ctx, cfg)
+    create_constraint_inter_area_rules(model, grid, ctx, cfg)
     create_constraint_powerloss(model, grid, ctx, cfg)
     create_constraint_generator_output(model, grid, ctx, cfg)
     create_constraint_generator_pump(model, grid, ctx, cfg)
@@ -64,9 +64,7 @@ def ramped_generators(ctx, ramp):
     """Generators with a ramp limit in *ramp* (ctx.ramp_up_pu or ctx.ramp_down_pu)."""
     if ramp is None:
         return []
-    return [
-        i for i in ctx.gen_ids if not ctx.disable_nuclear_ramp_profile_conflict[int(i)] and not np.isnan(float(ramp[i]))
-    ]
+    return [i for i in ctx.gen_ids if not np.isnan(float(ramp[i]))]
 
 
 def create_sets_and_parameters(model, grid, ctx, cfg, H):
@@ -167,9 +165,8 @@ def create_sets_and_parameters(model, grid, ctx, cfg, H):
         model.p_branch_dc_powerflow21 = pyo.Param(
             model.s_branch_dc, model.s_h, within=pyo.Reals, initialize=0, mutable=True
         )
-    # Ramp limits between consecutive hours of the window, in MW. Lifted to twice the
-    # installed capacity at midnight for generators with a daily reset, so that one
-    # built model serves windows starting at any hour.
+    # Ramp limits between consecutive hours of the window, in MW, lifted where a cap
+    # moves faster than the ramp allows (data._update_ramp_limits: caps win over ramps).
     model.p_ramp_up_mw = pyo.Param(model.s_ramp_up, within=pyo.Reals, default=0, mutable=True)
     model.p_ramp_dn_mw = pyo.Param(model.s_ramp_dn, within=pyo.Reals, default=0, mutable=True)
 
@@ -253,7 +250,7 @@ def create_constraint_powerflow_limit(model, grid, ctx, cfg):
     model.cMaxFlowDc = pyo.Constraint(model.s_branch_dc, model.s_h, rule=maxflowDc_rule)
 
 
-def create_constraint_inter_area_ntc(model, grid, ctx, cfg):
+def create_constraint_inter_area_rules(model, grid, ctx, cfg):
     """Constraint: Directional NTC limits between areas.
 
     For each (area_from, area_to) pair, limit the net transfer
@@ -261,10 +258,10 @@ def create_constraint_inter_area_ntc(model, grid, ctx, cfg):
         -ntc_backward <= net_transfer <= ntc_forward
     """
 
-    if ctx.inter_area_ntc is None or ctx.inter_area_ntc.shape[0] == 0:
+    if ctx.inter_area_rules is None or ctx.inter_area_rules.shape[0] == 0:
         return
 
-    model.s_inter_area_ntc = pyo.RangeSet(0, len(ctx.inter_area_ntc) - 1)
+    model.s_inter_area_rules = pyo.RangeSet(0, len(ctx.inter_area_rules) - 1)
 
     def net_transfer(model, row, h):
         return (
@@ -275,7 +272,7 @@ def create_constraint_inter_area_ntc(model, grid, ctx, cfg):
         )
 
     def ntc_forward_rule(model, cidx, h):
-        row = ctx.inter_area_ntc_rows[int(cidx)]
+        row = ctx.inter_area_rules_rows[int(cidx)]
         cap = row["ntc_forward"]
         if not np.isfinite(cap):
             return pyo.Constraint.Skip
@@ -284,7 +281,7 @@ def create_constraint_inter_area_ntc(model, grid, ctx, cfg):
         return net_transfer(model, row, h) <= cap
 
     def ntc_backward_rule(model, cidx, h):
-        row = ctx.inter_area_ntc_rows[int(cidx)]
+        row = ctx.inter_area_rules_rows[int(cidx)]
         cap = row["ntc_backward"]
         if not np.isfinite(cap):
             return pyo.Constraint.Skip
@@ -292,8 +289,8 @@ def create_constraint_inter_area_ntc(model, grid, ctx, cfg):
             return pyo.Constraint.Skip
         return net_transfer(model, row, h) >= -cap
 
-    model.cInterAreaNtcForward = pyo.Constraint(model.s_inter_area_ntc, model.s_h, rule=ntc_forward_rule)
-    model.cInterAreaNtcBackward = pyo.Constraint(model.s_inter_area_ntc, model.s_h, rule=ntc_backward_rule)
+    model.cInterAreaRulesForward = pyo.Constraint(model.s_inter_area_rules, model.s_h, rule=ntc_forward_rule)
+    model.cInterAreaRulesBackward = pyo.Constraint(model.s_inter_area_rules, model.s_h, rule=ntc_backward_rule)
 
 
 def _powerloss_rules1(model, grid, ctx, cfg):

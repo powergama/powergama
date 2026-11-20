@@ -132,12 +132,13 @@ def test_storage_bounded_and_spills_only_when_full(tmp_path, mode):
         assert (storage[spilled > TOL] >= capacity - 1e-4).all(), "spilled while the reservoir had room"
 
 
-def test_unknown_storage_value_curve_raises(tmp_path):
-    """A storage value curve name that is not in the table is an error, not another curve."""
+def test_unknown_storage_value_curve_raises():
+    """A storage value curve name that is not in the table is an error, not another curve.
+
+    It is checked once, when the problem is built.
+    """
     data = _9bus(range(2))
     (csp,) = data.getIdxGeneratorsWithStorage()
     data.generator.loc[csp, "storval_filling_ref"] = "no_such_curve"
-    lp = powergama.LpProblem(data)
-    res = powergama.Results(data, tmp_path / "bad_curve.sqlite", replace=True)
-    with pytest.raises(KeyError, match="no_such_curve"):
-        lp.solve(res, solver="appsi_highs", solve_args={})
+    with pytest.raises(ValueError, match="no_such_curve"):
+        powergama.LpProblem(data)

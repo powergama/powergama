@@ -16,6 +16,8 @@ linearisation point -- alongside grid data and config. An eight-argument
 signature would be a longer way of spelling `self`, not an interface.
 """
 
+import warnings
+
 import numpy as np
 import pandas as pd
 
@@ -60,7 +62,9 @@ def _generator_limits(lp, timestep):
     P_max = gen["pmax"].to_numpy(float)
     P_min = gen["pmin"].to_numpy(float)
 
-    # Time-varying pmax factor is applied to installed capacity.
+    # Time-varying pmax factor is applied to installed capacity. The refs were
+    # validated by GridContext: "" (no profile) is the only name that is not a
+    # column, and it gives NaN here, i.e. no override. So does a NaN profile value.
     pmax_factor = np.ones(len(gen))
     if lp._pmax_ref is not None:
         factor = _profile_values(grid.profiles, timestep, lp._pmax_ref, required=False)
@@ -114,30 +118,32 @@ def update_window(lp, timesteps):
     # 1b. Apply ramp-rate limits around previous-timestep dispatch,
     #     with delta caps scaled by installed capacity (ramp_pu * pmax_installed).
     #     Generators with NaN ramp values or NaN _gen_prev (first timestep) are unconstrained.
-    # Daily-reset generators have their _gen_prev cleared at the start of each 24-hour window,
-    # so they are free to choose a new level at midnight while staying fixed intra-day.
-    if lp._ramp_daily_reset is not None and timestep % 24 == 0:
-        lp._gen_prev[lp._ramp_daily_reset & ~lp._disable_nuclear_ramp_profile_conflict] = np.nan
+    #     Caps always win over ramps: the ramp window [prev - down, prev + up] is clipped
+    #     into the cap interval [pmin, pmax] (installed capacity, *_ref profiles, inflow and
+    #     storage), so a cap floor rising faster than the ramp-up lifts the unit to the floor,
+    #     a cap ceiling falling faster than the ramp-down takes it down to the ceiling, and a
+    #     pinned unit (pmin = pmax) follows its pin.
+    #     Where a cap moves the bound this way, caps and ramps conflict: reported below.
+    #     A storage unit running out of energy is not a conflict; its ceiling is checked
+    #     without the availability from storage.
+    conflicts = []
     if lp._ramp_up_pu is not None or lp._ramp_down_pu is not None:
         prev = lp._gen_prev
-        ramped = ~np.isnan(prev) & ~lp._disable_nuclear_ramp_profile_conflict
-        # An extension may exempt fully pinned generators (pmin ≈ pmax) from the
-        # ramp: clipping pmax below pmin makes the guard below lower pmin, moving the
-        # generator off its pinned output. See ModelExtension.exempt_pinned_from_ramp.
-        if lp._exempt_pinned_from_ramp:
-            ramped &= ~(pmax - pmin < 1e-6)
+        ramped = ~np.isnan(prev)
         cap = lp._ramp_cap_mw.astype(float)
         pmax_ramped, pmin_ramped = pmax, pmin
         if lp._ramp_up_pu is not None:
             ramp_up = lp._ramp_up_pu.astype(float)
-            pmax_ramped = np.where(~np.isnan(ramp_up), np.minimum(pmax, prev + ramp_up * cap), pmax)
+            reach = prev + ramp_up * cap
+            pmax_ramped = np.where(ramped & ~np.isnan(ramp_up), np.minimum(np.maximum(reach, pmin), pmax), pmax)
+            conflicts.append(("floor_up", 0, np.where(ramped & ~np.isnan(ramp_up), pmin - reach, 0.0)))
         if lp._ramp_down_pu is not None:
             ramp_dn = lp._ramp_down_pu.astype(float)
-            pmin_ramped = np.where(~np.isnan(ramp_dn), np.maximum(pmin, prev - ramp_dn * cap), pmin)
-        # Guard: pmin must not exceed pmax after ramp clipping
-        pmin_ramped = np.minimum(pmin_ramped, pmax_ramped)
-        pmax = np.where(ramped, np.maximum(pmax_ramped, 0), pmax)
-        pmin = np.where(ramped, np.maximum(pmin_ramped, 0), pmin)
+            reach = prev - ramp_dn * cap
+            pmin_ramped = np.where(ramped & ~np.isnan(ramp_dn), np.minimum(np.maximum(reach, pmin), pmax), pmin)
+            ceiling = np.where(is_storage, np.maximum(pmax, capacity_now), pmax)
+            conflicts.append(("ceiling_down", 0, np.where(ramped & ~np.isnan(ramp_dn), reach - ceiling, 0.0)))
+        pmax, pmin = pmax_ramped, pmin_ramped
     pmax_all, pmin_all = [pmax], [pmin]
 
     # Later hours: availability from storage is a constraint on the hour before
@@ -152,7 +158,8 @@ def update_window(lp, timesteps):
     hours = range(H)
     _store(model.p_gen_pmax, _by_hour(model.s_gen, hours), np.concatenate(pmax_all))
     _store(model.p_gen_pmin, _by_hour(model.s_gen, hours), np.concatenate(pmin_all))
-    _update_ramp_limits(lp, timesteps)
+    conflicts += _update_ramp_limits(lp, np.vstack(pmin_all), np.vstack(pmax_all))
+    _report_cap_ramp_conflicts(lp, timesteps, conflicts)
 
     # 2. Update demand
     #    -> power balance constraint
@@ -190,7 +197,7 @@ def update_window(lp, timesteps):
         _store(
             model.p_storage_value,
             stores,
-            storage_value.generator_storage_values(grid, stores, storage[stores], timesteps[-1]),
+            storage_value.generator_storage_values(grid, lp._ctx, stores, storage[stores], timesteps[-1]),
         )
 
     # 3b. flexible load: reservoir level at the start of the window, and the value of
@@ -198,7 +205,9 @@ def update_window(lp, timesteps):
     for i in lp._idx_consumersWithFlexLoad:
         model.p_flex_storage_prev[i] = lp._ctx.flex_storage_seed(i, float(lp._storage_flexload[i]))
         for h, ts in enumerate(timesteps):
-            model.p_loadflex_cost[i, h] = storage_value.flexload_storage_value(lp._grid, i, lp._storage_flexload[i], ts)
+            model.p_loadflex_cost[i, h] = storage_value.flexload_storage_value(
+                lp._grid, lp._ctx, i, lp._storage_flexload[i], ts
+            )
 
     # 4. Extensions, which may override what is set above. They only run in windows
     #    of one timestep. The core sets no branch-flow variable bounds: the rating is
@@ -209,29 +218,86 @@ def update_window(lp, timesteps):
     return
 
 
-def _update_ramp_limits(lp, timesteps):
+def _update_ramp_limits(lp, pmin, pmax):
     """Write the ramp limits between consecutive hours of the window, in MW.
 
-    A generator with a daily reset is free to change its output at midnight, so its
-    limit into a midnight hour is lifted to twice its installed capacity -- more than
-    it could ever change by.
+    *pmin* and *pmax* are the generator bounds of each hour as written into
+    p_gen_pmin/p_gen_pmax, shape (hours, generators). Caps win over ramps here as in the
+    first hour: where the floor rises faster than the ramp-up allows, the ramp-up limit
+    into that hour is lifted to the rise, ``max(ramp_up, pmin[h] - pmin[h-1])``, and where
+    the ceiling falls faster than the ramp-down, the ramp-down limit to the fall,
+    ``max(ramp_down, pmax[h-1] - pmax[h])``. The unit follows the cap at no cost; elsewhere
+    the ramp limits are unchanged.
+
+    The ramp side alone can then never make a window infeasible, whatever the bounds do
+    (both moving at once included), as long as pmin <= pmax in every hour: from any
+    output g in [pmin[h-1], pmax[h-1]], g + up >= pmin[h] and g - down <= pmax[h], so
+    some output in [pmin[h], pmax[h]] is always within reach.
+
+    Returns, for each direction, (kind, hours, generators, excess in MW): how far each
+    cap step goes beyond the ramp, positive where the limit was lifted.
     """
     model = lp.model
     cap = lp._ramp_cap_mw.astype(float)
-    reset_hours = [h for h, ts in enumerate(timesteps) if ts % 24 == 0]
-    for param, keys, ramp in (
-        (model.p_ramp_up_mw, list(model.s_ramp_up), lp._ramp_up_pu),
-        (model.p_ramp_dn_mw, list(model.s_ramp_dn), lp._ramp_down_pu),
+    lifted = []
+    for kind, param, keys, ramp, cap_step in (
+        ("floor_up", model.p_ramp_up_mw, list(model.s_ramp_up), lp._ramp_up_pu, pmin[1:] - pmin[:-1]),
+        ("ceiling_down", model.p_ramp_dn_mw, list(model.s_ramp_dn), lp._ramp_down_pu, pmax[:-1] - pmax[1:]),
     ):
         if not keys:
             continue
         gens = np.array([i for i, _ in keys])
         hours = np.array([h for _, h in keys])
         limit = ramp.astype(float)[gens] * cap[gens]
-        if lp._ramp_daily_reset is not None and reset_hours:
-            released = lp._ramp_daily_reset[gens] & np.isin(hours, reset_hours)
-            limit = np.where(released, 2 * cap[gens], limit)
-        _store(param, keys, limit)
+        step = cap_step[hours - 1, gens]
+        _store(param, keys, np.maximum(limit, step))
+        lifted.append((kind, hours, gens, step - limit))
+    return lifted
+
+
+def _report_cap_ramp_conflicts(lp, timesteps, conflicts, tol=1e-6, shown=10):
+    """Record on lp.cap_ramp_conflicts, and warn once for the window, every place where a cap
+    moved faster than the ramp allows (the cap won). Consistent input data has none.
+
+    *conflicts* holds (kind, hour, excess) with excess by generator for the first hour, and
+    (kind, hours, generators, excess) for the later hours, excess in MW.
+    """
+    found = []
+    for item in conflicts:
+        if len(item) == 3:
+            kind, h, excess = item
+            gens = np.flatnonzero(np.nan_to_num(excess) > tol)
+            found += [(int(timesteps[h]), int(i), kind, float(excess[i])) for i in gens]
+        else:
+            kind, hours, gens, excess = item
+            hit = excess > tol
+            found += [
+                (int(timesteps[h]), int(i), kind, float(x)) for h, i, x in zip(hours[hit], gens[hit], excess[hit])
+            ]
+    if not found:
+        return
+    found.sort()
+    lp.cap_ramp_conflicts.extend(found)
+    gen = lp._grid.generator
+    desc = gen["desc"] if "desc" in gen.columns else None
+    text = {
+        "floor_up": "floor rises {:.3g} MW faster than its ramp-up",
+        "ceiling_down": "ceiling falls {:.3g} MW faster than its ramp-down",
+    }
+    lines = [
+        f"t={t}, generator {i}" + (f" ({desc.iloc[i]})" if desc is not None else "") + ": " + text[k].format(mw)
+        for t, i, k, mw in found[:shown]
+    ]
+    if len(found) > shown:
+        lines.append(f"... and {len(found) - shown} more")
+    warnings.warn(
+        f"Caps and ramp rates conflict in {len(found)} place(s) in the window starting at timestep "
+        f"{timesteps[0]}. This indicates inconsistent caps (pmin/pmax, pmin_ref/pmax_ref, inflow) and "
+        "ramp rates in the input data. The cap wins: the unit follows it beyond its ramp limit. "
+        "All conflicts are listed in LpProblem.cap_ramp_conflicts.\n  " + "\n  ".join(lines),
+        UserWarning,
+        stacklevel=2,
+    )
 
 
 def update_loss_parameters(lp, aclossmultiplier=1, dclossmultiplier=1):

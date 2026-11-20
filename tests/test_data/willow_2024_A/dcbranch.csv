@@ -1,0 +1,49 @@
+node_from,node_to,capacity,resistance,year_in,year_out,comment
+AT0 0,CH0 0,1200.0,0.0,,,Synthetic CH/AT tie (AT-CH)
+CZ-AT,AT0 0,900.0,0.0,,,Foreign proxy CZ-AT XBF boundary
+AT0 0,DE1 21,1225.0,0.0,,,Synthetic CH/AT tie (AT-DE)
+AT0 0,DE1 43,1225.0,0.0,,,Synthetic CH/AT tie (AT-DE)
+AT0 0,DE1 57,1225.0,0.0,,,Synthetic CH/AT tie (AT-DE)
+AT0 0,DE1 69,1225.0,0.0,,,Synthetic CH/AT tie (AT-DE)
+HU-AT,AT0 0,800.0,0.0,,,Foreign proxy HU-AT XBF boundary
+IT-AT,AT0 0,625.0,0.0,,,Foreign proxy IT-AT XBF boundary
+SI-AT,AT0 0,950.0,0.0,,,Foreign proxy SI-AT XBF boundary
+BE1 4,DE1 18,1000.0,0.0,,,Alegro-like BE-DE interconnector
+BE_hub,BE1 8,0.0,0.0,,,
+BE1 8,GB0 47,1000.0,0.0,,,BritNed - Zeebrugge to Richborough Energy Park
+DK_hub,BE_hub,0.0,0.0,,,
+CH0 0,DE1 69,2000.0,0.0,,,Synthetic CH/AT tie (CH-DE)
+CH0 0,DE1 9,2000.0,0.0,,,Synthetic CH/AT tie (CH-DE)
+CH0 0,FR1 28,3200.0,0.0,,,Synthetic CH/AT tie (CH-FR)
+IT-CH,CH0 0,4422.0,0.0,,,Foreign proxy IT-CH XBF boundary
+CZ-DE,DE1 34,1400.0,0.0,,,Foreign proxy CZ-DE XBF boundary
+CZ-DE,DE1 75,1400.0,0.0,,,Foreign proxy CZ-DE XBF boundary
+PL-DE,DE1 25,1000.0,,0.0,9999.0,PL boundary
+DK2 0,DE1 42,600.0,0.0,,,
+PL-DE,DE1 45,1000.0,,0.0,9999.0,PL boundary
+NO2 11,DE1 51,1400.0,,2021.0,9999.0,NordLink - from Tonstad to Wilster 1400MW (Operational 2021)
+PL-DE,DE1 7,500.0,,0.0,9999.0,PL boundary
+SE2 0,DE1 71,600.0,0.0,,,
+DK_hub,DK1 0,0.0,0.0,,,
+DK1 0,GB0 30,1400.0,,2023.0,9999.0,Viking link - Jutland DK - peterborough (Operational 2023)
+DK_hub,DK1 1,0.0,0.0,,,
+DK1 1,NO2 16,1140.0,0.0,,,
+SE2 7,DK1 1,250.0,0.0,,,
+SE2 7,DK1 1,300.0,0.0,,,
+DK2 1,DK1 2,600.0,0.0,,,
+ES-FR,FR1 19,1350.0,0.0,,,Foreign proxy ES-FR XBF boundary
+ES-FR,FR1 34,1350.0,0.0,,,Foreign proxy ES-FR XBF boundary
+SE2 11,FI2 6,800.0,0.0,,,
+SE2 14,FI2 6,500.0,0.0,,,
+IT-FR,FR1 13,2550.0,0.0,,,Foreign proxy IT-FR XBF boundary
+IT-FR,FR1 24,2550.0,0.0,,,Foreign proxy IT-FR XBF boundary
+GB0 47,FR1 9,2000.0,0.0,,,
+GB0 26,GB0 1,2200.0,0.0,,,
+GB0 15,GB0 21,1200.0,0.0,,,
+GB0 26,GB5 0,250.0,0.0,,,
+GB0 26,GB5 0,2501.0,0.0,,,
+GB0 47,NL1 17,1000.0,0.0,,,
+NO2 6,GB0 9,1400.0,,2021.0,9999.0,North Sea Link   (Operational 2021)
+NL_hub,NL1 0,0.0,0.0,,,
+NL1 0,NO2 11,700.0,0.0,,,
+PL-SE,SE2 10,600.0,,0.0,9999.0,PL boundary SwePol link

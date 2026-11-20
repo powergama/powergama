@@ -14,8 +14,11 @@ class FullProfiles:
     ):
         self.stored_profiles = griddata._readProfileFromFile(filename, full_timerange)
         self.timedelta = timedelta
-        if storagevalue_filling is not None:
+        # storagevalue_time is the deprecated separate time table (see GridData.readProfileData);
+        # without it the time curves are columns of the profiles, cut with them.
+        if storagevalue_time is not None:
             self.stored_storagevalue_time = griddata._readProfileFromFile(storagevalue_time, full_timerange)
+        if storagevalue_filling is not None:
             self.storagevalue_filling = griddata._readStoragevaluesFromFile(storagevalue_filling)
 
     def setProfileData(self, timerange, griddata):
@@ -26,7 +29,7 @@ class FullProfiles:
         profiles.index = range(len(timerange))
         griddata.profiles = profiles
 
-        if "stored_storagevalue_time" in self.__dict__:
+        if getattr(self, "stored_storagevalue_time", None) is not None:
             storagevalue_time = self.stored_storagevalue_time.loc[timerange]
             storagevalue_time.index = range(len(timerange))
             griddata.storagevalue_time = storagevalue_time
