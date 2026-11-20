@@ -24,12 +24,8 @@ a pure function of the grid:
 ``_get_powerbalance_rhs`` deliberately does *not* move here despite also being
 keyed on the B matrix: it builds Pyomo expressions over ``varVoltageAngle``, so
 it needs a model and belongs with the single-period builder.
-
-``T45_NUCLEAR_OPERATIONAL_LIMITS`` is read here. It is project-specific, and
-the flag it produces is consumed by the ramp rules of both formulations.
 """
 
-import os
 from dataclasses import dataclass, field, fields
 
 import numpy as np
@@ -129,8 +125,6 @@ class GridContext:
     ramp_up_pu: object = None
     ramp_down_pu: object = None
     ramp_cap_mw: object = None
-    ramp_daily_reset: object = None
-    disable_nuclear_ramp_profile_conflict: object = None
 
     # --- branch flow bounds and NTC ----------------------------------------
     default_ac_flow_bounds: dict = field(default_factory=dict)
@@ -319,56 +313,6 @@ class GridContext:
             grid.generator["ramp_down_pu"].values.copy() if "ramp_down_pu" in grid.generator.columns else None
         )
         self.ramp_cap_mw = pd.to_numeric(grid.generator["pmax"], errors="coerce").fillna(0.0).values
-        # If True for a generator, the ramp constraint is released at the start of every 24-hour
-        # block (timestep % 24 == 0).  This models plant types (e.g. nuclear) whose output level
-        # is decided day-ahead but is held constant throughout the day.
-        # NOTE: Assumes simulations start at hour 0 (midnight).  Timestep indices from
-        # continue_from_last runs preserve the original numbering so midnight detection remains valid.
-        if "ramp_daily_reset" in grid.generator.columns:
-            self.ramp_daily_reset = grid.generator["ramp_daily_reset"].fillna(False).astype(bool).values
-        else:
-            self.ramp_daily_reset = None
-
-        # Optional bypass for nuclear ramp/daily-reset when nuclear operational
-        # profile limits are active (pmax_ref/pmin_ref runtime binding).
-        # This avoids infeasible day-joint intersections where a constant
-        # intra-day ramp policy conflicts with hour-varying profile bounds.
-        _nuclear_limits_active = str(os.environ.get("T45_NUCLEAR_OPERATIONAL_LIMITS", "")).strip().lower() not in {
-            "",
-            "0",
-            "false",
-            "off",
-            "no",
-        }
-        self.disable_nuclear_ramp_profile_conflict = np.zeros(len(grid.generator), dtype=bool)
-        if _nuclear_limits_active and ("type" in grid.generator.columns):
-            _gtype = grid.generator["type"].astype(str).str.lower().str.strip()
-            _is_nuclear = _gtype.eq("nuclear")
-            _has_pmax_ref = pd.Series(False, index=grid.generator.index)
-            _has_pmin_ref = pd.Series(False, index=grid.generator.index)
-            if self.pmax_ref is not None:
-                _has_pmax_ref = self.pmax_ref.astype(str).str.strip().ne("")
-            if self.pmin_ref is not None:
-                _has_pmin_ref = self.pmin_ref.astype(str).str.strip().ne("")
-            if "nuclear_fully_constrained" in grid.generator.columns:
-                _fully_constrained = grid.generator["nuclear_fully_constrained"].fillna(False).astype(bool)
-            else:
-                # Backward-compatible fallback: matching non-empty pmax/pmin refs
-                # typically indicate a fully pinned nuclear profile.
-                _pmax_txt = (
-                    self.pmax_ref.astype(str).str.strip()
-                    if self.pmax_ref is not None
-                    else pd.Series("", index=grid.generator.index)
-                )
-                _pmin_txt = (
-                    self.pmin_ref.astype(str).str.strip()
-                    if self.pmin_ref is not None
-                    else pd.Series("", index=grid.generator.index)
-                )
-                _fully_constrained = _pmax_txt.ne("") & _pmax_txt.eq(_pmin_txt)
-            _disable = _is_nuclear & _has_pmax_ref & _has_pmin_ref & _fully_constrained
-            if _disable.any():
-                self.disable_nuclear_ramp_profile_conflict[_disable.values] = True
 
     def _build_flow_bounds(self, grid):
         for b in grid.branch.index:

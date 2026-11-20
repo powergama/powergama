@@ -64,9 +64,7 @@ def ramped_generators(ctx, ramp):
     """Generators with a ramp limit in *ramp* (ctx.ramp_up_pu or ctx.ramp_down_pu)."""
     if ramp is None:
         return []
-    return [
-        i for i in ctx.gen_ids if not ctx.disable_nuclear_ramp_profile_conflict[int(i)] and not np.isnan(float(ramp[i]))
-    ]
+    return [i for i in ctx.gen_ids if not np.isnan(float(ramp[i]))]
 
 
 def create_sets_and_parameters(model, grid, ctx, cfg, H):
@@ -167,9 +165,8 @@ def create_sets_and_parameters(model, grid, ctx, cfg, H):
         model.p_branch_dc_powerflow21 = pyo.Param(
             model.s_branch_dc, model.s_h, within=pyo.Reals, initialize=0, mutable=True
         )
-    # Ramp limits between consecutive hours of the window, in MW. Lifted to twice the
-    # installed capacity at midnight for generators with a daily reset, so that one
-    # built model serves windows starting at any hour.
+    # Ramp limits between consecutive hours of the window, in MW, lifted where a cap
+    # moves faster than the ramp allows (data._update_ramp_limits: caps win over ramps).
     model.p_ramp_up_mw = pyo.Param(model.s_ramp_up, within=pyo.Reals, default=0, mutable=True)
     model.p_ramp_dn_mw = pyo.Param(model.s_ramp_dn, within=pyo.Reals, default=0, mutable=True)
 

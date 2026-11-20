@@ -71,7 +71,9 @@ def test_fixture_exercises_the_intended_features(two_area_data):
 
 
 def _stored_inter_area_rules(dbfile):
-    return powergama.database.Database(dbfile).get_grid_data()["inter_area_rules"]
+    """The table as GridData.from_dict reads it back (SQLite stores the NaN lock_share as NULL)."""
+    table = powergama.database.Database(dbfile).get_grid_data()["inter_area_rules"]
+    return powergama.GridData._astype_present(table, powergama.GridData.dtypes["inter_area_rules"])
 
 
 def test_inter_area_rules_round_trip_through_database(tmp_path, two_area_data):

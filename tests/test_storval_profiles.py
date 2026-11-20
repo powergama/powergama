@@ -213,7 +213,7 @@ def test_database_round_trip_without_time_table(tmp_path):
         tables = set(pd.read_sql("SELECT name FROM sqlite_master WHERE type='table'", con)["name"])
     assert "data_storval_filling" in tables
     assert "data_storval_time" not in tables
-    grid = powergama.Results.from_existing(original.db.filename, timedelta=1.0).grid
+    grid = powergama.Results.from_existing(original.db.filename, timedelta=1.0, timerange=data.timerange).grid
     assert grid.storagevalue_time is None
     pd.testing.assert_frame_equal(
         grid.storagevalue_filling, data.storagevalue_filling, check_dtype=False, check_names=False
@@ -226,7 +226,7 @@ def test_database_round_trip_without_time_table(tmp_path):
 def test_database_round_trip_legacy_keeps_time_table(tmp_path):
     data = _legacy(tmp_path)
     res = powergama.Results(data, tmp_path / "legacy.sqlite", replace=True)
-    grid = powergama.Results.from_existing(res.db.filename, timedelta=1.0).grid
+    grid = powergama.Results.from_existing(res.db.filename, timedelta=1.0, timerange=data.timerange).grid
     pd.testing.assert_frame_equal(grid.storagevalue_time, data.storagevalue_time, check_dtype=False, check_names=False)
 
 
@@ -238,7 +238,7 @@ def test_wide_profiles_keep_the_time_curves(tmp_path):
     data.profiles = pd.concat([data.profiles, wide], axis=1)
     data.generator.loc[GEN_GAS, "storval_time_ref"] = "x7"  # no storage: not kept
     res = powergama.Results(data, tmp_path / "wide.sqlite", replace=True)
-    kept = powergama.Results.from_existing(res.db.filename, timedelta=1.0).grid.profiles
+    kept = powergama.Results.from_existing(res.db.filename, timedelta=1.0, timerange=data.timerange).grid.profiles
     assert {"svt_hydro", "svt_flex"} <= set(kept.columns)
     assert "x7" not in kept.columns
     assert len(kept.columns) < 20

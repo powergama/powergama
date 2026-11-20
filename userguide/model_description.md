@@ -13,8 +13,8 @@ marginal costs are always favoured. That is, power is assumed traded
 such that the overall cost of generation is always minimised.
 
 The cost of generation is assumed to be the marginal cost times power
-output for all generators. Start-up costs and ramp rates are not
-considered.
+output for all generators. Start-up costs are not considered. Generators
+may have ramp limits (see "Ramp limits" below).
 
 For generators with storage, the marginal cost is given by storage
 values, which depends on filling level. Storage values are inspired by
@@ -50,6 +50,34 @@ storage.
 <img src="storagevalues.png" id= "fig_storagevalues" />
 <b>Figure 1</b>: Illustration of typical storage values with dependence on filling level (left) and time variation for solar power with small storage (middle) and hydro with large storage (right).
 </p>
+
+### Timestep by timestep, or over a window with a rolling horizon
+
+In its original form PowerGAMA optimises one time step at a time: each
+time step is cleared on its own, and the storage levels it leaves are
+the starting point of the next. The optimisation has no view of the
+time steps ahead; storage values carry that information instead. This
+suits studies of grid capacity and long-term investments.
+
+To study grid operation, the optimisation can instead cover a **window**
+of several time steps at once (multi-period mode). It then sees the
+whole window: a storage unit can charge in the hours of a solar or wind
+surplus and discharge in the evening peak of the same window, without
+storage values having to encode that daily cycle. Long runs are split
+into windows that **roll**: each window of $H_	ext{look}$ time steps
+(for example 24) is optimised, only its first $H_	ext{commit}$ time
+steps (for example 12) are kept, and the next window starts from the
+state these left. This mimics a day-ahead market, which clears the
+dispatch of a whole day at once on forecasts. Storage values still value
+the energy left in storage at the end of each window; within a window
+they are evaluated once, from the filling level at its start.
+
+A window of one time step is exactly the original problem, so the two
+modes share one formulation
+([model_formulations.md](model_formulations.md)). The real-time (RT)
+extension, which corrects a day-ahead schedule for forecast errors when
+the delivery hour comes, is described separately in
+[model_description_RT.md](model_description_RT.md).
 
 ## Power generation
 
@@ -122,7 +150,7 @@ The generator model is described by the following parameters:
 -   Power inflow ($P_\text{inflow}$)
 -   Energy storage capacity ($E_\text{max}$)
 -   Energy in storage ($E$)
--   Generator capacity ($P_\text{max}$)
+-   Installed generator capacity ($P_\text{installed}$, column `pmax`)
 -   Generator minimum production ($P_\text{min}$). Normally, this is
     value is zero.
 -   Generator output ($P_\text{output}$)
@@ -150,13 +178,54 @@ generator output is given as
 $$\begin{aligned}
     \text{No storage generators:} \quad && P_\text{limit} = P_\text{avail},
     \\
-    \text{Non-zero storage generators:} \quad && P_\text{limit} = \min[P_\text{avail}, P_\text{max}],
+    \text{Non-zero storage generators:} \quad && P_\text{limit} = \min[P_\text{avail}, P_\text{installed}],
     \\
-    \text{Infinite storage generators:} \quad && P_\text{limit} = P_\text{max}.\end{aligned}$$
+    \text{Infinite storage generators:} \quad && P_\text{limit} = P_\text{installed}.\end{aligned}$$
 
 The constraint on generator power output can then be written
 
 $$P_\text{min} \le P_\text{output} \le P_\text{limit}.$$
+
+### Time-varying capacity limits
+
+The available capacity and the minimum output can vary in time, through
+profiles that replace the static values: the available capacity becomes
+$P_\text{installed} \times \text{profile}(t)$ (`pmax_ref`) and the minimum
+output $P_\text{installed} \times \text{profile}(t)$ (`pmin_ref`), both
+fractions of the installed capacity. Typical uses are planned outages and
+availability of thermal plants, or a must-run level. Giving both the same
+profile **pins** the output to that profile, for example a nuclear plant
+whose output follows its availability, or a unit held to a schedule from
+an earlier run. The available capacity also scales the inflow, so a
+wind farm with an availability profile produces its resource times its
+availability.
+
+### Ramp limits
+
+Many plants cannot change their output quickly: thermal plants are
+limited by boiler and turbine stresses. Without ramp limits, an
+optimisation lets them swing from full output to zero from one hour to
+the next, and absorb renewable surges at no cost. A generator may
+therefore have ramp limits, as a fraction of its installed capacity per
+time step:
+
+$$-r_\text{down} P_\text{installed} \le P_\text{output}(t) - P_\text{output}(t-1) \le r_\text{up} P_\text{installed}.$$
+
+They apply in both modes: in single-period mode around the output of the
+previous time step, and in multi-period mode also between the time steps
+of a window. Ramp limits never override a capacity limit: where the
+minimum output rises, or the available capacity falls, faster than the
+ramp allows (an availability profile stepping down, a pinned unit
+following its pin), the generator follows the capacity limit. Such a
+place is an inconsistency in the input data, and PowerGAMA reports it.
+
+A large fleet can be represented by several generator rows, for example
+price blocks with increasing marginal cost. Each block then ramps on its
+own, so the ramping capability is that of the blocks in operation: only
+blocks that produce can ramp down, and only blocks that are not at full
+output can ramp up. A block that starts from zero is treated like one
+that ramps, with no start-up delay or minimum stable output. The
+optional column `block_group` marks the rows of one physical unit.
 
 ### Power inflow
 
@@ -211,6 +280,11 @@ spilled power as variables. Spilled power is limited to the inflow,
 $0 \le P_\text{spill} \le P_\text{inflow}$: what is spilled is inflow
 that cannot be stored, never energy already in the storage or pumped into
 it. A storage without inflow, such as a battery, therefore cannot spill.
+
+The storage starts from a given filling level, `storage_ini` as a fraction
+of the storage capacity, or the value of a profile at the first time step
+of the run (`storage_ini_ref`), for example historical reservoir levels at
+the start date.
 
 ## Power consumption
 
@@ -398,6 +472,23 @@ $$
 where $D$ is a diagonal matrix with
 elements given by the branch susceptance $D_{mm} =-b_m$, and $A$ is the
 node-arc incidence matrix.
+
+### Net transfer capacities between areas
+
+Besides the capacity of each branch, the exchange between two areas can
+be limited by **net transfer capacities** (NTC): the capacity the market
+may use for exchange between them. NTCs are directional, often
+different in the two directions, and usually well below the physical
+capacity of the lines, since transmission system operators keep margins
+for security and for flows they do not control. For two areas $A$ and
+$B$, with $\mathcal{K}_{A\to B}$ the AC and DC branches between them
+(counted positive from $A$ to $B$), the net transfer is limited by
+
+$$-\text{NTC}_{B\to A} \le \sum_{k \in \mathcal{K}_{A\to B}} P_k \le \text{NTC}_{A\to B}.$$
+
+Both limits hold at the same time: each branch stays within its own
+capacity, and the net transfer within the NTC. Flow may share itself
+between the parallel branches of a border in any way that respects both.
 
 ## Power transmission losses
 Power losses in transmission lines increase quadratically with the power transmission, and since our model is linear, some approximation is necessary.

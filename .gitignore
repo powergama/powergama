@@ -27,3 +27,6 @@ lpsolver_log.txt
 temp_res*.csv
 tempdir/
 tests/tmp_files/*
+
+# Written by tests/example_notebook_willow_da_rt.ipynb
+tests/willow_rt_inputs/
