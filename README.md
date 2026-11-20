@@ -10,11 +10,30 @@
 # PowerGAMA - Power Grid And Market Analysis
 
 ## Introduction
-PowerGAMA is an open-source Python package for power system grid and market analyses.
+PowerGAMA is an open-source Python package for power system grid and market analyses. It finds the
+least-cost dispatch of generation, energy storage and flexible demand on a linearised power flow model
+of the grid. It runs one timestep after another over a year or more, and reports power flows, nodal
+prices, storage use, load shedding and other characteristics.
 
-Since some generators may have an energy storage (hydro power with reservoir and concentrated solar power with thermal storage) the optimal solution in one timestep depends on the previous timestep, and the problem should therefore be solved sequentially. A realistic utilisation of energy storage is ensured through the use of storage values.
+Energy storage and flexible demand mean that the best decision in one timestep depends on the timesteps
+before it. The problem is therefore solved in sequence. Storage values give the stored energy a price
+that ensures realistic use of the storage.
 
-In its basic form, PowerGAMA does not include power market subtleties (such as start-up costs, limited ramp rates, forecast errors, unit commitments) and as such will tend to overestimate the ability to accommodate large amounts of variable renewable energy. Two extensions address part of this for studies of grid operation: multi-period optimisation with a rolling horizon, with ramp limits, mimics the day-ahead market, and the real-time (RT) extension corrects its schedule for forecast errors (see the [user guide](userguide/usage.md)). Essentially it assumes a perfect market based on nodal pricing without barriers between different countries. This is naturally a gross oversimplification of the real power system, but gives nonetheless very useful information to guide the planning of grid developments and to assess broadly the impacts of new generation and new interconnections.
+PowerGAMA can be run in three modes:
+
+- **Single-period** (default): one optimisation per timestep, with the storage level carried forward.
+  This is fast and suits long simulations of large systems.
+- **Multi-period**: a rolling horizon. Each optimisation looks a number of hours ahead (for example
+  24) and keeps only the first ones. With ramp limits, this imitates day-ahead market clearing.
+- **Real-time (balancing)**: a second step after a day-ahead run. It re-dispatches the system for
+  forecast errors or outages, with penalties for straying from the day-ahead schedule.
+
+PowerGAMA is a deliberately simplified model. It assumes a perfect market with nodal pricing, where
+trade between areas can optionally be limited by transfer capacities (NTC). It does not model unit
+commitment, start-up costs or strategic bidding. As a result, it tends to overestimate how much
+variable renewable energy the system can take. Even so, it gives very useful information for planning
+grid developments and for broadly assessing the impact of new generation and new interconnections.
+
 
 ## Documentation
 
@@ -28,18 +47,18 @@ pip install powergama
 ```
 
 ## Install development version
-Prerequisite: 
-- [Poetry](https://python-poetry.org/docs/#installation)
-- [Pre-commit](https://pre-commit.com/)
-- An LP solver, The HIGHS solver is included in the package, but other solvers can also be used.
+Prerequisites:
+- [Poetry](https://python-poetry.org/docs/#installation) (used by CI and `poetry.lock`); [uv](https://docs.astral.sh/uv/) also works
+- No separate LP solver is needed: HiGHS is included in the package and used by default. Gurobi (licence required) and other Pyomo-supported solvers can also be used, but are not tested.
 
-
-### Install 
-1. `git clone git@github.com:powergama/powergama.git`
-2. `cd powergama`
-3. `poetry install`
-4. `poetry shell`
-5. `poetry run pytest tests`
+### Install
+```
+git clone git@github.com:powergama/powergama.git
+cd powergama
+poetry install                 # or: uv sync
+poetry run pre-commit install  # or: uv run pre-commit install
+poetry run pytest              # or: uv run pytest
+```
 
 
 ### GitHub Actions Pipelines

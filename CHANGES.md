@@ -1,7 +1,7 @@
 # Changes
 
-## v2.0.0 (planned)
-2026-xx-xx
+## v2.0.0
+2026-11-20
 - add multi-period simulation mode (rolling horizon, `objective_mode="multi_period"`)
 - add real-time / balancing simulation as a second step after day-ahead
   (`RtExtension`), with `prepare_rt` to build its inputs from a day-ahead run
@@ -23,6 +23,7 @@
 - fix branch capacity sensitivities being zero in single-period mode
 - fix `continue_from_last` with losses not reproducing an uninterrupted run
 - **breaking:** `powergama.LpProblemPyomo` removed; import `LpProblem` from `powergama`
+- **breaking:** the default solver of `LpProblem.solve` is now `appsi_highs` (was `cbc`)
 
 ## v1.5.2
 2026-09-29

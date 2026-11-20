@@ -16,9 +16,10 @@ poetry run ruff check --fix && poetry run ruff format    # line-length 120, doub
 poetry run pre-commit run --all-files                    # ruff + bandit
 ```
 
-An LP solver must be on PATH. Tests use **GLPK** (`choco install glpk` on Windows); HiGHS is
-available in-process via the `highspy` dependency (`solver="appsi_highs"`), which is the fastest
-option and what most tests and the user guide use. CBC and Gurobi are also supported.
+No external LP solver is needed. HiGHS runs in-process via the `highspy` dependency
+(`solver="appsi_highs"`, the default of `LpProblem.solve`) and is the only solver the tests, CI and
+the user guide use. Gurobi (`gurobi`, `gurobi_direct`, `gurobi_persistent`, licence required) and
+other Pyomo solver names are still accepted by `lp/solver.py`, but are not tested.
 
 CI (`.github/workflows/build.yml`) runs the matrix {ubuntu, macos, windows} × {py3.12, py3.14}.
 

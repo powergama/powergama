@@ -45,7 +45,7 @@ def run_fault_simulation(gridmodel_base, full_profiles, fault_scenario_file, fai
     fault_scenario_file : name of fault scenario file
     failure_dir : pathlib.Path - where to save sql file with fault scenario results
     db_base : sqlite file with base model results
-    solver : name of solver to use (glpk, cbc, gurobi_persistent, gurobi,...)
+    solver : name of solver to use (appsi_highs, gurobi, gurobi_persistent,...)
     """
 
     # Load base results and model

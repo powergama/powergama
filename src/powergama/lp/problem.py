@@ -412,7 +412,7 @@ class LpProblem:
     def solve(
         self,
         results,
-        solver="cbc",
+        solver="appsi_highs",
         solver_path=None,
         warmstart=False,
         savefiles=False,
@@ -433,10 +433,14 @@ class LpProblem:
         results : Results
             PowerGAMA Results object reference
         solver : string (optional)
-            name of solver to use ("cbc" or "gurobi"). Gurobi uses python
-            interface, whilst CBC uses command line executable
-        solver_path :string (optional, only relevant for cbc)
-            path for solver executable
+            name of solver to use. The default, "appsi_highs", is HiGHS through
+            Pyomo's in-process APPSI interface; it comes with the package and is the
+            only solver the tests use. "gurobi", "gurobi_direct" and
+            "gurobi_persistent" (licence required) and other Pyomo solver names
+            are supported but not tested.
+        solver_path :string (optional)
+            path for solver executable, for solvers run as a command line
+            executable
         warmstart : Boolean
             Use warmstart option (only some solvers, e.g. gurobi)
         savefiles : Boolean
@@ -556,7 +560,7 @@ class LpProblem:
 
             if warmstart:
                 if opt.warm_start_capable():
-                    # warmstart available (does not work with cbc)
+                    # warmstart available (only some solvers, e.g. gurobi)
                     if count > 0:
                         warmstart_now = warmstart
                     count = count + 1

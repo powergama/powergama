@@ -57,7 +57,7 @@ def solve_problem(gridmodel, name):
     lp = powergama.LpProblem(gridmodel, lossmethod=1)
 
     res = powergama.Results(gridmodel, datapath / ("test-results-%s.sqlite3" % name), replace=True)
-    solver = "glpk"
+    solver = "appsi_highs"
 
     lp.solve(res, solver=solver)
     return res
@@ -97,6 +97,6 @@ def test_shedding(scenario_name):
     assert exp_load_shedding[scenario_name] == pytest.approx(res.getLoadsheddingPerNode()), "Unexpected load shedding"
     assert exp_system_cost[scenario_name] == pytest.approx(res.getSystemCost()["mount"]), "Unexpected system cost"
     for gen in range(len(exp_generation[scenario_name])):
-        assert exp_generation[scenario_name][gen] == pytest.approx(
-            res.db.getResultGeneratorPower(gen, [0, 3])
-        ), "Unexpected generation"
+        assert exp_generation[scenario_name][gen] == pytest.approx(res.db.getResultGeneratorPower(gen, [0, 3])), (
+            "Unexpected generation"
+        )

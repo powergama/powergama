@@ -14,7 +14,7 @@ GridData (class)
     power grid model (nodes, branches, consumers, generators) and power inflow
     and storage value
 LpProblem (class)
-    LP problem, with PuLP interface to external solver (COIN-CBC)
+    LP problem, built with Pyomo and solved with HiGHS by default
 Results (class)
     Ouptut of optimisation, methods for analysis and plotting
 constants

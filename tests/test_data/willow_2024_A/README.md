@@ -34,5 +34,3 @@ study's own processing.
   actual values.
 - **Net transfer capacities between areas:** [Ember, Europe electricity interconnection
   data tool](https://ember-energy.org/data/europe-electricity-interconnection-data-tool/).
-
-Reuse of the data is subject to the terms of these providers.
