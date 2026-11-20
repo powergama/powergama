@@ -53,20 +53,6 @@ jobs:
       - name: Check pyproject.toml validity
         run: poetry check
 
-      - name: Setup GLPK on Ubuntu
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y glpk-utils
-
-      - name: Setup GLPK on macOS
-        if: matrix.os == 'macos-latest'
-        run: brew install glpk
-
-      - name: Setup GLPK on Windows
-        if: matrix.os == 'windows-latest'
-        run: choco install glpk -y
-
       - name: Install dependencies
         run: poetry install --no-interaction
 

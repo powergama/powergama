@@ -15,10 +15,8 @@ An AST check costs nothing and catches both before they can be written.
 
 import ast
 import re
-import sqlite3
 from pathlib import Path
 
-import pandas as pd
 import pyomo.environ as pyo
 import pytest
 
@@ -112,26 +110,3 @@ def test_lpproblem_is_not_a_pyomo_model(testcase_9bus_data):
     assert lp.varGeneration is lp.model.varGeneration
     with pytest.raises(AttributeError):
         lp.no_such_attribute
-
-
-def test_suffix_duals_reach_extraction_on_the_glpk_path(tmp_path, testcase_9bus_data):
-    """Nodal prices must survive the Suffix living on the model, not the LpProblem.
-
-    pyo.Suffix only imports duals when it is a component of the object handed to the
-    solver. Attached to the LpProblem instead, the solve still succeeds and the Suffix
-    is simply never filled. Here that surfaces as a KeyError out of extraction rather
-    than as zeroed prices, because _storeResultsAndUpdateStorage indexes the Suffix
-    directly -- but that is a property of the extraction code, not a guarantee, so
-    this asserts the prices that reach the database rather than the plumbing.
-    """
-    data = testcase_9bus_data
-    lp = powergama.LpProblem(data)
-    res = powergama.Results(data, tmp_path / "glpk_duals.sqlite", replace=True)
-    lp.solve(res, solver="glpk")
-
-    assert lp.model.component("dual") is not None, "Suffix is not a component of the model"
-    assert len(lp.dual) > 0, "no duals were imported"
-
-    with sqlite3.connect(res.db.filename) as con:
-        prices = pd.read_sql_query("SELECT nodalprice FROM Res_Nodes", con)["nodalprice"]
-    assert (prices.abs() > 1e-9).any(), "every nodal price is zero -- duals were not imported"

@@ -84,33 +84,35 @@ def test_integration_9bus(tmp_path, testcase_9bus_data):
 
     lp = powergama.LpProblem(data)
     res = powergama.Results(data, tmp_path / "example_9busmod.sqlite")
-    lp.solve(res, solver="glpk")
+    lp.solve(res, solver="appsi_highs")
 
     # Check if results are as expected
 
+    # Pinned with HiGHS. GLPK finds an equally cheap dispatch at a tie, and the different
+    # storage level it leaves carries through to later hours, so its values differ.
     expected_average_branch_flow = [
         [
             10.0,
             0,
-            31.07313626378624,
-            62.618337703595806,
-            63.07366016488877,
-            2.6546450300468116,
+            31.33868838724942,
+            62.264406838964355,
+            62.98528142372052,
+            2.5810442529153543,
             0,
-            113.07366016488875,
+            112.98528142372054,
             0,
         ],
-        [0, 112.42014886386117, 30.61781380249325, 0, 0, 39.580984865158094, 150.0, 0, 136.92633983511118],
+        [0, 112.50852760502944, 30.61781380249326, 0, 0, 39.595762829194825, 150.0, 0, 137.01471857627942],
         [
             10.0,
-            112.42014886386117,
-            61.690950066279484,
-            62.618337703595806,
-            63.07366016488877,
-            42.23562989520491,
+            112.50852760502944,
+            61.95650218974268,
+            62.264406838964355,
+            62.98528142372052,
+            42.17680708211018,
             150.0,
-            113.07366016488875,
-            136.92633983511118,
+            112.98528142372054,
+            137.01471857627942,
         ],
     ]
     average_branch_flow = res.getAverageBranchFlows()
@@ -128,19 +130,19 @@ def test_integration_9bus(tmp_path, testcase_9bus_data):
         10.36075176,
         10.26236492,
         10.0,
-        9.72,
-        9.28,
-        8.8,
-        8.32,
-        7.88,
-        7.6,
-        7.52,
-        7.68,
-        7.10258823,
-        8.72,
-        9.32,
-        9.84,
-        10.19677369,
+        9.44,
+        9.04,
+        8.56,
+        8.08,
+        7.64,
+        7.32,
+        7.24,
+        7.44,
+        6.73270589,
+        8.44,
+        9.04,
+        9.56,
+        10.0,
         10.0,
     ]
     assert res.getNodalPrices(0).tolist() == pytest.approx(expected_nodal_prices_0)

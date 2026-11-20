@@ -56,7 +56,7 @@ def _9bus_solved_db(tmp_path_factory) -> Path:
     data = _load_9bus()
     lp = powergama.LpProblem(data)
     res = powergama.Results(data, dbfile, replace=True)
-    lp.solve(res, solver="glpk")
+    lp.solve(res, solver="appsi_highs")
     return dbfile
 
 

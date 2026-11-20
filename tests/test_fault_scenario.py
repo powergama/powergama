@@ -6,7 +6,6 @@ import copy
 import pathlib
 
 import pandas as pd
-import pyomo.environ as pyo
 import pytest
 
 import powergama
@@ -18,7 +17,6 @@ def test_fault_scenario_creation():
     pass
 
 
-@pytest.mark.skipif(not pyo.SolverFactory("glpk").available(), reason="Skipping test because GLPK is not available.")
 @pytest.mark.slow
 def test_faultsimulation(testcase_9bus_data, testcase_9bus_res, tmp_path):
     """9 bus test to check that fault scenario simulation works, and gives expected result"""
@@ -45,7 +43,7 @@ def test_faultsimulation(testcase_9bus_data, testcase_9bus_res, tmp_path):
 
     # 1. Run baseline simulation and save result to database
     res_base = powergama.Results(gridmodel_base, base_db_loc, replace=True)
-    lp_base.solve(res_base, solver="glpk")
+    lp_base.solve(res_base, solver="appsi_highs")
 
     # 2. Create fault scenario files:
     fault_spec = fs.FaultSpec(spec_generators=fault_spec_generators)
@@ -65,7 +63,7 @@ def test_faultsimulation(testcase_9bus_data, testcase_9bus_res, tmp_path):
             fault_scenario_file=fault_scenario_file,
             failure_dir=fault_scenario_dir,
             db_base=base_db_loc,
-            solver="glpk",
+            solver="appsi_highs",
         )
 
     # 4 Inspect results

@@ -59,7 +59,7 @@ dirname = <folder where to keep fault scenarios and simulation results>
 base_db_loc = pathlib.Path(dirname).absolute() / "base_powergama.sqlite3"
 lp_base = powergama.LpProblem(gridmodel_base, lossmethod=1)
 res_base = powergama.Results(gridmodel_base, base_db_loc, replace=True)
-lp_base.solve(res_base, solver="glpk")
+lp_base.solve(res_base, solver="appsi_highs")
 
 # 2. Create fault scenario files:
 fault_spec = fs.FaultSpec(spec_generators=fault_spec_generators)
@@ -82,7 +82,7 @@ for scen in scenario_seeds:
         fault_scenario_file=fault_scenario_file,
         failure_dir=fault_scenario_dir,
         db_base=base_db_loc,
-        solver="glpk",
+        solver="appsi_highs",
     )
 
 # 4 Inspect results

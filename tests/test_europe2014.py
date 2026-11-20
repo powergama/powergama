@@ -15,7 +15,7 @@ def test_integration_europe2014(tmp_path):
     timerange = range(0, 6)
 
     data = powergama.GridData()
-    solver = "glpk"
+    solver = "appsi_highs"
 
     rerun = True
     sqlfile = "example_europe2014.sqlite3"
