@@ -100,7 +100,7 @@ def test_state_with_modified_grid(full_run):
     mem = MemoryResults(outaged)
     state = SimulationState.from_results(res, timestep=5)
     powergama.LpProblem(outaged).solve(mem, timesteps=range(6, 8), state=state, show_progress=False)
-    assert (mem.frame("generator_power")[0] == 0).all()
+    np.testing.assert_allclose(mem.frame("generator_power")[0], 0.0, atol=1e-9)  # solver round-off
 
 
 def test_timesteps_and_state_are_checked(full_run):
