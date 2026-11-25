@@ -64,7 +64,8 @@ Plot results
 """
 
 from .GridData import GridData
-from .lp import LpProblem
+from .lp import LpProblem, SimulationState
 from .Results import Results, ResultsBaseClass
+from .results_memory import MemoryResults
 
-__all__ = ["GridData", "LpProblem", "Results", "ResultsBaseClass"]
+__all__ = ["GridData", "LpProblem", "MemoryResults", "Results", "ResultsBaseClass", "SimulationState"]

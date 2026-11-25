@@ -35,6 +35,7 @@ from .formulation import build as formulation_build
 from .formulation import data as formulation_data
 from .formulation import extract as formulation_extract
 from .objective_trace import write_objective_trace
+from .state import SimulationState, gen_prev_array
 
 
 def _storage_from_profile(grid, storage_ini_ref, storage_cap, storage):
@@ -155,6 +156,7 @@ class LpProblem:
         self._daily_objective_trace: dict[int, float] = {}
         self._hourly_objective_trace: list[tuple[int, int, int, float]] = []
         self._solver_persistent = False
+        self._solver_key = None  # (solver, solver_path, solve_args) of the kept solvers
         # Everything the grid implies, derived once. Readers still say
         # self._idx_generatorsWithStorage and so on; __getattr__ resolves those
         # against the context.
@@ -263,17 +265,41 @@ class LpProblem:
         index: a bare numpy array happens to behave the same way while the grid uses a
         default RangeIndex, and stops doing so without warning if it ever does not.
 
-        A Series argument is aligned on its index; an array is taken positionally.
+        A Series argument is aligned on its index; an array is taken positionally. Both
+        are copied, so solving does not change the caller's objects.
 
         Generator storage is clipped into `[0, storage_cap]`. Flexible-load levels are
         taken as given; the LP starts from them moved inside the reservoir's bounds (see
         `GridContext.flex_storage_seed`).
         """
         if storage is not None:
-            values = pd.Series(storage, index=self._grid.generator.index, dtype=float)
+            values = pd.Series(storage, index=self._grid.generator.index, dtype=float, copy=True)
             self._storage = values.clip(lower=0.0, upper=self._grid.generator["storage_cap"])
         if storage_flexload is not None:
-            self._storage_flexload = pd.Series(storage_flexload, index=self._grid.consumer.index, dtype=float)
+            self._storage_flexload = pd.Series(
+                storage_flexload, index=self._grid.consumer.index, dtype=float, copy=True
+            )
+
+    def get_state(self):
+        """The current simulation state, as a :class:`~powergama.lp.SimulationState` (a copy).
+
+        After a solve, this is the state at the end of its last committed timestep.
+        """
+        return SimulationState(
+            storage=pd.Series(self._storage, index=self._grid.generator.index, dtype=float, copy=True),
+            storage_flexload=pd.Series(self._storage_flexload, index=self._grid.consumer.index, dtype=float, copy=True),
+            gen_prev=pd.Series(self._gen_prev, index=self._grid.generator.index, dtype=float, copy=True),
+        )
+
+    def set_state(self, state):
+        """Start the next solve from `state`, a :class:`~powergama.lp.SimulationState`.
+
+        Storage levels are set as by :meth:`set_storage_state`; `state.gen_prev` sets
+        the previous dispatch that ramp limits in the first solved timestep use (None:
+        no ramp limit there).
+        """
+        self.set_storage_state(storage=state.storage, storage_flexload=state.storage_flexload)
+        self._gen_prev = gen_prev_array(state.gen_prev, self._grid.generator.index)
 
     # ------------------------------------------------------------------
     # Model construction.
@@ -293,8 +319,19 @@ class LpProblem:
     # must always name the model.
     # ------------------------------------------------------------------
 
-    def _get_timesteps_to_solve(self, continue_from_last=False, results=None):
+    def _get_timesteps_to_solve(self, continue_from_last=False, results=None, timesteps=None):
         numTimesteps = len(self._grid.timerange)
+        if timesteps is not None:
+            time_steps = [int(t) for t in timesteps]
+            if not time_steps:
+                raise ValueError("timesteps is empty")
+            if time_steps != list(range(time_steps[0], time_steps[0] + len(time_steps))):
+                raise ValueError("timesteps must be consecutive and increasing")
+            if time_steps[0] < 0 or time_steps[-1] >= numTimesteps:
+                raise ValueError(
+                    f"timesteps {time_steps[0]}..{time_steps[-1]} outside the profiles' 0..{numTimesteps - 1}"
+                )
+            return range(time_steps[0], time_steps[-1] + 1)
         time_steps = range(numTimesteps)
         if continue_from_last:
             timestep_last = results.get_last_timestep_in_results()
@@ -414,6 +451,9 @@ class LpProblem:
         dclossmultiplier=1,
         solve_args=None,
         continue_from_last=False,
+        timesteps=None,
+        state=None,
+        show_progress=True,
     ):
         """
         Solve LP problem for each time step in the time range
@@ -421,6 +461,16 @@ class LpProblem:
         In single-period mode, one LP per timestep. In multi-period mode, one LP per
         window of `horizon_hours` timesteps, of which the first `commit_hours` are
         stored before the next window starts.
+
+        By default the whole time range is solved from the initial state. `timesteps`
+        and `state` solve part of it from a given state instead, for example a few
+        timesteps of a long run on a modified grid, starting from that run's state::
+
+            state = SimulationState.from_results(res, timestep=99)
+            lp.solve(MemoryResults(grid), timesteps=range(100, 124), state=state)
+
+        The solver is kept between calls with the same `solver` and `solver_path`, so
+        repeated short solves do not pay for setting it up each time.
 
         Parameters
         ----------
@@ -452,6 +502,16 @@ class LpProblem:
         continue_from_last : bool
             Whether to continue from last saved result (useful if simulation
             was interrupted)
+        timesteps : iterable of int (optional)
+            Consecutive timesteps (rows of the profiles, from 0) to solve. Default: all,
+            or from the last stored one with `continue_from_last`.
+        state : SimulationState (optional)
+            State to start from, e.g. ``SimulationState.from_results(res, t0 - 1)``.
+            Default: the current state (the initial state, or where the previous solve
+            ended). Cannot be combined with `continue_from_last`, which takes the state
+            from `results`.
+        show_progress : bool
+            Show a progress bar over the windows (default True).
 
         Returns
         -------
@@ -469,31 +529,33 @@ class LpProblem:
                 "logfile": "lpsolver_log.txt",
             }
 
+        if continue_from_last and (state is not None or timesteps is not None):
+            raise ValueError("continue_from_last cannot be combined with state or timesteps")
+
         if "_persistent" in solver:
             self._solver_persistent = True
 
         # Initalise solver, and check it is available. Each window length gets its own;
         # the full-length one is created now so that a missing solver fails early.
-        for entry in self._window_models.values():
-            entry[2] = entry[3] = None
+        # Solvers are kept from the previous call if it used the same solver settings.
+        solver_key = (solver, solver_path, repr(solve_args))
+        if self._solver_key != solver_key:
+            for entry in self._window_models.values():
+                entry[2] = entry[3] = None
+            self._solver_key = solver_key
         opt = self._use_window_model(self._cfg.window_hours, solver, solver_path, solve_args)
 
-        timesteps_to_solve = self._get_timesteps_to_solve(continue_from_last=continue_from_last, results=results)
+        timesteps_to_solve = self._get_timesteps_to_solve(
+            continue_from_last=continue_from_last, results=results, timesteps=timesteps
+        )
         self._build_day_hour_index(timesteps_to_solve)
         for ext in self._extensions:
             ext.on_solve_start(self, timesteps_to_solve, continue_from_last, results)
 
         if continue_from_last:
-            self._storage.loc[self._idx_generatorsWithStorage] = results.db.getResultStorageFillingAll(
-                timestep=timesteps_to_solve[0] - 1
-            )
-            self._storage_flexload.loc[self._idx_consumersWithFlexLoad] = results.db.getResultFlexloadStorageFillingAll(
-                timestep=timesteps_to_solve[0] - 1
-            )
-            if self._ramp_up_pu is not None or self._ramp_down_pu is not None:
-                prev_gen = results.db.getResultGeneratorPowerAll(timestep=timesteps_to_solve[0] - 1)
-                for i in self._ctx.gen_ids:
-                    self._gen_prev[i] = prev_gen.get(i, 0.0)
+            state = SimulationState.from_results(results, timesteps_to_solve[0] - 1)
+        if state is not None:
+            self.set_state(state)
 
         # Losses are only modelled in windows of one timestep (see LpConfig).
         if self._lossmethod in [1, 2] and continue_from_last:
@@ -532,7 +594,7 @@ class LpProblem:
         warmstart_now = False
         self._daily_objective_trace = {}
         self._hourly_objective_trace = []
-        for window in tqdm(windows):
+        for window in tqdm(windows, disable=not show_progress):
             timestep = window[0]
             opt = self._use_window_model(len(window), solver, solver_path, solve_args)
             # update LP problem (inflow, storage, profiles)

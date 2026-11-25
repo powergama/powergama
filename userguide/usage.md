@@ -62,6 +62,28 @@ The storage-value time curves of this example come from a separate file
 `filename` can be a list of CSV or Parquet profile files (see
 [input_data.md](input_data.md)).
 
+### Solving part of the time range from a given state
+
+`solve` can also solve a few consecutive timesteps, starting from the state of an
+earlier run instead of the initial state. The state is the storage levels, the
+flexible-load reservoir levels and the previous dispatch that ramp limits use
+(`SimulationState`). This lets a study re-solve a few timesteps on a modified grid,
+for example with a generator or branch out, without simulating everything before them.
+`MemoryResults` keeps such short results in memory instead of a database:
+
+```python
+state = powergama.SimulationState.from_results(res, timestep=99)  # end of timestep 99
+
+outaged = copy.deepcopy(data)
+outaged.generator.loc[3, ["pmax", "pmin"]] = 0.0
+out = powergama.MemoryResults(outaged)
+powergama.LpProblem(outaged).solve(out, timesteps=range(100, 124), state=state, show_progress=False)
+out.loadshed()  # timestep x node, MW
+```
+
+`lp.get_state()` gives the state where the last solve ended. Repeated calls of `solve`
+on one `LpProblem` keep the solver, so many short solves are cheap.
+
 ## 2. Multi-period optimisation with a rolling horizon
 
 ```python

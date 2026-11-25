@@ -222,6 +222,9 @@ technology. `analysis.py`, `costbenefit.py`, `filters.py` — post-processing he
 a window: `_updateLpProblem(timesteps)`, `_storeResultsAndUpdateStorage(timesteps, commit,
 objective_values, results)`. Fault and contingency analysis is not part of PowerGAMA: the former
 `fault_scenarios` subpackage was removed in favour of external reliability tools (e.g. modrel).
+They use the public route instead: `solve(results, timesteps=..., state=SimulationState(...))`
+re-solves a few timesteps from a given state ([lp/state.py](src/powergama/lp/state.py)), and
+`MemoryResults` ([results_memory.py](src/powergama/results_memory.py)) keeps the results in memory.
 
 ## Tests
 

@@ -18,5 +18,6 @@ component, and what a window longer than one timestep adds.
 
 from .extension import ModelExtension
 from .problem import LpProblem
+from .state import SimulationState
 
-__all__ = ["LpProblem", "ModelExtension"]
+__all__ = ["LpProblem", "ModelExtension", "SimulationState"]
