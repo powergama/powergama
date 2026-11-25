@@ -298,10 +298,6 @@ class DatabaseBaseClass(object):
             values = [row[0] for row in rows]
         return values
 
-    def timestep_tuple(self, timestep, fault_start):
-        # Base version only uses the timestep
-        return (timestep,)
-
     def appendResults(
         self,
         timestep,
@@ -328,7 +324,6 @@ class DatabaseBaseClass(object):
         idx_flexload,
         branch_ac_losses,
         branch_dc_losses,
-        fault_start=None,
     ):
         """
         Store results from a given timestep to the database
@@ -381,12 +376,9 @@ class DatabaseBaseClass(object):
             ac branch losses
         branch_dc_losses : list
             dc branch losses
-        fault_start  (int)
-            extra identifier for when simulations are run for several timesteps
-            from multiple starting timepoints
         """
 
-        timestep_tuple = self.timestep_tuple(timestep, fault_start)
+        timestep_tuple = (timestep,)
 
         con = db.connect(self.filename)
         with con:

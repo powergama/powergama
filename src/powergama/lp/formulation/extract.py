@@ -148,5 +148,4 @@ def store_window(lp, timesteps, commit, objective_values, results):
             flexload_storagevalue=flexload_marginalprice,
             branch_ac_losses=acPowerLoss,
             branch_dc_losses=dcPowerLoss,
-            fault_start=lp._get_fault_start(timestep),
         ).store(results)

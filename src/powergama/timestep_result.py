@@ -43,7 +43,6 @@ class TimestepResult:
     flexload_storagevalue: list
     branch_ac_losses: list
     branch_dc_losses: list
-    fault_start: int | None = None
 
     def store(self, results) -> None:
         """Write this timestep to the results database.

@@ -10,7 +10,6 @@ Specific topics:
 - Real-time (RT) balancing: 
     - [usage](Usage_RT.md)
     - [model description](model_description_RT.md)
-- [Fault scenario analysis](fault_scenario_analysis.md)
 - Examples (Jupyter notebooks):
     - [9 bus case](../tests/example_notebook_9bus.ipynb)
     - [Europe 2014](../tests/example_notebook_Europe2014.ipynb)

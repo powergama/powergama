@@ -1,5 +1,12 @@
 # Changes
 
+## Unreleased
+- **breaking:** the `fault_scenarios` subpackage is removed, together with the `fault_start`
+  argument of `Results.addResultsFromTimestep` and the `LpProblem` hooks that only it used
+  (`_get_fault_start`, `_update_progress`). Fault and contingency analysis is left to
+  external reliability tools, e.g. modrel, which re-solve
+  timesteps from a baseline run
+
 ## v2.0.0
 2026-11-20
 - add multi-period simulation mode (rolling horizon, `objective_mode="multi_period"`)

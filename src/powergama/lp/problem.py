@@ -358,10 +358,8 @@ class LpProblem:
     def _updateLpProblem(self, timesteps):
         """Rewrite the model's parameters for the window of *timesteps*.
 
-        Kept as a method because it is an extension seam, not merely a long
-        function: LpFaultProblem overrides it, reseeds storage from a baseline
-        database inside the override, then calls super(). It must stay callable
-        exactly once per window, in order.
+        Kept as a method so that a subclass can override it and call super().
+        It must stay callable exactly once per window, in order.
         """
         formulation_data.update_window(self, timesteps)
 
@@ -401,10 +399,6 @@ class LpProblem:
 
     def _flexload_storage_value(self, i, storage_level, timestep):
         return storage_value.flexload_storage_value(self._grid, self._ctx, i, storage_level, timestep)
-
-    def _get_fault_start(self, timestep):
-        # Used by LpFaultProblem
-        return None
 
     def _storeResultsAndUpdateStorage(self, timesteps, commit, objective_values, results):
         formulation_extract.store_window(self, timesteps, commit, objective_values, results)
@@ -611,9 +605,6 @@ class LpProblem:
             commit = min(self._cfg.window_commit, len(window))
             objective_values = [float(pyo.value(expr)) for _, expr in self._objective_by_hour[:commit]]
             for ts, obj_value in zip(window[:commit], objective_values):
-                # This call is required for fault scenario simulation. Does nothing here.
-                self._update_progress(ts, len(timesteps_to_solve))
-
                 if int(ts) in self._timestep_day_hour:
                     day_idx, hour_in_day = self._timestep_day_hour[int(ts)]
                     self._daily_objective_trace[day_idx] = self._daily_objective_trace.get(day_idx, 0.0) + obj_value
@@ -632,6 +623,3 @@ class LpProblem:
         write_objective_trace(self)
 
         return results
-
-    def _update_progress(self, n=None, maxn=None):
-        return
