@@ -75,6 +75,10 @@ class GridContext:
     branch_to_node: dict = field(default_factory=dict)
     dcbranch_from_node: dict = field(default_factory=dict)
     dcbranch_to_node: dict = field(default_factory=dict)
+    # Position in grid.node of each consumer's node (-1 if not a node), and the node
+    # ids as an Index: per-consumer results are summed onto nodes every timestep.
+    consumer_node_pos: object = None
+    node_index: object = None
 
     # --- entity id lists, in model index order ------------------------------
     # The multi-period builder needs these without a built single-period model;
@@ -159,6 +163,8 @@ class GridContext:
         self.branch_to_node = grid.branch.groupby("node_to").groups
         self.dcbranch_from_node = grid.dcbranch.groupby("node_from").groups
         self.dcbranch_to_node = grid.dcbranch.groupby("node_to").groups
+        self.node_index = pd.Index(grid.node["id"])
+        self.consumer_node_pos = self.node_index.get_indexer(grid.consumer["node"])
         for n in grid.node["id"]:
             # fill in so dict is defined for all nodes:
             if n not in self.generators_at_node:

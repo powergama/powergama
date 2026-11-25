@@ -16,6 +16,7 @@ follows; getting it wrong writes plausible numbers against the wrong entity.
 
 import dataclasses
 
+import numpy as np
 import pandas as pd
 
 
@@ -54,7 +55,7 @@ class TimestepResult:
         results.addResultsFromTimestep(**{f.name: getattr(self, f.name) for f in dataclasses.fields(self)})
 
 
-def aggregate_to_nodes(grid, loads, value_of) -> pd.Series:
+def aggregate_to_nodes(grid, loads, value_of, ctx=None) -> pd.Series:
     """Sum a per-consumer quantity onto the nodes the consumers sit at.
 
     Load shedding and dump load are stored per node, not per consumer, so both solve
@@ -68,7 +69,20 @@ def aggregate_to_nodes(grid, loads, value_of) -> pd.Series:
         Consumer indices to include.
     value_of : callable
         ``value_of(j)`` returns the MW value for consumer ``j``.
+    ctx : GridContext, optional
+        Its precomputed consumer-to-node positions are used if given; the solve loop
+        passes it, since looking up node ids every timestep is slow.
     """
+    # Called twice per solved timestep, so it avoids pandas groupby: a missing value
+    # (None) counts as 0, and consumers at a node not in grid.node are left out.
     loads = list(loads)
-    values = pd.Series([value_of(j) for j in loads], index=grid.consumer["node"].loc[loads].to_numpy(), dtype=float)
-    return values.groupby(level=0, sort=False).sum().reindex(grid.node.id, fill_value=0.0)
+    values = np.nan_to_num(np.array([value_of(j) for j in loads], dtype=float), nan=0.0)
+    if ctx is None:
+        index = pd.Index(grid.node.id)
+        pos = index.get_indexer(grid.consumer["node"].loc[loads].to_numpy())
+    else:
+        index = ctx.node_index
+        pos = ctx.consumer_node_pos[grid.consumer.index.get_indexer(loads)]
+    known = pos >= 0
+    totals = np.bincount(pos[known], weights=values[known], minlength=len(index))
+    return pd.Series(totals, index=index)

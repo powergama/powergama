@@ -7,6 +7,7 @@ because the storage update is a mass balance over the same extracted quantities.
 """
 
 import numpy as np
+import pandas as pd
 from pyomo.environ import value as pyo_value
 
 from ... import constants as const
@@ -27,7 +28,7 @@ def store_window(lp, timesteps, commit, objective_values, results):
     stores = lp._idx_generatorsWithStorage
     reports_storage_value = "storage_value" in lp._objective_term_names
     pmax_inflow = gen["pmax"].to_numpy(float) * gen["inflow_fac"].to_numpy(float)
-    storage_cap = gen["storage_cap"]
+    storage_cap = gen["storage_cap"].to_numpy(float)
 
     for h, timestep in enumerate(timesteps[:commit]):
         # 1. Update generator storage. Its level is an LP variable, so the next hour
@@ -38,15 +39,19 @@ def store_window(lp, timesteps, commit, objective_values, results):
         genInflow = pmax_inflow * window_data._profile_values(lp._grid.profiles, timestep, gen["inflow_ref"])
         energyIn = genInflow * dt
         energyOut = np.asarray(Pgen, dtype=float) * dt
-        storage_prev = lp._storage.copy()
+        # Positional numpy arithmetic, stored back as Series indexed like the generators:
+        # this runs for every solved timestep, and pandas' clip dominated it.
+        storage_prev = np.asarray(lp._storage, dtype=float)
         # Without storage (zero capacity) everything not generated is spilled; with
         # infinite capacity, nothing is.
-        energyStorable = lp._storage + energyIn - energyOut
-        lp._storage = np.clip(energyStorable, 0.0, storage_cap)
-        lp._energyspilled = energyStorable - lp._storage
+        energyStorable = storage_prev + energyIn - energyOut
+        storage_new = np.clip(energyStorable, 0.0, storage_cap)
+        spilled = energyStorable - storage_new
         for i in stores:
-            lp._storage[i] = m.varStorage[i, h].value
-            lp._energyspilled[i] = m.varSpill[i, h].value * dt
+            storage_new[i] = m.varStorage[i, h].value
+            spilled[i] = m.varSpill[i, h].value * dt
+        lp._storage = pd.Series(storage_new, index=gen.index)
+        lp._energyspilled = pd.Series(spilled, index=gen.index)
 
         # 2. Update flexible load storage, an LP variable like generator storage
         for i in lp._idx_consumersWithFlexLoad:
@@ -82,8 +87,8 @@ def store_window(lp, timesteps, commit, objective_values, results):
         Pdc = [m.varDcBranchFlow[i, h].value for i in m.s_branch_dc]
         theta = [m.varVoltageAngle[i, h].value * const.baseAngle for i in m.s_node]
         # load shedding is aggregated to nodes (due to old code)
-        Ploadshed = aggregate_to_nodes(lp._grid, m.s_load, lambda j: m.varLoadShed[j, h].value)
-        Pdumpload = aggregate_to_nodes(lp._grid, m.s_load, lambda j: m.varDumpLoad[j, h].value)
+        Ploadshed = aggregate_to_nodes(lp._grid, m.s_load, lambda j: m.varLoadShed[j, h].value, lp._ctx)
+        Pdumpload = aggregate_to_nodes(lp._grid, m.s_load, lambda j: m.varDumpLoad[j, h].value, lp._ctx)
 
         # 4 Collect dual values
         # 4a. branch capacity sensitivity (whether pos or neg flow)

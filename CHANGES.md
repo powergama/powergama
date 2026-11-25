@@ -7,6 +7,8 @@
   memory instead of a database; `solve(show_progress=False)` hides the progress bar
 - repeated `solve` calls on one `LpProblem` keep the solver if its settings are unchanged
 - `set_storage_state` copies its inputs, so a solve no longer changes the caller's Series
+- faster result readout per timestep (node aggregation and storage update in numpy);
+  results are unchanged
 - **breaking:** the `fault_scenarios` subpackage is removed, together with the `fault_start`
   argument of `Results.addResultsFromTimestep` and the `LpProblem` hooks that only it used
   (`_get_fault_start`, `_update_progress`). Fault and contingency analysis is left to
