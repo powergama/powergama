@@ -117,3 +117,14 @@ def test_timesteps_and_state_are_checked(full_run):
         lp.solve(res, continue_from_last=True, state=SimulationState.from_results(res, 5))
     with pytest.raises(ValueError, match="storage values"):
         SimulationState.from_results(res, timestep=99)
+
+
+def test_progress_bar_shown_or_hidden(capfd, testcase_9bus_data):
+    data = testcase_9bus_data
+    data.timerange = range(0, 3)
+    lp = powergama.LpProblem(data)
+    capfd.readouterr()
+    lp.solve(MemoryResults(data), show_progress=False)
+    assert "it/s" not in capfd.readouterr().err
+    lp.solve(MemoryResults(data), show_progress=True)
+    assert "3/3" in capfd.readouterr().err  # text bar outside a notebook

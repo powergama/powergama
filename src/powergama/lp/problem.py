@@ -25,7 +25,7 @@ import pandas as pd
 import pyomo.environ as pyo
 import pyomo.opt
 from pyomo.contrib import appsi
-from tqdm import tqdm
+from tqdm.auto import tqdm  # a widget in Jupyter (with ipywidgets), text in a terminal
 
 from . import solver as solver_mod
 from . import storage_value
@@ -511,7 +511,8 @@ class LpProblem:
             ended). Cannot be combined with `continue_from_last`, which takes the state
             from `results`.
         show_progress : bool
-            Show a progress bar over the windows (default True).
+            Show a progress bar over the windows (default True): a widget in a Jupyter
+            notebook (needs ipywidgets; otherwise text), a text bar in a terminal.
 
         Returns
         -------

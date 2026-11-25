@@ -1,10 +1,13 @@
 # Changes
 
-## Unreleased
+## v2.1.0
+2026-11-25
 - `LpProblem.solve(timesteps=..., state=...)` solves consecutive timesteps from a given
   state; `SimulationState` (storage, flexible-load storage, previous dispatch) with
   `from_results`, `LpProblem.get_state` and `set_state`; `MemoryResults` keeps results in
   memory instead of a database; `solve(show_progress=False)` hides the progress bar
+- the progress bar of `solve` uses `tqdm.auto`: a single-line widget in Jupyter notebooks
+  (with ipywidgets) instead of a new line per update, a text bar in a terminal
 - repeated `solve` calls on one `LpProblem` keep the solver if its settings are unchanged
 - `set_storage_state` copies its inputs, so a solve no longer changes the caller's Series
 - faster result readout per timestep (node aggregation and storage update in numpy);
