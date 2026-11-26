@@ -381,7 +381,7 @@ def create_constraint_generator_output(model, grid, ctx, cfg):
     """Constraint: Generator output limit"""
 
     # Generator output constraint is not necessary, as lower and upper
-    # bounds are set for each timestep in _update_progress. Should not
+    # bounds are set for each timestep in _updateLpProblem. Should not
     # be specified as constraint with with pmax as limit, since e.g.
     # PV may have higher production than generator rating.
 

@@ -110,7 +110,6 @@ class ResultsBaseClass(object):
         dumpload_power=None,
         branch_ac_losses=None,
         branch_dc_losses=None,
-        fault_start=None,
     ):
         """Store results from optimal power flow for a new timestep
 
@@ -154,9 +153,6 @@ class ResultsBaseClass(object):
             ac branch losses
         branch_dc_losses : list
             dc branch losses
-        fault_start  (int)
-            extra identifier for when simulations are run for several timesteps
-            from multiple starting timepoints
         """
         # Use zero if no branch power losses given:
         if branch_ac_losses is None:
@@ -191,7 +187,6 @@ class ResultsBaseClass(object):
             idx_flexload=self.flex_idx_consumers,
             branch_ac_losses=branch_ac_losses,
             branch_dc_losses=branch_dc_losses,
-            fault_start=fault_start,
         )
 
         """

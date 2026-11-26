@@ -1,5 +1,23 @@
 # Changes
 
+## v2.1.0
+2026-11-25
+- `LpProblem.solve(timesteps=..., state=...)` solves consecutive timesteps from a given
+  state; `SimulationState` (storage, flexible-load storage, previous dispatch) with
+  `from_results`, `LpProblem.get_state` and `set_state`; `MemoryResults` keeps results in
+  memory instead of a database; `solve(show_progress=False)` hides the progress bar
+- the progress bar of `solve` uses `tqdm.auto`: a single-line widget in Jupyter notebooks
+  (with ipywidgets) instead of a new line per update, a text bar in a terminal
+- repeated `solve` calls on one `LpProblem` keep the solver if its settings are unchanged
+- `set_storage_state` copies its inputs, so a solve no longer changes the caller's Series
+- faster result readout per timestep (node aggregation and storage update in numpy);
+  results are unchanged
+- **breaking:** the `fault_scenarios` subpackage is removed, together with the `fault_start`
+  argument of `Results.addResultsFromTimestep` and the `LpProblem` hooks that only it used
+  (`_get_fault_start`, `_update_progress`). Fault and contingency analysis is left to
+  external reliability tools, e.g. modrel, which re-solve
+  timesteps from a baseline run
+
 ## v2.0.0
 2026-11-20
 - add multi-period simulation mode (rolling horizon, `objective_mode="multi_period"`)

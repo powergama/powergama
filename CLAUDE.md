@@ -216,15 +216,15 @@ raises, with no alias.
 
 `scenarios.py` — read/write scenario CSV files that rescale a base `GridData` per area and
 technology. `analysis.py`, `costbenefit.py`, `filters.py` — post-processing helpers.
-`plots.py` (folium map via `plotMap`) and `plots2.py` (geopandas/matplotlib). `fault_scenarios/` is a
-subpackage for adequacy studies: it generates fault situations, re-simulates **only** the faulted
-timesteps starting from a baseline results database, via `LpFaultProblem` — see
-[fault_scenario_analysis.md](userguide/fault_scenario_analysis.md). It subclasses `LpProblem` and
-overrides six methods, so `_updateLpProblem`, `_get_fault_start`, `_update_progress`,
-`_relax_and_retry` and `_get_timesteps_to_solve` are **extension seams**, not merely long methods:
-they stay on the class and delegate to `lp/formulation/`. The seams take a window:
-`_updateLpProblem(timesteps)`, `_storeResultsAndUpdateStorage(timesteps, commit, objective_values,
-results)`; fault simulation runs in windows of one timestep.
+`plots.py` (folium map via `plotMap`) and `plots2.py` (geopandas/matplotlib).
+`_updateLpProblem`, `_relax_and_retry` and `_get_timesteps_to_solve` are kept as methods on
+`LpProblem` so that a subclass can override them; they delegate to `lp/formulation/`. The seams take
+a window: `_updateLpProblem(timesteps)`, `_storeResultsAndUpdateStorage(timesteps, commit,
+objective_values, results)`. Fault and contingency analysis is not part of PowerGAMA: the former
+`fault_scenarios` subpackage was removed in favour of external reliability tools (e.g. modrel).
+They use the public route instead: `solve(results, timesteps=..., state=SimulationState(...))`
+re-solves a few timesteps from a given state ([lp/state.py](src/powergama/lp/state.py)), and
+`MemoryResults` ([results_memory.py](src/powergama/results_memory.py)) keeps the results in memory.
 
 ## Tests
 
